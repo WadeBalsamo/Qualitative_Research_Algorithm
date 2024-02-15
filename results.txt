@@ -1,0 +1,30 @@
+ALL_RESULTS:
+71: Change in Narrative Self
+57: Somatic Energy
+26: Re-experiencing of Traumatic Memories or Affect Without Recollection
+26: Change in Sense of Embodiment
+25: Pressure, Tension or Release of Pressure, Tension
+21: Involuntary Movements
+15: Thermal Changes
+12: Change in Doubt, Faith, Trust, or Commitment
+12: Integration Following Retreat or Intensive Practice
+10: Meta-Cognition
+10: Fear, Anxiety, Panic, or Paranoia
+9: Change in Relationship to Meditation Community
+9: Clarity
+8: Change in Self-Other or Self-World Boundaries
+6: Distortions in Time or Space
+6: Disintegration of Conceptual Meaning Structures
+4: Loss of Sense of Ownership
+3: Delusional, Irrational, or Paranormal Beliefs
+2: Crying or Laughing
+2: Pain
+1: Mental Stillness
+1: Affective Flattening, Emotional Detachment, or Alexithymia
+1: Perceptual Hypersensitivity
+1: Rage, Anger, or Aggression
+1: Depression, Dysphoria, or Grief
+1: Social Impairment
+__________
+
+Percentage of sentences which were coded:0.14821272885789014
