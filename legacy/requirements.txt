@@ -1,0 +1,49 @@
+# Core ML and Deep Learning
+torch>=2.0.0
+transformers>=4.35.0
+bitsandbytes>=0.41.0
+accelerate>=0.24.0
+peft>=0.7.0  # For QLoRA
+sentencepiece>=0.1.99
+protobuf>=4.25.1
+
+# Audio Processing
+librosa>=0.10.1
+soundfile>=0.12.1
+pydub>=0.25.1
+pyannote.audio>=2.0.0
+openai-whisper>=20231117
+
+# Data Processing and Analysis
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+nltk>=3.8.0
+spacy>=3.7.2
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+wordcloud>=1.9.0
+networkx>=3.1
+
+# Utilities
+tqdm>=4.65.0
+PyYAML>=6.0
+openpyxl>=3.1.0
+reportlab>=4.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+aiohttp>=3.9.1
+
+# Testing and Development
+pytest>=7.4.0
+black>=23.7.0
+isort>=5.12.0
+flake8>=6.1.0
+mypy>=1.5.1
+
+# Documentation
+sphinx>=7.1.2
+sphinx-rtd-theme>=1.3.0

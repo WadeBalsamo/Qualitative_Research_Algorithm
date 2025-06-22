@@ -42,7 +42,7 @@ class MindfulBERTCoder:
         self.model.to(self.device)
         self.model.eval()
         
-        # Load codebook to get label mappings
+        # Load codebook to get label mappings     
         if codebook_path:
             self.load_codebook(codebook_path)
         else:
@@ -76,14 +76,15 @@ class MindfulBERTCoder:
                      threshold: float = 0.5,
                      max_codes: int = 5) -> List[Tuple[str, float]]:
         """
-        Predict codes for a given text segment
+        Predict codes for a given text segment 
         
-        Args:
+        Args: 
             text: Text to classify
             threshold: Probability threshold for applying codes
             max_codes: Maximum number of codes to apply
             
         Returns:
+            predictions:
             List of (code_name, probability) tuples
         """
         # Tokenize input
