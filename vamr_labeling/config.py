@@ -30,6 +30,9 @@ class ClassificationConfig:
     n_runs: int = 3
     randomize_codebook: bool = True
     api_key: str = field(default_factory=lambda: os.environ.get('OPENROUTER_API_KEY', ''))
+    backend: str = 'openrouter'  # 'openrouter' or 'replicate'
+    replicate_api_token: str = field(default_factory=lambda: os.environ.get('REPLICATE_API_TOKEN', ''))
+    max_new_tokens: int = 512
 
 
 @dataclass
@@ -38,6 +41,15 @@ class ValidationConfig:
     n_per_stage: int = 50
     min_kappa: float = 0.70
     min_agreement: float = 0.75
+
+
+@dataclass
+class ConfidenceTierConfig:
+    """Configurable thresholds for confidence tier assignment."""
+    high_consistency: int = 3
+    high_confidence: float = 0.8
+    medium_min_consistency: int = 2
+    medium_min_confidence: float = 0.6
 
 
 @dataclass
@@ -54,6 +66,10 @@ class PipelineConfig:
     segmentation: SegmentationConfig = field(default_factory=SegmentationConfig)
     classification: ClassificationConfig = field(default_factory=ClassificationConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
+    confidence_tiers: ConfidenceTierConfig = field(default_factory=ConfidenceTierConfig)
+
+    # Resume from checkpoint
+    resume_from: Optional[str] = None
 
     # Downstream
     autoresearch_dir: str = '../autoresearch/'

@@ -88,6 +88,16 @@ stage_definitions = {
             "My mind just keeps going back to it no matter what I try.",
             "I feel like the pain is controlling everything.",
         ],
+        'subtle_utterances': [
+            "I keep checking in on how my back feels, even when I'm trying to relax.",
+            "It's hard to concentrate on anything else when it flares up.",
+            "I notice I'm always scanning for whether it's going to get worse.",
+        ],
+        'adversarial_utterances': [
+            "I try to push the pain away but it keeps grabbing my attention.",  # Could be avoidance
+            "I'm aware that my mind keeps going to the pain.",  # Could be metacognition
+            "Sometimes I just sit with the discomfort and wait for it to pass.",  # Could be reappraisal
+        ],
     },
     'avoidance': {
         'stage_id': 1,
@@ -120,6 +130,16 @@ stage_definitions = {
             "I've gotten better at not thinking about it.",
             "I use the meditation to take my mind somewhere else.",
             "I concentrate on something pleasant to block out the sensation.",
+        ],
+        'subtle_utterances': [
+            "I've found that if I keep myself busy, it doesn't bother me as much.",
+            "During the meditation I kind of redirect myself away from the discomfort.",
+            "I've learned to just not go there when those feelings come up.",
+        ],
+        'adversarial_utterances': [
+            "I notice myself wanting to push the pain away and I just let that happen.",  # Could be metacognition
+            "The pain feels less important when I focus on my breath.",  # Could be reappraisal
+            "I can't escape it no matter how hard I try to focus elsewhere.",  # Could be vigilance
         ],
     },
     'metacognition': {
@@ -155,6 +175,16 @@ stage_definitions = {
             "There was this moment where I was aware of being aware of the pain.",
             "I could see my thoughts about the pain as just thoughts.",
         ],
+        'subtle_utterances': [
+            "It was like I could step back a little and see what was happening in my mind.",
+            "I started to recognize that the worry and the pain are two different things.",
+            "I caught myself reacting and that catching itself felt different.",
+        ],
+        'adversarial_utterances': [
+            "I watched the pain change and realized it wasn't as solid as I thought.",  # Could be reappraisal
+            "I observed myself pushing the pain away during the meditation.",  # Could be avoidance
+            "I was so focused on noticing my thoughts that I lost track of the pain.",  # Could be avoidance
+        ],
     },
     'reappraisal': {
         'stage_id': 3,
@@ -188,6 +218,16 @@ stage_definitions = {
             "I realized it's not one solid thing, it's like waves that come and go.",
             "It's interesting, when I really look at it, the 'pain' is actually many different feelings.",
             "I don't have to make it mean something about my life anymore.",
+        ],
+        'subtle_utterances': [
+            "I started to see the pain differently, like it's just part of what's happening.",
+            "It's not that the pain went away, but something about my relationship to it shifted.",
+            "The sensation is still there but it feels lighter somehow.",
+        ],
+        'adversarial_utterances': [
+            "I noticed I was seeing the pain as just sensation, which was interesting.",  # Could be metacognition
+            "I focused on breaking the pain into smaller pieces to make it manageable.",  # Could be avoidance
+            "The pain comes and goes and I just let it do its thing.",  # Could be metacognition
         ],
     },
 }

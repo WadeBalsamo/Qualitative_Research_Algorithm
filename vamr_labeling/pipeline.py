@@ -44,6 +44,7 @@ from .dataset_assembly import (
     generate_validation_report,
     export_stage_definitions,
     export_content_validity_test_set,
+    compute_session_stage_progression,
 )
 
 
@@ -148,6 +149,10 @@ def run_full_pipeline(config: PipelineConfig) -> pd.DataFrame:
         output_dir=os.path.join(output_dir, 'llm_raw'),
         randomize_codebook=config.classification.randomize_codebook,
         definitions=stage_definitions,
+        backend=config.classification.backend,
+        replicate_api_token=config.classification.replicate_api_token,
+        max_new_tokens=config.classification.max_new_tokens,
+        resume_from=config.resume_from,
     )
 
     # ------------------------------------------------------------------
@@ -193,9 +198,11 @@ def run_full_pipeline(config: PipelineConfig) -> pd.DataFrame:
     print("=" * 60)
 
     # Output 1: Master segment dataset
+    confidence_tier_config = asdict(config.confidence_tiers)
     master_df = assemble_master_dataset(
         all_segments,
         os.path.join(output_dir, f'master_segments_{ts}.jsonl'),
+        confidence_tiers=confidence_tier_config,
     )
 
     # Output 2: Session adjacency index
@@ -207,6 +214,17 @@ def run_full_pipeline(config: PipelineConfig) -> pd.DataFrame:
     # Output 3: Validation report (placeholder -- completed after human coding)
     # Output 4: Stage definitions (already exported in Stage 2)
     # Output 5: Content validity test set (already exported in Stage 2)
+
+    # Output 6: Session stage progression (longitudinal tracking)
+    progression_df = compute_session_stage_progression(master_df)
+    if len(progression_df) > 0:
+        progression_path = os.path.join(output_dir, f'session_stage_progression_{ts}.csv')
+        progression_df.to_csv(progression_path, index=False)
+        print(f"Exported session stage progression for {len(progression_df)} sessions")
+        avg_forward = progression_df['forward_transitions'].mean()
+        avg_backward = progression_df['backward_transitions'].mean()
+        print(f"  Avg forward transitions per session: {avg_forward:.1f}")
+        print(f"  Avg backward transitions per session: {avg_backward:.1f}")
 
     print("\n" + "=" * 60)
     print("PIPELINE COMPLETE")
