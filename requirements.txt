@@ -1,18 +1,23 @@
 # requirements.txt
-# Core libraries for Mental-BERT AQUA methodology
-transformers
-sentence-transformers
-torch
-scikit-learn
-networkx
-matplotlib
-pandas
-jupyter
-omegaconf
-loguru
-rich
-optuna
-peft
-bitsandbytes
-fastapi
-uvicorn
+# VA-MR Zero-Shot Data Labeling Pipeline
+#
+# Pipeline: whisper-diarization-batchprocess -> vamr_labeling -> autoresearch
+
+# Core
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+
+# Embeddings for segment boundary detection
+sentence-transformers>=2.2
+
+# LLM API client
+requests>=2.31
+
+# Data structures
+dataclasses-json>=0.6
+
+# Legacy codebook support
+transformers>=4.30
+torch>=2.0
+srt>=3.5
