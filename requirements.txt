@@ -1,23 +1,48 @@
 # requirements.txt
-# VA-MR Zero-Shot Data Labeling Pipeline
+# Qualitative Research Algorithm
 #
-# Pipeline: whisper-diarization-batchprocess -> vamr_labeling -> autoresearch
+# Pipeline: whisper-diarization-batchprocess -> pipeline/ -> autoresearch
 
 # Core
 pandas>=2.0
 numpy>=1.24
 scikit-learn>=1.3
 
-# Embeddings for segment boundary detection
+# Embeddings for segment boundary detection (pipeline/transcript_ingestion)
 sentence-transformers>=2.2
 
-# LLM API client
+# LLM API client (shared/llm_client)
 requests>=2.31
 
 # Data structures
 dataclasses-json>=0.6
 
-# Legacy codebook support
+# Codebook classifier embedding support
 transformers>=4.30
 torch>=2.0
+
+# Legacy SRT parsing
 srt>=3.5
+
+# Additional requirements for Hugging Face multi-model setup
+# Install these on top of the base QRA requirements
+
+# Core Hugging Face libraries
+transformers>=4.36.0
+accelerate>=0.25.0
+torch>=2.1.0
+
+# Optional: For 4-bit/8-bit quantization (reduces memory usage)
+bitsandbytes>=0.41.0
+
+# Optional: For faster inference
+optimum>=1.16.0
+
+# Optional: Flash Attention for faster transformers
+# flash-attn>=2.0.0  # Requires CUDA
+
+# Hugging Face Hub for model management
+huggingface-hub>=0.20.0
+
+# For better progress bars during downloads
+tqdm>=4.66.0
