@@ -1,16 +1,10 @@
 """
 zero_shot_classifier.py
 -----------------------
-Stage 3: Zero-shot LLM classification of transcript segments using the
+Stage 3: LLM classification of transcript segments using the
 VA-MR framework with triplicate-and-flag consistency checking.
 
-Adapted from classify_reddit_llms.py in the Text Psychometrics repo:
-  - create_codebook_string(): builds formatted text block from construct defs
-  - loop_through_documents(): processes documents sequentially with periodic
-    saving, error handling, and support for multiple API backends
-  - Randomized construct order to reduce position bias
-
-Also uses llm.py's openrouter_request() and process_api_output() as the
+Uses openrouter_request() and process_api_output() as the
 API client layer.
 """
 
@@ -27,7 +21,6 @@ from .vamr_constructs import stage_definitions, STAGE_NAME_TO_ID
 
 # ---------------------------------------------------------------------------
 # Codebook string construction
-# Adapted from create_codebook_string() in classify_reddit_llms.py
 # ---------------------------------------------------------------------------
 
 def create_vamr_codebook_string(
@@ -115,7 +108,6 @@ JSON:"""
 
 # ---------------------------------------------------------------------------
 # Content validity test set construction
-# Adapted from ctl_feature_extraction.py's content validity creation
 # ---------------------------------------------------------------------------
 
 def create_content_validity_test_set(
@@ -136,19 +128,25 @@ def create_content_validity_test_set(
     test_items = []
     item_id = 0
 
+    tier_fields = [
+        ('clear', 'exemplar_utterances'),
+        ('subtle', 'subtle_utterances'),
+        ('adversarial', 'adversarial_utterances'),
+    ]
+
     for stage_key, stage in definitions.items():
         stage_id = stage['stage_id']
 
-        # Tier 1: Clear exemplars directly from codebook
-        for utterance in stage['exemplar_utterances']:
-            test_items.append({
-                'test_item_id': f'cv_{item_id:04d}',
-                'text': utterance,
-                'expected_stage': stage_id,
-                'difficulty': 'clear',
-                'source': 'codebook',
-            })
-            item_id += 1
+        for difficulty, field_name in tier_fields:
+            for utterance in stage.get(field_name, []):
+                test_items.append({
+                    'test_item_id': f'cv_{item_id:04d}',
+                    'text': utterance,
+                    'expected_stage': stage_id,
+                    'difficulty': difficulty,
+                    'source': 'codebook',
+                })
+                item_id += 1
 
     return test_items
 
@@ -193,6 +191,38 @@ def _openrouter_request(
     except Exception as e:
         print(f"API error: {e}")
         return None, response.text if hasattr(response, 'text') else None
+
+
+def _replicate_request(
+    prompt: str,
+    api_token: str,
+    model: str = 'google-deepmind/gemma-2b',
+    temperature: float = 0.1,
+    max_new_tokens: int = 512,
+) -> Tuple[Optional[str], Optional[Dict]]:
+    """
+    Send a prompt to Replicate API and return the response text.
+
+    Adapted from replicate_request() in llm.py, which supports open-source
+    models (Gemma, Mistral, etc.) for local/private inference.
+    """
+    try:
+        import replicate
+        client = replicate.Client(api_token=api_token)
+
+        output = client.run(
+            model,
+            input={
+                "prompt": prompt,
+                "temperature": temperature,
+                "max_new_tokens": max_new_tokens,
+            },
+        )
+        result_text = ''.join(output)
+        return result_text, None
+    except Exception as e:
+        print(f"Replicate API error: {e}")
+        return None, None
 
 
 def _process_api_output(output_str: str) -> Dict:
@@ -316,7 +346,6 @@ def _compute_run_consistency(parsed_runs: List[Optional[Dict]]) -> Dict:
 
 # ---------------------------------------------------------------------------
 # Classification loop
-# Adapted from loop_through_documents() in classify_reddit_llms.py
 # ---------------------------------------------------------------------------
 
 def classify_segments_zero_shot(
@@ -328,6 +357,10 @@ def classify_segments_zero_shot(
     output_dir: str = './data/output/llm_labels/',
     randomize_codebook: bool = True,
     definitions: Optional[Dict] = None,
+    backend: str = 'openrouter',
+    replicate_api_token: str = '',
+    max_new_tokens: int = 512,
+    resume_from: Optional[str] = None,
 ) -> Tuple[Dict, Dict]:
     """
     Zero-shot classification of transcript segments using VA-MR framework.
@@ -353,13 +386,22 @@ def classify_segments_zero_shot(
     timestamp = datetime.datetime.utcnow().strftime('%y-%m-%dT%H-%M-%S')
     model_clean = model.replace('/', '_')
 
+    # Resume from checkpoint if provided
     results_all: Dict[str, Any] = {}
     metadata_all: Dict[str, Any] = {}
+    if resume_from and os.path.exists(resume_from):
+        with open(resume_from, 'r') as f:
+            results_all = json.load(f)
+        print(f"  Resumed from checkpoint: {len(results_all)} segments already classified")
 
     participant_segments = [s for s in segments if s.speaker == 'participant']
     total = len(participant_segments)
 
     for i, segment in enumerate(participant_segments):
+        # Skip already-classified segments when resuming
+        if segment.segment_id in results_all:
+            continue
+
         if (i + 1) % 10 == 0 or i == 0:
             print(f"  Classifying segment {i + 1}/{total}: {segment.segment_id}")
 
@@ -373,9 +415,15 @@ def classify_segments_zero_shot(
                 text=segment.text,
             )
             try:
-                result_text, meta = _openrouter_request(
-                    prompt, api_key, model=model, temperature=temperature
-                )
+                if backend == 'replicate':
+                    result_text, meta = _replicate_request(
+                        prompt, replicate_api_token, model=model,
+                        temperature=temperature, max_new_tokens=max_new_tokens,
+                    )
+                else:
+                    result_text, meta = _openrouter_request(
+                        prompt, api_key, model=model, temperature=temperature
+                    )
                 segment_results.append(result_text)
             except Exception as e:
                 print(f"  Error on {segment.segment_id}, run {run}: {e}")
