@@ -1,7 +1,7 @@
 """
 dataset_assembly.py
 -------------------
-Stage 6: Dataset Assembly -- produces the five specified output files.
+Stage 6: Dataset Assembly -- produces output files.
 
 Output 1: Master Segment Dataset (JSONL + CSV)
 Output 2: Session Adjacency Index (JSONL)
@@ -9,10 +9,6 @@ Output 3: Human Validation Report (JSON)
 Output 4: Stage Definition File (JSON)
 Output 5: Content Validity Test Set (JSONL)
 
-Adapted from:
-  - classify_ctl_results.py and classify_reddit_results.py which aggregate
-    metrics across constructs and feature vectors into summary tables.
-  - save_classification_performance() from the metrics_report module.
 """
 
 import json
@@ -34,6 +30,7 @@ from .validation import compute_validation_metrics
 def assemble_master_dataset(
     segments: List[Segment],
     output_path: str,
+    confidence_tiers: Optional[Dict] = None,
 ) -> pd.DataFrame:
     """
     Produce the master segment dataset.
@@ -41,6 +38,13 @@ def assemble_master_dataset(
     Computes final_label and label_confidence_tier following the
     priority logic specified in the task description.
     """
+    # Default thresholds (previously hardcoded)
+    ct = confidence_tiers or {}
+    high_consistency = ct.get('high_consistency', 3)
+    high_confidence = ct.get('high_confidence', 0.8)
+    medium_min_consistency = ct.get('medium_min_consistency', 2)
+    medium_min_confidence = ct.get('medium_min_confidence', 0.6)
+
     rows = []
     for seg in segments:
         # Compute final_label
@@ -57,18 +61,18 @@ def assemble_master_dataset(
             final_label = None
             final_label_source = None
 
-        # Compute confidence tier
+        # Compute confidence tier using configurable thresholds
         if (
-            seg.llm_run_consistency == 3
+            seg.llm_run_consistency == high_consistency
             and seg.llm_confidence_primary is not None
-            and seg.llm_confidence_primary > 0.8
+            and seg.llm_confidence_primary > high_confidence
         ):
             confidence_tier = 'high'
         elif (
             seg.llm_run_consistency is not None
-            and seg.llm_run_consistency >= 2
+            and seg.llm_run_consistency >= medium_min_consistency
             and seg.llm_confidence_primary is not None
-            and seg.llm_confidence_primary > 0.6
+            and seg.llm_confidence_primary > medium_min_confidence
         ):
             confidence_tier = 'medium'
         else:
@@ -283,3 +287,85 @@ def export_content_validity_test_set(
     with open(output_path, 'w') as f:
         for item in test_items:
             f.write(json.dumps(item) + '\n')
+
+
+# ---------------------------------------------------------------------------
+# Longitudinal Stage Tracking
+# Adapted from desire_vs_imminent_risk_over_time analysis pattern in
+# textpsychometrics, which tracks construct prevalence across time.
+# ---------------------------------------------------------------------------
+
+def compute_session_stage_progression(
+    segments_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Track VA-MR stage progression within each session.
+
+    For each session, computes the sequence of primary stages assigned to
+    participant segments in temporal order. This enables analysis of whether
+    participants progress through VA-MR stages (Vigilance -> Avoidance ->
+    Metacognition -> Reappraisal) within a single therapy session.
+
+    Returns a DataFrame with one row per session containing:
+    - stage_sequence: list of stage IDs in temporal order
+    - stage_transitions: list of (from_stage, to_stage) pairs
+    - forward_transitions: count of transitions toward later stages
+    - backward_transitions: count of transitions toward earlier stages
+    - max_stage_reached: highest stage ID reached in the session
+    - dominant_stage: most frequent stage in the session
+    """
+    from .vamr_constructs import STAGE_ID_TO_SHORT
+
+    session_progressions = []
+
+    for session_id, session_df in segments_df.groupby('session_id'):
+        participant_df = session_df[
+            (session_df['speaker'] == 'participant')
+            & (session_df['primary_stage'].notna())
+        ].sort_values('segment_index')
+
+        if len(participant_df) == 0:
+            continue
+
+        stages = participant_df['primary_stage'].astype(int).tolist()
+
+        # Compute transitions
+        transitions = []
+        forward = 0
+        backward = 0
+        for i in range(1, len(stages)):
+            from_stage = stages[i - 1]
+            to_stage = stages[i]
+            transitions.append((from_stage, to_stage))
+            if to_stage > from_stage:
+                forward += 1
+            elif to_stage < from_stage:
+                backward += 1
+
+        # Stage distribution within session
+        stage_counts = {}
+        for s in stages:
+            stage_counts[s] = stage_counts.get(s, 0) + 1
+
+        dominant_stage = max(stage_counts, key=stage_counts.get)
+
+        session_progressions.append({
+            'session_id': session_id,
+            'trial_id': participant_df['trial_id'].iloc[0],
+            'participant_id': participant_df['participant_id'].iloc[0],
+            'n_segments': len(stages),
+            'stage_sequence': stages,
+            'stage_transitions': transitions,
+            'forward_transitions': forward,
+            'backward_transitions': backward,
+            'lateral_transitions': len(transitions) - forward - backward,
+            'max_stage_reached': max(stages),
+            'dominant_stage': dominant_stage,
+            'dominant_stage_name': STAGE_ID_TO_SHORT.get(dominant_stage, ''),
+            'stage_distribution': {
+                STAGE_ID_TO_SHORT.get(k, str(k)): v
+                for k, v in sorted(stage_counts.items())
+            },
+        })
+
+    return pd.DataFrame(session_progressions)
