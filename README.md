@@ -31,10 +31,10 @@ QRA automatically classifies segments of therapeutic dialogue transcripts into m
 
 | Module | Purpose |
 |---|---|
-| `shared/` | Common infrastructure: data structures, LLM client, model loader, validation |
-| `theme_labeler/` | Single-label classification into a framework of stages/themes |
-| `codebook_classifier/` | Multi-label classification via triple-LLM embedding and LLM ensemble |
-| `pipeline/` | 6-stage orchestration engine coordinating the full workflow |
+| `classification_tools/` | Common infrastructure: data structures, LLM client, model loader, validation |
+| `constructs/` | Theme/stage framework definitions and presets |
+| `codebook/` | Multi-label codebook classification via triple-LLM embedding and LLM ensemble |
+| `process/` | 6-stage orchestration engine coordinating the full workflow |
 
 ### Key Capabilities
 
@@ -46,7 +46,8 @@ QRA automatically classifies segments of therapeutic dialogue transcripts into m
 - **Triplicate consistency checking**: Classifies each segment 3 times and flags inconsistencies
 - **Embedding-based segmentation**: Uses sentence-transformer semantic similarity to split long transcripts into coherent segments
 - **Multi-label ensemble**: Combines embedding-based and LLM-based codebook results with disagreement flagging
-- **Human validation workflows**: Generates balanced evaluation sets and supports interactive validation of uncertain classifications
+- **Interactive setup wizard**: Guided configuration that saves reusable JSON configs
+- **Human validation workflows**: Interactive validation of uncertain classifications with educational narration
 - **Confidence tiering**: Assigns segments to high/medium/low confidence tiers based on consistency and scores
 - **Cross-validation**: Empirically validates hypothesized theme-to-codebook code mappings via co-occurrence lift analysis
 - **Checkpointing**: Saves intermediate results and supports resume from interruption
@@ -71,56 +72,75 @@ By default, QRA uses the **VA-MR (Vigilance-Avoidance-Metacognition-Reappraisal)
 ```bash
 cd Qualitative_Research_Algorithm
 pip install -r requirements.txt
-# For Hugging Face model support:
-pip install -r requirements_huggingface.txt
 ```
 
-### 2. Choose an Entry Point
+### 2. Choose Your Workflow
 
-QRA provides two pipeline entry points:
+QRA provides a unified CLI with three modes of operation:
 
-#### Option A: `run_pipeline.py` -- Hugging Face Multi-Model Pipeline
+#### Option A: Interactive Setup Wizard (Recommended for First-Time Users)
 
-Uses three locally-hosted Hugging Face causal LLMs for theme classification with multi-model cross-referencing. Supports optional codebook classification.
+Walk through a guided 9-step configuration wizard that saves a reusable config file:
 
 ```bash
-# Theme-only classification (default)
-python run_pipeline.py \
+python qra.py setup
+```
+
+The wizard will prompt you for:
+1. Input/output paths
+2. LLM backend and model selection
+3. Theme framework (VA-MR preset or custom)
+4. Custom exemplar utterances (optional)
+5. Codebook configuration (optional)
+6. Classification parameters (n_runs, temperature)
+7. Confidence thresholds
+8. Run mode (auto/interactive/review)
+9. Save location
+
+After saving, the wizard offers to run the pipeline immediately.
+
+#### Option B: Quick Run with Defaults
+
+Run the full pipeline with sensible defaults (VA-MR framework, HuggingFace backend):
+
+```bash
+# Theme-only classification
+python qra.py run \
     --transcript-dir ./data/input/diarized_sessions/ \
     --output-dir ./data/output/
 
-# With codebook classification + two-pass embedding
-python run_pipeline.py \
+# With codebook classification
+python qra.py run \
     --run-codebook-classifier \
     --transcript-dir ./data/input/diarized_sessions/ \
     --output-dir ./data/output/
-
-# With pre-populated exemplars, custom weights
-python run_pipeline.py \
-    --run-codebook-classifier \
-    --exemplar-import-path ./my_exemplars.json \
-    --criteria-weight 0.6 \
-    --exemplar-weight 0.4
 ```
 
-#### Option B: `classify_and_label.py` -- Integrated Pipeline with Human Validation
+#### Option C: Guided Mode with Educational Narration
 
-Full pipeline with theme + codebook + cross-validation + interactive human validation of uncertain results. Supports OpenRouter, Replicate, and Hugging Face backends.
+Step-by-step execution with explanations of each pipeline stage:
 
 ```bash
-# Fully automated
-export OPENROUTER_API_KEY="sk-or-..."
-python classify_and_label.py \
-    --transcript-dir ./data/diarized/ \
-    --output-dir ./data/output/ \
-    --run-mode auto
-
-# Interactive mode (prompts for validation of uncertain segments)
-python classify_and_label.py \
-    --transcript-dir ./data/diarized/ \
-    --output-dir ./data/output/ \
+python qra.py guided \
+    --backend openrouter \
     --model openai/gpt-4o \
-    --run-mode interactive
+    --transcript-dir ./data/diarized/
+```
+
+Guided mode pauses at each stage to explain what's happening, making it ideal for learning the pipeline or demonstrating to stakeholders.
+
+#### Option D: Run from Saved Config
+
+After using the setup wizard or creating a config file manually:
+
+```bash
+python qra.py run --config ./my_config.json
+```
+
+CLI arguments override config file values:
+
+```bash
+python qra.py run --config ./my_config.json --mode interactive --n-runs 5
 ```
 
 ---
@@ -131,7 +151,7 @@ python classify_and_label.py \
 
 - **Python 3.8+**
 - **GPU recommended** for embedding-based segmentation and the triple-LLM codebook classifier
-- **~150 GB disk** for the three Hugging Face models (if using `run_pipeline.py`)
+- **~150 GB disk** for the three Hugging Face models (if using HuggingFace backend)
 
 ### Core Dependencies (`requirements.txt`)
 
@@ -161,44 +181,77 @@ pip install -r requirements.txt
 | OpenRouter | `OPENROUTER_API_KEY` | `--api-key` |
 | Replicate | `REPLICATE_API_TOKEN` | `--replicate-api-token` |
 | Ollama | N/A (local) | `--backend ollama` |
-| Hugging Face | N/A (local) | `--backend huggingface` (default for `run_pipeline.py`) |
+| Hugging Face | N/A (local) | `--backend huggingface` |
 
 ---
 
 ## Entry Points
 
-### `run_pipeline.py`
+### `qra.py` (Primary Entry Point)
 
-**Purpose**: Multi-model Hugging Face pipeline with cross-referencing.
+**Purpose**: Unified CLI with three subcommands for all workflows.
 
-**Backend**: Hugging Face (local). Automatically downloads and manages three causal LLMs:
-- Llama 4 Maverick 17B (`meta-llama/Llama-4-Maverick-17B-128E-Instruct`)
-- Mixtral 8x7B Instruct (`mistralai/Mixtral-8x7B-Instruct-v0.1`)
-- Qwen 3 Next 80B (`Qwen/Qwen3-Next-80B-A3B-Instruct`)
-
-**Flow**: Downloads models -> Pre-loads for verification -> Configures pipeline -> Runs 6-stage pipeline -> Summary statistics.
-
-**Key flags**: `--run-codebook-classifier`, `--no-two-pass`, `--exemplar-import-path`, `--criteria-weight`, `--exemplar-weight`. See [CLI Reference](#cli-reference) for full list.
-
-### `classify_and_label.py`
-
-**Purpose**: Integrated classification + labeling with human validation.
-
-**Backends**: OpenRouter (default), Replicate, Ollama, Hugging Face.
-
-**Three modes**:
-| Mode | Behavior |
+**Subcommands**:
+| Command | Description |
 |---|---|
-| `auto` | Fully automated, no prompts |
-| `interactive` | Prompts for human validation of uncertain results as they occur |
-| `review` | Batch validation of all uncertain results at the end |
+| `setup` | Interactive configuration wizard that saves reusable config JSON |
+| `run` | Execute the classification pipeline (auto/interactive/review modes) |
+| `guided` | Execute with step-by-step educational narration |
 
-**Additional features over `run_pipeline.py`**:
-- Cross-validation between theme and codebook labels (co-occurrence lift analysis)
-- Interactive human validation UI for theme classifications, codebook disagreements, and co-occurrence anomalies
-- Exports human validation log (JSONL)
+**Key features**:
+- Config file support (`--config`)
+- All backends supported (OpenRouter, Replicate, HuggingFace, Ollama)
+- Three run modes: `auto` (fully automated), `interactive` (prompts for validation), `review` (batch validation)
+- Human validation for uncertain classifications
+- Cross-validation between theme and codebook labels
+- Educational narration in guided mode
 
-**Key flags**: Same embedding/exemplar flags plus `--run-mode`, `--no-codebook-classifier`. See [CLI Reference](#cli-reference).
+**Example**:
+```bash
+# Setup wizard
+python qra.py setup
+
+# Run with OpenRouter
+python qra.py run --backend openrouter --model openai/gpt-4o
+
+# Run with saved config
+python qra.py run --config ./qra_config.json --mode interactive
+
+# Guided mode
+python qra.py guided --backend huggingface
+```
+
+### Backward-Compatible Entry Points
+
+For compatibility with existing scripts, the old entry points are preserved as thin shims:
+
+#### `run_pipeline.py`
+
+Delegates to `qra.py run --backend huggingface`. Automatically downloads and manages three causal LLMs for multi-model cross-referencing.
+
+```bash
+python run_pipeline.py \
+    --transcript-dir ./data/input/ \
+    --run-codebook-classifier
+```
+
+#### `classify_and_label.py`
+
+Delegates to `qra.py run` with OpenRouter backend (default). Maps `--run-mode` to `--mode`.
+
+```bash
+python classify_and_label.py \
+    --transcript-dir ./data/diarized/ \
+    --run-mode interactive
+```
+
+#### `run_vamr_pipeline.py`
+
+Delegates to `qra.py run` with VA-MR framework (default).
+
+```bash
+python run_vamr_pipeline.py --backend openrouter --model openai/gpt-4o
+```
 
 ---
 
@@ -208,82 +261,83 @@ pip install -r requirements.txt
 
 ```
 Qualitative_Research_Algorithm/
-+-- shared/                          # Common infrastructure
-|   +-- __init__.py
-|   +-- data_structures.py           # Segment, SpeakerRun dataclasses
-|   +-- llm_client.py                # Unified LLM API client (4 backends)
-|   +-- model_loader.py              # Hugging Face model download/load/unload
-|   +-- classification_loop.py       # Shared N-run classification with checkpointing
-|   +-- majority_vote.py             # Single/multi-label voting logic
-|   +-- validation.py                # Balanced evaluation set construction
-|
-+-- theme_labeler/                   # Single-label theme classification
-|   +-- __init__.py
-|   +-- theme_schema.py              # ThemeFramework, ThemeDefinition dataclasses
-|   +-- config.py                    # ThemeClassificationConfig
-|   +-- zero_shot_classifier.py      # Zero-shot LLM classification + consistency
-|   +-- response_parser.py           # Multi-pass parsing, 8-category error taxonomy
-|   +-- frameworks/
-|       +-- __init__.py
-|       +-- vamr.py                  # VA-MR preset (4 stages)
-|
-+-- codebook_classifier/             # Multi-label codebook classification
-|   +-- __init__.py
-|   +-- codebook_schema.py           # Codebook, CodeDefinition, CodeAssignment
-|   +-- config.py                    # EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
-|   +-- embedding_classifier.py      # Triple-LLM two-pass embedding classifier
-|   +-- llm_classifier.py            # LLM-based multi-label classification
-|   +-- ensemble.py                  # Reconcile embedding vs LLM disagreements
-|   +-- codebooks/
-|       +-- __init__.py
-|       +-- phenomenology.py         # 54-code VCE phenomenology codebook (6 domains)
-|
-+-- pipeline/                        # Orchestration & assembly
-|   +-- __init__.py
-|   +-- config.py                    # PipelineConfig (aggregates all sub-configs)
-|   +-- orchestrator.py              # 6-stage pipeline engine
-|   +-- transcript_ingestion.py      # Embedding-based semantic segmentation
-|   +-- dataset_assembly.py          # Master dataset, adjacency index, progression
-|   +-- cross_validation.py          # Theme <-> codebook co-occurrence analysis
-|
-+-- run_pipeline.py                  # CLI: Hugging Face multi-model pipeline
-+-- classify_and_label.py            # CLI: Integrated pipeline + human validation
-+-- requirements.txt                 # Core Python dependencies
-+-- requirements_huggingface.txt     # Additional HF dependencies
+├── classification_tools/         # Common infrastructure
+│   ├── __init__.py
+│   ├── data_structures.py        # Segment, SpeakerRun dataclasses
+│   ├── llm_client.py             # Unified LLM API client (4 backends)
+│   ├── model_loader.py           # Hugging Face model download/load/unload
+│   ├── classification_loop.py    # Shared N-run classification with checkpointing
+│   ├── majority_vote.py          # Single/multi-label voting logic
+│   ├── validation.py             # Balanced evaluation set construction
+│   ├── llm_classifier.py         # Zero-shot theme + LLM codebook classification
+│   └── response_parser.py        # Multi-pass parsing, 8-category error taxonomy
+│
+├── constructs/                   # Theme/stage framework definitions
+│   ├── __init__.py
+│   ├── theme_schema.py           # ThemeFramework, ThemeDefinition dataclasses
+│   ├── config.py                 # ThemeClassificationConfig
+│   └── vamr.py                   # VA-MR preset (4 stages)
+│
+├── codebook/                     # Multi-label codebook classification
+│   ├── __init__.py
+│   ├── codebook_schema.py        # Codebook, CodeDefinition, CodeAssignment
+│   ├── config.py                 # EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
+│   ├── embedding_classifier.py   # Triple-LLM two-pass embedding classifier
+│   ├── ensemble.py               # Reconcile embedding vs LLM disagreements
+│   └── phenomenology_codebook.py # 54-code VCE phenomenology codebook (6 domains)
+│
+├── process/                      # Orchestration & assembly
+│   ├── __init__.py
+│   ├── config.py                 # PipelineConfig (aggregates all sub-configs)
+│   ├── orchestrator.py           # 6-stage pipeline engine with observer/validator hooks
+│   ├── pipeline_hooks.py         # PipelineObserver, SilentObserver, GuidedModeObserver
+│   ├── human_validator.py        # HumanValidator class for interactive validation
+│   ├── setup_wizard.py           # Interactive 9-step SetupWizard
+│   ├── transcript_ingestion.py   # Embedding-based semantic segmentation
+│   ├── dataset_assembly.py       # Master dataset, adjacency index, progression
+│   └── cross_validation.py       # Theme ↔ codebook co-occurrence analysis
+│
+├── qra.py                        # Unified CLI entry point (setup/run/guided)
+├── run_pipeline.py               # Backward-compatible shim → qra run --backend huggingface
+├── classify_and_label.py         # Backward-compatible shim → qra run
+├── run_vamr_pipeline.py          # Backward-compatible shim → qra run
+└── requirements.txt              # Python dependencies
 ```
 
 ### Module Dependency Graph
 
 ```
-run_pipeline.py / classify_and_label.py
+qra.py (setup / run / guided)
     |
     v
-pipeline.orchestrator (6-stage execution)
-    +-> pipeline.transcript_ingestion    (Stage 1: segmentation)
-    +-> theme_labeler.zero_shot_classifier (Stage 3: LLM classification)
-    +-> theme_labeler.response_parser    (Stage 4: response parsing)
-    +-> codebook_classifier.*            (Stage 3b: optional)
-    |   +-> embedding_classifier         (triple-LLM two-pass)
-    |   +-> llm_classifier               (LLM multi-label)
-    |   +-> ensemble                     (disagreement reconciliation)
-    +-> shared.validation                (Stage 5: evaluation set)
-    +-> pipeline.dataset_assembly        (Stage 6: final output)
-    +-> pipeline.cross_validation        (classify_and_label.py only)
+process.orchestrator (6-stage execution)
+    +-> process.pipeline_hooks         (observer pattern for UI feedback)
+    +-> process.human_validator        (interactive validation)
+    +-> process.transcript_ingestion   (Stage 1: segmentation)
+    +-> constructs.*                   (Stage 2: operationalization)
+    +-> classification_tools.llm_classifier (Stage 3: theme classification)
+    +-> classification_tools.response_parser (Stage 4: response parsing)
+    +-> codebook.*                     (Stage 3b: optional)
+    |   +-> embedding_classifier       (triple-LLM two-pass)
+    |   +-> llm_classifier             (LLM multi-label)
+    |   +-> ensemble                   (disagreement reconciliation)
+    +-> process.cross_validation       (empirical theme-codebook validation)
+    +-> classification_tools.validation (Stage 5: evaluation set)
+    +-> process.dataset_assembly       (Stage 6: final output)
 
 Shared infrastructure:
-    shared.data_structures  (Segment, SpeakerRun)
-    shared.llm_client       (LLM API abstraction, 4 backends)
-    shared.model_loader     (HF model download/load/unload/cache)
-    shared.classification_loop (N-run loop with checkpointing)
-    shared.majority_vote    (single-label + multi-label voting)
-    shared.validation       (balanced sampling)
+    classification_tools.data_structures (Segment, SpeakerRun)
+    classification_tools.llm_client      (LLM API abstraction, 4 backends)
+    classification_tools.model_loader    (HF model download/load/unload/cache)
+    classification_tools.classification_loop (N-run loop with checkpointing)
+    classification_tools.majority_vote   (single-label + multi-label voting)
 ```
 
 ---
 
 ## Core Data Structures
 
-### Segment (`shared/data_structures.py`)
+### Segment (`classification_tools/data_structures.py`)
 
 The `Segment` dataclass is the **atomic unit** of the entire pipeline. Every operation produces or consumes `Segment` objects. Fields are populated progressively through pipeline stages.
 
@@ -308,7 +362,7 @@ class Segment:
     text: str                # Segment text content
     word_count: int
 
-    # Theme labels (populated by theme_labeler, Stage 3-4)
+    # Theme labels (populated by theme classification, Stage 3-4)
     primary_stage: Optional[int]           # Theme ID (e.g., 0 = Vigilance)
     secondary_stage: Optional[int]         # Secondary theme ID or None
     llm_confidence_primary: Optional[float]
@@ -321,7 +375,7 @@ class Segment:
     model_predictions: Optional[Dict]      # Per-model predictions
     total_models: Optional[int]
 
-    # Codebook labels (populated by codebook_classifier, Stage 3b)
+    # Codebook labels (populated by codebook classification, Stage 3b)
     codebook_labels_embedding: Optional[List[str]]   # From embedding classifier
     codebook_labels_llm: Optional[List[str]]         # From LLM classifier
     codebook_labels_ensemble: Optional[List[str]]    # Reconciled final codes
@@ -341,7 +395,7 @@ class Segment:
     label_confidence_tier: Optional[str]   # 'high', 'medium', 'low'
 ```
 
-### ThemeFramework (`theme_labeler/theme_schema.py`)
+### ThemeFramework (`constructs/theme_schema.py`)
 
 Defines a complete classification scheme. Key methods:
 - `build_name_to_id_map()` -- Maps all name variants/aliases to integer IDs
@@ -349,7 +403,7 @@ Defines a complete classification scheme. Key methods:
 - `to_json()` -- Exports as JSON for documentation
 - `build_id_to_short_map()` -- Maps IDs to short display names
 
-### Codebook (`codebook_classifier/codebook_schema.py`)
+### Codebook (`codebook/codebook_schema.py`)
 
 Defines a multi-label classification scheme. Key methods:
 - `to_embedding_targets()` -- Returns list of dicts with `definition`, `criteria`, `exemplars` keys for embedding comparison
@@ -357,31 +411,23 @@ Defines a multi-label classification scheme. Key methods:
 - `get_codes_by_domain(domain)` -- Filters codes by domain
 - `build_name_to_id_map()` -- Maps category names to code IDs
 
-### CodeAssignment (`codebook_classifier/codebook_schema.py`)
+### PipelineConfig (`process/config.py`)
 
-Result of applying a single code to a segment:
-
-```python
-@dataclass
-class CodeAssignment:
-    code_id: str          # Machine ID
-    category: str         # Display name
-    confidence: float     # 0.0 - 1.0
-    justification: str    # Explanation (from LLM method)
-    method: str           # 'embedding', 'llm', or 'ensemble'
-```
+Top-level configuration with serialization support. Key methods:
+- `to_json()` -- Serializes to JSON-safe dict (blanks API keys)
+- `from_json(data)` -- Reconstructs from dict with nested dataclass conversion
 
 ---
 
 ## Module Reference
 
-### `shared/llm_client.py`
+### `classification_tools/llm_client.py`
 
 Unified LLM client supporting four backends:
 
 | Backend | Config | Notes |
 |---|---|---|
-| `huggingface` (default) | Local models via `model_loader.py` | GPU recommended |
+| `huggingface` | Local models via `model_loader.py` | GPU recommended |
 | `openrouter` | `api_key` required | Proprietary models (GPT-4, Claude, etc.) |
 | `replicate` | `replicate_api_token` required | Open-source models |
 | `ollama` | `ollama_host`, `ollama_port` | Local Ollama server |
@@ -392,78 +438,38 @@ Key methods:
 
 Features: automatic retry with exponential backoff, JSON format enforcement, metadata tracking.
 
-### `shared/model_loader.py`
+### `process/pipeline_hooks.py`
 
-Manages three Hugging Face causal LLMs:
+Observer pattern for pipeline events. Three implementations:
+- `PipelineObserver` -- Base class with no-op methods
+- `SilentObserver` -- Minimal output (stage headers + summaries)
+- `GuidedModeObserver` -- Verbose educational narration with `Press Enter to continue` prompts
 
-| Model | ID | Use |
-|---|---|---|
-| Llama 4 Maverick 17B | `meta-llama/Llama-4-Maverick-17B-128E-Instruct` | Cosine similarity axis + theme classification |
-| Mixtral 8x7B Instruct | `mistralai/Mixtral-8x7B-Instruct-v0.1` | Euclidean distance axis + theme classification |
-| Qwen 3 Next 80B | `Qwen/Qwen3-Next-80B-A3B-Instruct` | Cosine distance axis + theme classification |
+Methods: `on_stage_start()`, `on_stage_progress()`, `on_stage_complete()`, `on_pipeline_complete()`
 
-Key functions:
-- `ensure_models_ready(download_if_missing=True)` -- Download and verify all models
-- `load_model(model_id)` -- Load into memory (cached), returns `(model, tokenizer)`
-- `unload_model(model_id)` -- Free VRAM
+### `process/human_validator.py`
 
-Models are loaded with FP16 precision and `device_map="auto"` for automatic GPU/CPU distribution.
+Interactive CLI for human validation of uncertain classifications:
+- `validate_theme_classification(segment, reason)` -- Prompts user to correct theme labels
+- `validate_codebook_disagreement(segment, ensemble_result)` -- Reconciles embedding vs LLM method disagreements
+- `validate_cooccurrence_anomaly(segment, anomaly_details)` -- Reviews theme ↔ codebook mapping violations
 
-### `shared/classification_loop.py`
+All methods respect `skip_confirmation` flag for automated mode. Maintains `validation_log` for audit trail.
 
-Shared N-run classification loop with periodic checkpointing:
-- `classify_segments(segments, client, n_runs, build_prompt, parse_response, merge_runs, ...)` -- Runs each segment through the LLM `n_runs` times, saves checkpoints every `save_interval` segments, supports resume from checkpoint
-- `filter_participant_segments(segments)` -- Filters to participant-only segments
+### `process/setup_wizard.py`
 
-### `shared/majority_vote.py`
+Interactive 9-step configuration wizard:
+1. Input/output paths
+2. Backend & model selection
+3. Framework selection (VA-MR or custom JSON)
+4. Exemplar utterances (optional customization)
+5. Codebook selection and two-pass settings
+6. Classification parameters (n_runs, temperature)
+7. Confidence thresholds
+8. Run mode (auto/interactive/review)
+9. Save config JSON and optionally run
 
-- `single_label_majority_vote(parsed_runs)` -- Determines majority label across N runs, computes consistency count and average confidence
-- `multi_label_majority_vote(all_assignments)` -- Merges multi-label assignments via majority voting (code appears in >= 50% of runs)
-
-### `shared/validation.py`
-
-- `create_balanced_evaluation_set(segments_df, n_per_class=50)` -- Samples balanced subsets stratified by trial_id and label for human annotation
-
-### `theme_labeler/zero_shot_classifier.py`
-
-Zero-shot LLM classification with triplicate consistency checking:
-- `classify_segments_zero_shot(segments, framework, config, resume_from=)` -- Main classification function. Runs each segment N times, returns raw LLM responses keyed by segment_id. Supports multi-model cross-referencing when `config.models` is populated.
-- `create_content_validity_test_set(framework)` -- Extracts exemplar/subtle/adversarial test utterances from framework definitions
-
-### `theme_labeler/response_parser.py`
-
-Multi-pass parsing of LLM outputs with 8-category error taxonomy:
-1. Invalid JSON
-2. Missing required fields
-3. Invalid theme name
-4. Confidence out of bounds
-5. Logic errors (e.g., identical primary and secondary)
-6. Parsing errors
-7. Type mismatches
-8. Unknown errors
-
-Key function: `parse_all_results(results_all, all_segments, name_to_id)` -- Populates `primary_stage`, `secondary_stage`, `llm_confidence_*`, `llm_justification`, `llm_run_consistency` on each Segment.
-
-### `codebook_classifier/llm_classifier.py`
-
-LLM-based multi-label codebook classification:
-- `LLMCodebookClassifier(llm_client, config)` -- Prompts the LLM with the full codebook for each segment
-- `classify_segments(segments, codebook, output_dir=)` -- Runs N times per segment with majority voting, returns `Dict[str, List[CodeAssignment]]`
-
-### `codebook_classifier/ensemble.py`
-
-Reconciles embedding-based and LLM-based classifications:
-- `CodebookEnsemble(config).reconcile(embedding_results, llm_results)` -- Returns `Dict[str, EnsembleResult]`
-
-Reconciliation strategies (via `EnsembleConfig.preferred_method`):
-| Strategy | Behavior |
-|---|---|
-| `'llm'` (default) | Use LLM results as final, flag disagreements |
-| `'embedding'` | Use embedding results as final |
-| `'both'` | Union of both methods |
-| `require_agreement=True` | Only codes agreed by both methods |
-
-### `pipeline/cross_validation.py`
+### `process/cross_validation.py`
 
 Theme-to-codebook co-occurrence analysis:
 - `compute_theme_codebook_cooccurrence(segments_df, framework)` -- Computes per-theme code rates and lift values
@@ -473,7 +479,7 @@ Theme-to-codebook co-occurrence analysis:
 
 ## Pipeline Stages
 
-The orchestrator (`pipeline/orchestrator.py`) executes a 6-stage pipeline:
+The orchestrator (`process/orchestrator.py`) executes a 6-stage pipeline with optional observer and validator hooks:
 
 ### Stage 1: Transcript Ingestion and Segmentation
 
@@ -519,6 +525,7 @@ The orchestrator (`pipeline/orchestrator.py`) executes a 6-stage pipeline:
 - Runs N times per segment (default: 3) for consistency checking
 - When multiple models are configured, cross-references predictions
 - Saves raw results as JSON checkpoints (resumable)
+- Optional: Interactive validation of uncertain classifications (low confidence or inconsistency)
 
 ### Stage 4: Response Parsing
 
@@ -537,7 +544,15 @@ Three sub-steps:
 2. **LLM classification**: Zero-shot multi-label prompting with majority voting
 3. **Ensemble reconciliation**: Agrees/disagrees codes, flags for human review
 
-The orchestrator automatically sets up `codebook_raw/` output directory and configures `exemplar_export_path` for discovered exemplars.
+Optional: Interactive validation of method disagreements
+
+### Stage 4b: Cross-Validation (Optional)
+
+(If both theme and codebook are enabled)
+
+- Computes theme ↔ codebook co-occurrence statistics
+- Validates hypothesized mappings (confirmed/unconfirmed/unexpected associations)
+- Exports results and anomalies
 
 ### Stage 5: Human Validation Set Preparation
 
@@ -565,7 +580,7 @@ Thresholds are configurable via `--high-confidence-threshold` and `--medium-conf
 
 ## Embedding Classifier: Three-Target Two-Pass System
 
-The embedding classifier (`codebook_classifier/embedding_classifier.py`) is the core of the multi-label codebook classification. It uses three causal LLMs to provide independent embedding perspectives via mean-pooled final hidden layer outputs.
+The embedding classifier (`codebook/embedding_classifier.py`) is the core of the multi-label codebook classification. It uses three causal LLMs to provide independent embedding perspectives via mean-pooled final hidden layer outputs.
 
 ### Three Models, Three Axes
 
@@ -645,19 +660,11 @@ When `two_pass=False`: Returns pass-1 results directly.
 }
 ```
 
-### VRAM Management
-
-When `sequential_loading=True` (default), models are loaded and unloaded one at a time to manage GPU memory. Each phase:
-1. Load model + tokenizer
-2. Embed all texts
-3. Unload model (free VRAM)
-4. Compute scoring matrix
-
 ---
 
 ## Configuration Reference
 
-### `PipelineConfig` (`pipeline/config.py`)
+### `PipelineConfig` (`process/config.py`)
 
 Top-level configuration aggregating all sub-configs:
 
@@ -667,6 +674,7 @@ class PipelineConfig:
     transcript_dir: str = './data/input/diarized_sessions/'
     trial_id: str = 'standard'
     output_dir: str = './data/output/'
+    run_mode: str = 'auto'  # 'auto', 'interactive', 'review'
     run_theme_labeler: bool = True
     run_codebook_classifier: bool = False
 
@@ -681,7 +689,9 @@ class PipelineConfig:
     resume_from: Optional[str] = None
 ```
 
-### `SegmentationConfig` (`pipeline/config.py`)
+Methods: `to_json()`, `from_json(data)`
+
+### `SegmentationConfig` (`process/config.py`)
 
 | Field | Default | Description |
 |---|---|---|
@@ -691,7 +701,7 @@ class PipelineConfig:
 | `silence_threshold_ms` | `1500` | Pause duration to trigger boundary |
 | `semantic_shift_percentile` | `25` | Percentile for similarity drop detection |
 
-### `ThemeClassificationConfig` (`theme_labeler/config.py`)
+### `ThemeClassificationConfig` (`constructs/config.py`)
 
 | Field | Default | Description |
 |---|---|---|
@@ -707,45 +717,7 @@ class PipelineConfig:
 | `output_dir` | `'./data/output/llm_labels/'` | Raw LLM output directory |
 | `save_interval` | `20` | Checkpoint every N segments |
 
-### `EmbeddingClassifierConfig` (`codebook_classifier/config.py`)
-
-| Field | Default | Description |
-|---|---|---|
-| `similarity_model` | `'meta-llama/Llama-4-Maverick-17B-128E-Instruct'` | Phase 1 model (cosine similarity) |
-| `distance_model` | `'mistralai/Mixtral-8x7B-Instruct-v0.1'` | Phase 2 model (Euclidean distance) |
-| `tertiary_model` | `'Qwen/Qwen3-Next-80B-A3B-Instruct'` | Phase 3 model (cosine distance) |
-| `similarity_threshold` | `1.375` | Phase 1 veto threshold |
-| `distance_threshold` | `1.325` | Phase 2 veto threshold |
-| `tertiary_threshold` | `1.35` | Phase 3 veto threshold |
-| `max_codes_per_sentence` | `None` | Max codes assigned (auto = 33% of codebook, max 6) |
-| `criteria_weight` | `0.5` | Weight for criteria similarity in scoring |
-| `exemplar_weight` | `0.5` | Weight for exemplar similarity in scoring |
-| `sequential_loading` | `True` | Load/unload models one at a time for VRAM |
-| `exemplar_import_path` | `None` | Path to JSON with pre-populated exemplars |
-| `exemplar_export_path` | `None` | Path to save discovered exemplars (set by orchestrator) |
-| `max_exemplar_tokens` | `512` | Max word count for combined exemplar text per code |
-| `exemplar_confidence_threshold` | `0.8` | Min confidence for a segment to become an exemplar |
-| `two_pass` | `True` | Enable two-pass classification |
-
-### `LLMCodebookConfig` (`codebook_classifier/config.py`)
-
-| Field | Default | Description |
-|---|---|---|
-| `n_runs` | `1` | Number of LLM runs per segment |
-| `max_codes_per_segment` | `5` | Maximum codes to assign |
-| `confidence_threshold` | `0.5` | Minimum confidence to keep a code |
-| `randomize_codebook` | `True` | Shuffle code order in prompt |
-| `save_interval` | `20` | Checkpoint every N segments |
-
-### `EnsembleConfig` (`codebook_classifier/config.py`)
-
-| Field | Default | Description |
-|---|---|---|
-| `require_agreement` | `False` | Only keep codes agreed by both methods |
-| `flag_disagreements` | `True` | Flag segments with method disagreements |
-| `preferred_method` | `'llm'` | Which method's codes to use as final (`'llm'`, `'embedding'`, `'both'`) |
-
-### `ConfidenceTierConfig` (`pipeline/config.py`)
+### `ConfidenceTierConfig` (`process/config.py`)
 
 | Field | Default | Description |
 |---|---|---|
@@ -758,26 +730,51 @@ class PipelineConfig:
 
 ## CLI Reference
 
-### `run_pipeline.py`
+### `qra.py`
 
 ```
-usage: run_pipeline.py [-h] [--transcript-dir DIR] [--output-dir DIR]
-                       [--trial-id ID] [--n-runs N] [--temperature T]
-                       [--high-confidence-threshold F]
-                       [--medium-confidence-threshold F]
-                       [--no-theme-labeler] [--run-codebook-classifier]
-                       [--no-two-pass] [--exemplar-import-path PATH]
-                       [--criteria-weight F] [--exemplar-weight F]
-                       [--exemplar-confidence-threshold F]
-                       [--max-exemplar-tokens N] [--resume-from PATH]
+usage: qra [-h] {setup,run,guided} ...
+
+positional arguments:
+  {setup,run,guided}
+    setup             Interactive configuration wizard
+    run               Execute the classification pipeline
+    guided            Execute with step-by-step educational narration
+```
+
+#### `qra setup`
+
+Runs interactive 9-step configuration wizard. No additional arguments.
+
+#### `qra run`
+
+```
+usage: qra run [-h] [--mode {auto,interactive,review}] [--config CONFIG]
+               [--transcript-dir DIR] [--output-dir DIR] [--trial-id ID]
+               [--backend {openrouter,replicate,huggingface,ollama}]
+               [--model MODEL] [--models MODEL [MODEL ...]]
+               [--framework {vamr,PATH}] [--codebook {phenomenology,PATH}]
+               [--n-runs N] [--temperature T]
+               [--high-confidence-threshold F] [--medium-confidence-threshold F]
+               [--no-theme-labeler] [--run-codebook-classifier]
+               [--no-two-pass] [--exemplar-import-path PATH]
+               [--criteria-weight F] [--exemplar-weight F]
+               [--resume-from PATH]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
+| `--mode` | `auto` | Run mode: `auto`, `interactive`, `review` |
+| `--config, -c` | None | Load config from JSON file |
 | `--transcript-dir` | `./data/input/diarized_sessions/` | Input directory |
 | `--output-dir` | `./data/output/` | Output directory |
-| `--trial-id` | `multi_model_trial` | Trial identifier |
-| `--n-runs` | `3` | Runs per model per segment |
+| `--trial-id` | `standard` | Trial identifier |
+| `--backend` | `openrouter` | LLM backend |
+| `--model` | `openai/gpt-4o` | Primary model |
+| `--models` | `[]` | Multiple models for cross-referencing |
+| `--framework` | `vamr` | Theme framework (vamr or JSON path) |
+| `--codebook` | `phenomenology` | Codebook (phenomenology or JSON path) |
+| `--n-runs` | `3` | Classification runs per segment |
 | `--temperature` | `0.0` | LLM temperature |
 | `--high-confidence-threshold` | `0.8` | High tier threshold |
 | `--medium-confidence-threshold` | `0.6` | Medium tier threshold |
@@ -787,137 +784,115 @@ usage: run_pipeline.py [-h] [--transcript-dir DIR] [--output-dir DIR]
 | `--exemplar-import-path` | None | Pre-populated exemplar JSON |
 | `--criteria-weight` | `0.5` | Criteria similarity weight |
 | `--exemplar-weight` | `0.5` | Exemplar similarity weight |
-| `--exemplar-confidence-threshold` | `0.8` | Min confidence for exemplar discovery |
-| `--max-exemplar-tokens` | `512` | Max words per code's exemplar text |
-| `--resume-from` | None | Checkpoint JSON to resume from |
+| `--resume-from` | None | Checkpoint to resume from |
 
-### `classify_and_label.py`
+#### `qra guided`
 
-```
-usage: classify_and_label.py [-h] [--transcript-dir DIR] [--output-dir DIR]
-                             [--trial-id ID] [--model MODEL] [--n-runs N]
-                             [--backend {openrouter,replicate}]
-                             [--api-key KEY] [--replicate-api-token TOKEN]
-                             [--high-confidence-threshold F]
-                             [--medium-confidence-threshold F]
-                             [--resume-from PATH]
-                             [--run-mode {auto,interactive,review}]
-                             [--no-theme-labeler] [--no-codebook-classifier]
-                             [--no-two-pass] [--exemplar-import-path PATH]
-                             [--criteria-weight F] [--exemplar-weight F]
-                             [--exemplar-confidence-threshold F]
-                             [--max-exemplar-tokens N]
-```
-
-All flags from `run_pipeline.py` plus:
-
-| Flag | Default | Description |
-|---|---|---|
-| `--model` | `openai/gpt-4o` | LLM model for classification |
-| `--backend` | `openrouter` | API backend (`openrouter` or `replicate`) |
-| `--api-key` | `$OPENROUTER_API_KEY` | OpenRouter API key |
-| `--replicate-api-token` | `$REPLICATE_API_TOKEN` | Replicate token |
-| `--run-mode` | `auto` | Validation mode (`auto`, `interactive`, `review`) |
-| `--no-codebook-classifier` | off | Skip codebook classification |
+Same arguments as `qra run` except:
+- No `--mode` flag (always uses interactive mode)
+- Adds educational narration at each stage with `Press Enter to continue` prompts
 
 ---
 
 ## Usage Examples
 
-### Example 1: Theme-Only with Hugging Face Models
+### Example 1: Interactive Setup Wizard
 
 ```bash
-python run_pipeline.py \
-    --transcript-dir ./data/input/diarized_sessions/ \
-    --output-dir ./data/output/
+python qra.py setup
 ```
 
-### Example 2: Full Pipeline with Codebook + Two-Pass
+Walks through 9 configuration steps, saves `qra_config.json`, optionally runs pipeline immediately.
+
+### Example 2: Quick Run with Defaults
 
 ```bash
-python run_pipeline.py \
+python qra.py run \
+    --backend openrouter \
+    --model openai/gpt-4o \
+    --transcript-dir ./data/diarized/
+```
+
+### Example 3: Run from Saved Config
+
+```bash
+python qra.py run --config ./qra_config.json
+```
+
+### Example 4: Interactive Validation Mode
+
+```bash
+python qra.py run \
+    --mode interactive \
+    --backend openrouter \
+    --model openai/gpt-4o \
+    --transcript-dir ./data/diarized/
+```
+
+Prompts for validation of uncertain theme classifications and codebook disagreements.
+
+### Example 5: Guided Mode with Educational Narration
+
+```bash
+python qra.py guided \
+    --backend openrouter \
+    --model openai/gpt-4o \
+    --transcript-dir ./data/diarized/
+```
+
+Pauses at each stage to explain what's happening before proceeding.
+
+### Example 6: Full Pipeline with Codebook + Two-Pass
+
+```bash
+python qra.py run \
     --run-codebook-classifier \
-    --transcript-dir ./data/input/diarized_sessions/ \
-    --output-dir ./data/output/
+    --backend huggingface \
+    --transcript-dir ./data/input/
 ```
 
-Output includes `codebook_raw/found_exemplar_utterances.json` with discovered exemplars.
+Uses HuggingFace models for both theme and codebook classification with two-pass exemplar discovery.
 
-### Example 3: Pre-Populated Exemplars
+### Example 7: Pre-Populated Exemplars
 
 ```bash
-python run_pipeline.py \
+python qra.py run \
     --run-codebook-classifier \
     --exemplar-import-path ./curated_exemplars.json \
     --criteria-weight 0.6 \
     --exemplar-weight 0.8
 ```
 
-### Example 4: Single-Pass Only (Skip Exemplar Discovery)
+### Example 8: Multi-Model Cross-Referencing
 
 ```bash
-python run_pipeline.py \
-    --run-codebook-classifier \
-    --no-two-pass
+python qra.py run \
+    --backend openrouter \
+    --models openai/gpt-4o anthropic/claude-3-sonnet mistralai/mistral-large \
+    --transcript-dir ./data/diarized/
 ```
 
-### Example 5: Interactive Validation with OpenRouter
+Classifies each segment with all three models and tracks agreement.
+
+### Example 9: Resume from Checkpoint
 
 ```bash
-export OPENROUTER_API_KEY="sk-or-..."
-
-python classify_and_label.py \
-    --transcript-dir ./data/diarized/ \
-    --output-dir ./data/output/ \
-    --model openai/gpt-4o \
-    --run-mode interactive
+python qra.py run \
+    --resume-from ./data/output/llm_raw/llm_results_*.json \
+    --mode interactive
 ```
 
-### Example 6: Replicate Backend
+### Example 10: Override Config File Settings
 
 ```bash
-export REPLICATE_API_TOKEN="r8_..."
-
-python classify_and_label.py \
-    --backend replicate \
-    --model google-deepmind/gemma-2b \
-    --run-mode auto
+python qra.py run \
+    --config ./qra_config.json \
+    --n-runs 5 \
+    --mode interactive \
+    --temperature 0.1
 ```
 
-### Example 7: Resume from Checkpoint
-
-```bash
-python classify_and_label.py \
-    --resume-from ./data/output/llm_raw/llm_results_openai_gpt-4o_*.json \
-    --run-mode interactive
-```
-
-### Example 8: Multi-Model Comparison
-
-Run the pipeline multiple times with different models to compare:
-
-```bash
-# Run 1: GPT-4o
-python classify_and_label.py --trial-id gpt4o --model openai/gpt-4o
-
-# Run 2: Claude
-python classify_and_label.py --trial-id claude --model anthropic/claude-3-sonnet
-
-# Run 3: Gemma via Replicate
-python classify_and_label.py --trial-id gemma --backend replicate --model google-deepmind/gemma-2b
-```
-
-Compare results across `trial_id` values in the master segments output.
-
-### Example 9: Custom Confidence Thresholds
-
-```bash
-python run_pipeline.py \
-    --high-confidence-threshold 0.7 \
-    --medium-confidence-threshold 0.5
-```
-
-More segments classified as "high" and "medium" confidence.
+Loads base config from file, overrides specific settings via CLI.
 
 ---
 
@@ -925,10 +900,10 @@ More segments classified as "high" and "medium" confidence.
 
 ### Adding a New Theme Framework
 
-Create `theme_labeler/frameworks/my_framework.py`:
+Create `constructs/my_framework.py`:
 
 ```python
-from ..theme_schema import ThemeFramework, ThemeDefinition
+from .theme_schema import ThemeFramework, ThemeDefinition
 
 def get_my_framework() -> ThemeFramework:
     theme1 = ThemeDefinition(
@@ -941,8 +916,6 @@ def get_my_framework() -> ThemeFramework:
         prototypical_features=['feature 1', 'feature 2'],
         distinguishing_criteria='Key distinction...',
         exemplar_utterances=['Example 1', 'Example 2'],
-        subtle_utterances=['Subtle example 1'],
-        adversarial_utterances=['Could be multiple themes'],
     )
     # Add more themes...
 
@@ -957,22 +930,27 @@ def get_my_framework() -> ThemeFramework:
     )
 ```
 
-Use in pipeline:
+Export as JSON for use with `--framework`:
 
 ```python
-from pipeline.orchestrator import run_full_pipeline
-from theme_labeler.frameworks.my_framework import get_my_framework
+import json
+fw = get_my_framework()
+with open('my_framework.json', 'w') as f:
+    json.dump(fw.to_json(), f, indent=2)
+```
 
-framework = get_my_framework()
-run_full_pipeline(config, framework)
+Use in pipeline:
+
+```bash
+python qra.py run --framework ./my_framework.json
 ```
 
 ### Adding a New Codebook
 
-Create `codebook_classifier/codebooks/my_codebook.py`:
+Create `codebook/my_codebook.py`:
 
 ```python
-from ..codebook_schema import Codebook, CodeDefinition
+from .codebook_schema import Codebook, CodeDefinition
 
 def get_my_codebook() -> Codebook:
     code1 = CodeDefinition(
@@ -996,26 +974,10 @@ def get_my_codebook() -> Codebook:
     )
 ```
 
-Pass to the orchestrator:
+Use in pipeline:
 
-```python
-from codebook_classifier.codebooks.my_codebook import get_my_codebook
-
-codebook = get_my_codebook()
-run_full_pipeline(config, framework, codebook=codebook)
-```
-
-### Custom Segmentation
-
-Override the segmentation by creating `Segment` objects directly:
-
-```python
-from shared.data_structures import Segment
-
-def my_custom_segmenter(sentences, metadata) -> List[Segment]:
-    segments = []
-    # Your segmentation logic...
-    return segments
+```bash
+python qra.py run --codebook ./my_codebook.json --run-codebook-classifier
 ```
 
 ---
@@ -1048,18 +1010,6 @@ Complete segment dataset with all fields. One JSON object per line.
 
 Discovered exemplar segments from the two-pass embedding classifier. Can be fed back as `--exemplar-import-path` for future runs.
 
-```json
-{
-  "fear_anxiety": [
-    "I was so scared that the pain would never stop...",
-    "Every time it flares up I just panic..."
-  ],
-  "meta_cognition": [
-    "I noticed I was getting anxious and I could just watch that..."
-  ]
-}
-```
-
 ### `human_coding_evaluation_set.csv`
 
 Balanced sample of segments for human annotation. Stratified by trial_id and label.
@@ -1068,9 +1018,13 @@ Balanced sample of segments for human annotation. Stratified by trial_id and lab
 
 Complete framework specification as JSON.
 
-### `content_validity_test_set.jsonl`
+### `cross_validation_results_[timestamp].json`
 
-Test utterances extracted from framework definitions (exemplar/subtle/adversarial).
+Theme-to-codebook co-occurrence validation with confirmed/unconfirmed/unexpected associations.
+
+### `human_validation_log_[timestamp].jsonl`
+
+Log of all human validation decisions made during interactive/review mode.
 
 ### `session_adjacency_[timestamp].jsonl`
 
@@ -1080,134 +1034,45 @@ Adjacency relationships between segments within sessions.
 
 Per-session analysis of stage transitions (forward/backward counts).
 
-### `llm_raw/llm_results_[model]_[timestamp].json`
-
-Raw LLM responses before parsing. Acts as checkpoint for resumption.
-
-### `codebook_raw/codebook_llm_results_[timestamp].json`
-
-Raw LLM codebook classification results.
-
-### `cross_validation_results_[timestamp].json` (classify_and_label.py only)
-
-Theme-to-codebook co-occurrence validation with confirmed/unconfirmed/unexpected associations.
-
-### `human_validation_log_[timestamp].jsonl` (classify_and_label.py only)
-
-Log of all human validation decisions made during interactive/review mode.
-
 ---
 
 ## Key Design Decisions
 
-### 1. Segment as Central Data Structure
+### 1. Unified CLI with Subcommands
 
-All operations produce/consume `Segment` objects. Fields are populated progressively -- each pipeline stage adds to the Segment without overwriting prior fields, enabling multi-method ensemble approaches.
+All workflows accessible through `qra.py` with three subcommands (`setup`, `run`, `guided`). Old entry points preserved as backward-compatible shims.
 
-### 2. Framework-Agnostic Pipeline
+### 2. Observer Pattern for UI Feedback
+
+`PipelineObserver` interface enables silent (minimal), verbose (guided), or custom UI feedback without modifying the orchestrator core.
+
+### 3. Human-in-the-Loop Validation
+
+`HumanValidator` class supports interactive validation of uncertain classifications, codebook disagreements, and co-occurrence anomalies with full audit logging.
+
+### 4. Config Serialization
+
+`PipelineConfig.to_json()` / `from_json()` enable saving/loading complete pipeline configurations with nested dataclass reconstruction and API key blanking.
+
+### 5. Framework-Agnostic Pipeline
 
 The pipeline accepts any `ThemeFramework`, not hardcoded to VA-MR. Theme name resolution via `build_name_to_id_map()`, prompt generation parameterized by framework.
 
-### 3. Triple-LLM Embedding (Not BERT)
+### 6. Triple-LLM Embedding
 
 The embedding classifier uses three full causal LLMs (Llama 4 Maverick, Mixtral 8x7B, Qwen 3 Next) rather than traditional sentence transformers. Each model provides a different embedding perspective via mean-pooled hidden states, and all three must agree (triple-veto) for a code to be assigned.
 
-### 4. Two-Pass Exemplar Discovery
+### 7. Two-Pass Exemplar Discovery
 
-Pass 1 identifies high-confidence segments. Pass 2 uses these as additional comparison targets, improving accuracy on codes that have few hand-written exemplars. Discovered exemplars are saved for reuse across runs.
-
-### 5. Additive Scoring (No Subtraction)
-
-The scoring formula is purely additive: `definition + criteria_weight * criteria + exemplar_weight * exemplars`. The old subtractive exclusive_criteria term was removed because the triple-veto system already prevents false positives through its three independent thresholds.
-
-### 6. Triplicate Consistency
-
-Each segment is classified 3 times. Segments with 3/3 agreement are high confidence. This detects LLM instability even at temperature=0 (token randomness in long sequences).
-
-### 7. Sequential Model Loading
-
-Models are loaded and unloaded one at a time to manage VRAM. This trades speed for memory efficiency, enabling the three-model system to run on a single GPU.
-
-### 8. Backward Compatibility
-
-`primary_stage`/`secondary_stage` field names are preserved for backward compatibility with historical VA-MR analysis code.
-
-### 9. Cross-Module Absolute Imports
-
-`from shared.data_structures import Segment` -- clear dependency graph, avoids circular imports, supports CLI entry points.
-
-### 10. Stateless LLM Client
-
-Each segment classified independently. No session/conversation state. Enables parallelization and checkpoint resumption.
-
----
-
-## Troubleshooting
-
-### API Key Issues
-
-```
-Error: No API key provided
-```
-
-**Solution**: Set the environment variable or use the CLI flag:
-```bash
-export OPENROUTER_API_KEY="sk-or-..."
-# or
-python classify_and_label.py --api-key sk-or-...
-```
-
-### CUDA Out of Memory
-
-```
-RuntimeError: CUDA out of memory
-```
-
-**Solutions**:
-1. Enable sequential model loading (default): `sequential_loading=True`
-2. Use CPU: `export CUDA_VISIBLE_DEVICES=""`
-3. Reduce `max_length` in tokenizer (edit `embedding_classifier.py`)
-4. Use FP16 (already default)
-
-### JSON Parsing Errors
-
-```
-extract_json() returned None
-```
-
-**Solutions**:
-1. Check raw LLM responses in `llm_raw/` directory
-2. Use `temperature=0.0` for deterministic output
-3. Use a more capable model (GPT-4o > GPT-3.5)
-
-### Segmentation Quality
-
-If segments are too long or too short:
-```bash
-# Adjust via SegmentationConfig in code, or modify defaults in pipeline/config.py
-# min_segment_words=50, max_segment_words=150, silence_threshold_ms=1000
-```
-
-### Model Download Issues
-
-```
-Error downloading model
-```
-
-**Solutions**:
-1. Check internet connectivity
-2. Accept model license on Hugging Face (some models require agreement)
-3. Set `HF_HOME` environment variable for custom cache directory
-4. Check disk space (~150 GB needed for all three models)
+Pass 1 identifies high-confidence segments. Pass 2 uses these as additional comparison targets, improving accuracy on codes that have few hand-written exemplars. 
 
 ---
 
 ## License
 
-[Include your license here]
-
+MIT 
 ---
 
 ## Contact
 
-For questions or issues, please contact the development team.
+For questions or issues, please contact wade@wadebalsamo.com
