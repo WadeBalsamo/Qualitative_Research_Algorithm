@@ -1,12 +1,14 @@
 """
 model_loader.py
 ---------------
-Setup and validation for locally-hosted Hugging Face models.
+HuggingFace model loader (legacy – not used in the default Ollama pipeline).
 
-Manages three models for cross-referencing:
-- LLAMA 4 Maverick 17B from Hugging Face
-- Mixtral 8x7B Instruct
-- Qwen 3 Next 80B from Hugging Face
+The pipeline now uses local Ollama models by default (mixtral:8x7b).
+This module is retained for users who explicitly select --backend huggingface.
+
+To use the default Ollama pipeline instead:
+    ollama pull mixtral:8x7b
+    python qra.py run
 """
 
 import os

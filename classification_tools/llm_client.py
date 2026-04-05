@@ -15,12 +15,15 @@ from typing import Dict, Optional, Tuple, List
 
 @dataclass
 class LLMClientConfig:
-    """Configuration for the LLM API client."""
-    backend: str = 'huggingface'  # 'openrouter', 'replicate', 'ollama', or 'huggingface'
-    api_key: str = ''
-    replicate_api_token: str = ''
-    model: str = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'  # Single model or list for multi-model
-    models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
+    """Configuration for the LLM API client.
+
+    Defaults to local Ollama with mixtral:8x7b.
+    Ensure Ollama is running and the model is pulled:
+        ollama pull mixtral:8x7b
+    """
+    backend: str = 'ollama'  # 'ollama' (default), 'openrouter', 'replicate', or 'huggingface'
+    model: str = 'mixtral:8x7b'
+    models: List[str] = field(default_factory=list)  # Optional second model for cross-referencing
     temperature: float = 0.0
     max_new_tokens: int = 512
     timeout: int = 120
@@ -28,8 +31,9 @@ class LLMClientConfig:
     retry_base_delay: float = 2.0
     ollama_host: str = '0.0.0.0'
     ollama_port: int = 11434
-    use_gpu: bool = True  # Use GPU if available for Hugging Face models
-    batch_size: int = 1  # For future batch processing
+    # Cloud backend credentials (only needed for openrouter/replicate)
+    api_key: str = ''
+    replicate_api_token: str = ''
 
 
 class LLMClient:

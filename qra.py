@@ -42,14 +42,21 @@ def _add_common_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         '--backend',
         default=None,
-        choices=['openrouter', 'replicate', 'huggingface', 'ollama'],
+        choices=['ollama', 'openrouter', 'replicate', 'huggingface'],
+        help='LLM backend (default: ollama)',
     )
-    parser.add_argument('--model', default=None)
+    parser.add_argument(
+        '--model', default=None,
+        help='Model name (default: mixtral:8x7b for Ollama)',
+    )
     parser.add_argument(
         '--models', nargs='+', default=None,
-        help='Multiple model IDs for cross-referencing',
+        help='Two model IDs for cross-referencing (Ollama only)',
     )
-    parser.add_argument('--api-key', default=None)
+    parser.add_argument('--ollama-host', default=None, help='Ollama host (default: 0.0.0.0)')
+    parser.add_argument('--ollama-port', type=int, default=None, help='Ollama port (default: 11434)')
+    # Cloud backend credentials (not needed for Ollama)
+    parser.add_argument('--api-key', default=None, help='OpenRouter API key')
     parser.add_argument('--replicate-api-token', default=None)
 
     # Framework & codebook
@@ -201,7 +208,7 @@ def _build_config(args):
     if args.temperature is not None:
         tc.temperature = args.temperature
 
-    # API keys: CLI > env > existing config
+    # API keys: only needed for cloud backends (openrouter / replicate)
     if args.api_key is not None:
         tc.api_key = args.api_key
     elif not tc.api_key:
@@ -211,6 +218,14 @@ def _build_config(args):
         tc.replicate_api_token = args.replicate_api_token
     elif not tc.replicate_api_token:
         tc.replicate_api_token = os.environ.get('REPLICATE_API_TOKEN', '')
+
+    # Ollama host/port overrides
+    if hasattr(args, 'ollama_host') and args.ollama_host is not None:
+        tc.ollama_host = args.ollama_host
+        config.codebook_embedding.ollama_host = args.ollama_host
+    if hasattr(args, 'ollama_port') and args.ollama_port is not None:
+        tc.ollama_port = args.ollama_port
+        config.codebook_embedding.ollama_port = args.ollama_port
 
     # Embedding settings
     emb = config.codebook_embedding
@@ -311,9 +326,11 @@ def cmd_run(args):
             codebook_arg = cb.get('custom_path') or cb.get('preset', 'phenomenology')
         codebook = _load_codebook(codebook_arg)
 
-    # HuggingFace model preloading
+    # HuggingFace preloading (only when explicitly selected)
     if config.theme_classification.backend == 'huggingface':
         _preload_huggingface_models(config)
+    elif config.theme_classification.backend == 'ollama':
+        _check_ollama_available(config)
 
     _execute_pipeline(config, framework, codebook)
 
@@ -402,6 +419,30 @@ def _execute_pipeline(config, framework, codebook=None, observer=None, validator
     return master_df
 
 
+def _check_ollama_available(config):
+    """Verify Ollama is reachable and the configured model is available."""
+    import requests
+    tc = config.theme_classification
+    base_url = f"http://{tc.ollama_host}:{tc.ollama_port}"
+    try:
+        resp = requests.get(f"{base_url}/api/tags", timeout=5)
+        data = resp.json()
+        available = [m['name'] for m in data.get('models', [])]
+        model = tc.model
+        # Ollama tags may include digest suffix; do prefix match
+        model_base = model.split(':')[0]
+        found = any(m.startswith(model_base) for m in available)
+        if not found:
+            print(f"\n  WARNING: Model '{model}' not found in Ollama.")
+            print(f"  Available models: {available or '(none)'}")
+            print(f"  Pull it with:  ollama pull {model}\n")
+        else:
+            print(f"  Ollama ready  ({base_url})  model: {model}")
+    except Exception as e:
+        print(f"\n  WARNING: Cannot reach Ollama at {base_url}: {e}")
+        print(f"  Make sure Ollama is running:  ollama serve\n")
+
+
 def _preload_huggingface_models(config):
     """Download and preload HuggingFace models."""
     from classification_tools.model_loader import ensure_models_ready, load_model
@@ -441,12 +482,22 @@ def main():
         description='QRA: Qualitative Research Algorithm pipeline',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Setup (one-time):
+  ollama pull mixtral:8x7b          # primary model (~26 GB, Q4)
+  ollama pull mistral:7b-instruct   # secondary model for embedding classifier (~4 GB)
+
 Examples:
   # Interactive setup wizard
   python qra.py setup
 
-  # Run pipeline with defaults
-  python qra.py run --backend openrouter --model openai/gpt-4o
+  # Run with local Ollama (default – mixtral:8x7b)
+  python qra.py run
+
+  # Run with a different local model
+  python qra.py run --model mistral:7b-instruct
+
+  # Run with two models for cross-referencing
+  python qra.py run --models mixtral:8x7b mistral:7b-instruct
 
   # Run with saved config
   python qra.py run --config ./qra_config.json
@@ -457,8 +508,8 @@ Examples:
   # Guided mode with educational narration
   python qra.py guided
 
-  # HuggingFace multi-model pipeline
-  python qra.py run --backend huggingface
+  # Cloud fallback (requires API key)
+  python qra.py run --backend openrouter --model openai/gpt-4o --api-key $OPENROUTER_API_KEY
         """,
     )
 

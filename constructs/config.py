@@ -3,10 +3,10 @@ config.py
 ---------
 Configuration for theme/stage classification via LLM zero-shot prompting.
 
-Supports single-model or multi-model cross-referencing.
+Uses a local Ollama backend with mixtral:8x7b by default.
+Pull the model with: ollama pull mixtral:8x7b
 """
 
-import os
 from dataclasses import dataclass, field
 from typing import List
 
@@ -14,14 +14,13 @@ from typing import List
 @dataclass
 class ThemeClassificationConfig:
     """Parameters for zero-shot LLM theme classification."""
-    model: str = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'  # Primary model (used when models list is empty)
-    models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
+    # Primary model served via local Ollama (ollama pull mixtral:8x7b)
+    model: str = 'mixtral:8x7b'
+    models: List[str] = field(default_factory=list)  # Optional second model for cross-referencing
     temperature: float = 0.0
     n_runs: int = 3
     randomize_codebook: bool = True
-    api_key: str = field(default_factory=lambda: os.environ.get('OPENROUTER_API_KEY', ''))
-    backend: str = 'huggingface'  # 'openrouter', 'replicate', 'ollama', or 'huggingface'
-    replicate_api_token: str = field(default_factory=lambda: os.environ.get('REPLICATE_API_TOKEN', ''))
+    backend: str = 'ollama'
     max_new_tokens: int = 512
     output_dir: str = './data/output/llm_labels/'
     save_interval: int = 20
