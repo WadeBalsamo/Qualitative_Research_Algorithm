@@ -38,6 +38,8 @@ class EmbeddingClassifierConfig:
     max_exemplar_tokens: int = 512                  # word-count cap per code
     exemplar_confidence_threshold: float = 0.8      # min confidence to qualify
     two_pass: bool = True                           # enable two-pass classification
+    max_retries: int = 3
+    retry_base_delay: float = 2.0
 
 
 @dataclass

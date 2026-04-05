@@ -7,6 +7,7 @@ Uses a local Ollama backend with mixtral:8x7b by default.
 Pull the model with: ollama pull mixtral:8x7b
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import List
 
@@ -26,3 +27,6 @@ class ThemeClassificationConfig:
     save_interval: int = 20
     ollama_host: str = '0.0.0.0'
     ollama_port: int = 11434
+    # Cloud backend credentials — only needed when backend='openrouter' or 'replicate'
+    api_key: str = field(default_factory=lambda: os.environ.get('OPENROUTER_API_KEY', ''))
+    replicate_api_token: str = field(default_factory=lambda: os.environ.get('REPLICATE_API_TOKEN', ''))
