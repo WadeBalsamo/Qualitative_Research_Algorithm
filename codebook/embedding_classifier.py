@@ -1,40 +1,45 @@
 """
 embedding_classifier.py
 -----------------------
-Multi-label codebook classification using hidden-state embeddings from
-three causal LLMs (cosine similarity, Euclidean distance, cosine distance).
+Multi-label codebook classification using embeddings from local Ollama models.
 
-Each model provides an independent embedding perspective via mean-pooled
-final hidden layer outputs.  Models are loaded and unloaded sequentially
-by default to manage VRAM.
+Embeddings are retrieved via the Ollama /api/embeddings endpoint (no GPU or
+HuggingFace weights required – just a running Ollama service).
 
-Supports a two-pass approach: pass 1 discovers high-confidence exemplar
-segments that enrich the comparison targets for pass 2.
+Classification uses a dual-axis scoring system:
+  1. Primary model (mixtral:8x7b)  – cosine similarity + cosine distance axes
+  2. Secondary model (mistral:7b-instruct, optional) – Euclidean distance axis
+     If secondary_model is empty, the primary model handles all three axes.
+
+All three conditions must pass for a code to be assigned (triple-veto).
+
+Supports a two-pass approach: pass 1 discovers high-confidence exemplars that
+enrich comparison targets for pass 2.
 
 Accepts Segment objects and Codebook instances.
 """
 
 import json
+import time
 import numpy as np
-import torch
+import requests
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy.spatial.distance import cdist
 from typing import Dict, List, Optional, Tuple
 
 from classification_tools.data_structures import Segment
-from classification_tools.model_loader import load_model, unload_model
 from .codebook_schema import Codebook, CodeAssignment
 from .config import EmbeddingClassifierConfig
 
 
 class EmbeddingCodebookClassifier:
     """
-    Applies a qualitative codebook to segments via LLM embedding similarity.
+    Applies a qualitative codebook to segments via Ollama embedding similarity.
 
-    Uses a triple-veto scoring system with three distinct causal LLMs:
-    1. Cosine similarity  (Model 1 – Llama 4 Maverick)
-    2. Euclidean distance  (Model 2 – Mixtral 8x7B)
-    3. Cosine distance     (Model 3 – Qwen 3 Next, replaces sentiment)
+    Uses one or two local Ollama models for a triple-metric scoring system:
+      1. Cosine similarity   (primary model)
+      2. Euclidean distance  (secondary model, or primary if not set)
+      3. Cosine distance     (primary model)
 
     All three conditions must be met for a code to be assigned.
 
@@ -44,57 +49,42 @@ class EmbeddingCodebookClassifier:
 
     def __init__(self, config: Optional[EmbeddingClassifierConfig] = None):
         self.config = config or EmbeddingClassifierConfig()
+        self._base_url = (
+            f"http://{self.config.ollama_host}:{self.config.ollama_port}"
+        )
 
     # ------------------------------------------------------------------
-    # Embedding helper
+    # Ollama embedding helper
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _embed_text_with_model(
-        text: str,
-        model,
-        tokenizer,
-    ) -> Optional[np.ndarray]:
-        """Compute mean-pooled embedding from a causal LLM's final hidden layer.
+    def _get_embedding(self, text: str, model: str) -> Optional[np.ndarray]:
+        """Fetch a text embedding from the Ollama /api/embeddings endpoint.
 
-        Returns a (1, hidden_dim) float32 ndarray, or None on failure.
+        Returns a (1, dim) float32 ndarray, or None on failure.
         """
-        try:
-            inputs = tokenizer(
-                text,
-                return_tensors="pt",
-                truncation=True,
-                max_length=512,
-            )
-            # Move inputs to model device
-            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        for attempt in range(3):
+            try:
+                resp = requests.post(
+                    f"{self._base_url}/api/embeddings",
+                    json={"model": model, "prompt": text},
+                    timeout=60,
+                )
+                data = resp.json()
+                vec = data.get("embedding")
+                if vec:
+                    return np.array(vec, dtype=np.float32).reshape(1, -1)
+                return None
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                else:
+                    print(f"  Ollama embedding error for model {model}: {e}")
+                    return None
+        return None
 
-            with torch.no_grad():
-                outputs = model(**inputs, output_hidden_states=True)
-
-            # Last hidden layer: (batch=1, seq_len, hidden_dim)
-            hidden = outputs.hidden_states[-1]
-            # Mean-pool over sequence length → (1, hidden_dim)
-            pooled = hidden.mean(dim=1).float().cpu().numpy()
-            return pooled
-        except Exception:
-            return None
-
-    # ------------------------------------------------------------------
-    # Batch embedding for a given model
-    # ------------------------------------------------------------------
-
-    def _embed_all(
-        self,
-        texts: List[str],
-        model,
-        tokenizer,
-    ) -> List[Optional[np.ndarray]]:
-        """Embed every text with the provided model/tokenizer pair."""
-        return [
-            self._embed_text_with_model(t, model, tokenizer)
-            for t in texts
-        ]
+    def _embed_all(self, texts: List[str], model: str) -> List[Optional[np.ndarray]]:
+        """Embed every text using the given Ollama model."""
+        return [self._get_embedding(t, model) for t in texts]
 
     # ------------------------------------------------------------------
     # Exemplar I/O
@@ -102,16 +92,11 @@ class EmbeddingCodebookClassifier:
 
     @staticmethod
     def _load_exemplars(path: str) -> Dict[str, List[str]]:
-        """Load exemplar texts from a JSON file.
-
-        File format: {"code_id": ["text1", "text2"], ...}
-        """
         with open(path, 'r') as f:
             return json.load(f)
 
     @staticmethod
     def _save_exemplars(path: str, exemplars: Dict[str, List[str]]) -> None:
-        """Save exemplar texts to a JSON file."""
         with open(path, 'w') as f:
             json.dump(exemplars, f, indent=2)
 
@@ -124,10 +109,9 @@ class EmbeddingCodebookClassifier:
         targets: List[Dict[str, str]],
         exemplar_texts_by_code: Dict[str, List[str]],
     ) -> Tuple[List[str], List[str], List[str]]:
-        """Build the three target text lists from codebook targets and external exemplars.
+        """Build definition, criteria, and exemplar text lists from codebook targets.
 
-        Returns (definition_texts, criteria_texts, exemplar_texts) where
-        exemplar_texts[j] may be empty string if no exemplars are available.
+        Returns (definition_texts, criteria_texts, exemplar_texts).
         """
         max_words = self.config.max_exemplar_tokens
         definition_texts = [t['definition'] for t in targets]
@@ -136,15 +120,12 @@ class EmbeddingCodebookClassifier:
         exemplar_texts = []
         for t in targets:
             code_id = t['code_id']
-            # Combine codebook exemplars with external exemplars
             parts = []
             if t['exemplars']:
                 parts.append(t['exemplars'])
             for ext_text in exemplar_texts_by_code.get(code_id, []):
                 parts.append(ext_text)
-
             combined = ' '.join(parts)
-            # Truncate to max_words
             words = combined.split()
             if len(words) > max_words:
                 combined = ' '.join(words[:max_words])
@@ -162,11 +143,14 @@ class EmbeddingCodebookClassifier:
         codebook: Codebook,
         exemplar_texts_by_code: Dict[str, List[str]],
     ) -> Dict[str, List[CodeAssignment]]:
-        """Run one full pass of triple-LLM embedding classification.
+        """Run one full pass of Ollama-based embedding classification.
 
-        Contains all model-loading, embedding, matrix-building, and
-        triple-veto logic.
+        Uses the primary Ollama model (and optionally a secondary model) to
+        compute embeddings, then applies a triple-metric veto.
         """
+        primary = self.config.primary_model
+        secondary = self.config.secondary_model or primary
+
         texts = [seg.text for seg in segments]
         targets = codebook.to_embedding_targets()
 
@@ -184,89 +168,80 @@ class EmbeddingCodebookClassifier:
         definition_texts, criteria_texts, exemplar_texts = self._build_target_texts(
             targets, exemplar_texts_by_code,
         )
-        # For the tertiary axis: definition + criteria
         tertiary_target_texts = [
             d + ' ' + c for d, c in zip(definition_texts, criteria_texts)
         ]
 
-        # ---- Phase 1: Similarity axis (Llama 4 Maverick) ----
-        model, tokenizer = load_model(self.config.similarity_model)
-
-        sent_embs_1 = self._embed_all(texts, model, tokenizer)
-        def_embs_1 = self._embed_all(definition_texts, model, tokenizer)
-        crit_embs_1 = self._embed_all(criteria_texts, model, tokenizer)
-        exm_embs_1 = [
-            self._embed_text_with_model(t, model, tokenizer) if t else None
+        # ---- Axis 1 & 3: Primary model embeddings ----
+        print(f"  [embedding] Computing primary embeddings ({primary})...")
+        sent_embs_p = self._embed_all(texts, primary)
+        def_embs_p = self._embed_all(definition_texts, primary)
+        crit_embs_p = self._embed_all(criteria_texts, primary)
+        exm_embs_p = [
+            self._get_embedding(t, primary) if t else None
             for t in exemplar_texts
         ]
+        tert_embs_p = self._embed_all(tertiary_target_texts, primary)
 
-        if self.config.sequential_loading:
-            unload_model(self.config.similarity_model)
-
+        # Cosine similarity matrix (axis 1)
         sim_matrix = np.zeros((n_sents, n_codes))
         for i in range(n_sents):
-            if sent_embs_1[i] is None:
+            if sent_embs_p[i] is None:
                 continue
             for j in range(n_codes):
-                if def_embs_1[j] is None or crit_embs_1[j] is None:
+                if def_embs_p[j] is None or crit_embs_p[j] is None:
                     continue
                 score = (
-                    cosine_similarity(sent_embs_1[i], def_embs_1[j])[0, 0]
-                    + cw * cosine_similarity(sent_embs_1[i], crit_embs_1[j])[0, 0]
+                    cosine_similarity(sent_embs_p[i], def_embs_p[j])[0, 0]
+                    + cw * cosine_similarity(sent_embs_p[i], crit_embs_p[j])[0, 0]
                 )
-                if exm_embs_1[j] is not None:
-                    score += ew * cosine_similarity(sent_embs_1[i], exm_embs_1[j])[0, 0]
+                if exm_embs_p[j] is not None:
+                    score += ew * cosine_similarity(sent_embs_p[i], exm_embs_p[j])[0, 0]
                 sim_matrix[i, j] = weights[j] * score
 
-        # ---- Phase 2: Distance axis (Mixtral 8x7B) ----
-        model, tokenizer = load_model(self.config.distance_model)
+        # Cosine distance matrix (axis 3) – uses same primary embeddings
+        tert_matrix = np.zeros((n_sents, n_codes))
+        for i in range(n_sents):
+            if sent_embs_p[i] is None:
+                continue
+            for j in range(n_codes):
+                if tert_embs_p[j] is None:
+                    continue
+                tert_matrix[i, j] = 1.0 - cosine_similarity(
+                    sent_embs_p[i], tert_embs_p[j]
+                )[0, 0]
 
-        sent_embs_2 = self._embed_all(texts, model, tokenizer)
-        def_embs_2 = self._embed_all(definition_texts, model, tokenizer)
-        crit_embs_2 = self._embed_all(criteria_texts, model, tokenizer)
-        exm_embs_2 = [
-            self._embed_text_with_model(t, model, tokenizer) if t else None
-            for t in exemplar_texts
-        ]
-
-        if self.config.sequential_loading:
-            unload_model(self.config.distance_model)
+        # ---- Axis 2: Secondary model (Euclidean distance) ----
+        if secondary != primary:
+            print(f"  [embedding] Computing secondary embeddings ({secondary})...")
+            sent_embs_s = self._embed_all(texts, secondary)
+            def_embs_s = self._embed_all(definition_texts, secondary)
+            crit_embs_s = self._embed_all(criteria_texts, secondary)
+            exm_embs_s = [
+                self._get_embedding(t, secondary) if t else None
+                for t in exemplar_texts
+            ]
+        else:
+            # Reuse primary embeddings for the distance axis
+            sent_embs_s = sent_embs_p
+            def_embs_s = def_embs_p
+            crit_embs_s = crit_embs_p
+            exm_embs_s = exm_embs_p
 
         dist_matrix = np.zeros((n_sents, n_codes))
         for i in range(n_sents):
-            if sent_embs_2[i] is None:
+            if sent_embs_s[i] is None:
                 continue
             for j in range(n_codes):
-                if def_embs_2[j] is None or crit_embs_2[j] is None:
+                if def_embs_s[j] is None or crit_embs_s[j] is None:
                     continue
                 score = (
-                    cdist(sent_embs_2[i], def_embs_2[j], 'euclidean')[0, 0]
-                    + cw * cdist(sent_embs_2[i], crit_embs_2[j], 'euclidean')[0, 0]
+                    cdist(sent_embs_s[i], def_embs_s[j], 'euclidean')[0, 0]
+                    + cw * cdist(sent_embs_s[i], crit_embs_s[j], 'euclidean')[0, 0]
                 )
-                if exm_embs_2[j] is not None:
-                    score += ew * cdist(sent_embs_2[i], exm_embs_2[j], 'euclidean')[0, 0]
+                if exm_embs_s[j] is not None:
+                    score += ew * cdist(sent_embs_s[i], exm_embs_s[j], 'euclidean')[0, 0]
                 dist_matrix[i, j] = weights[j] * score
-
-        # ---- Phase 3: Tertiary axis (Qwen 3 Next – replaces sentiment) ----
-        model, tokenizer = load_model(self.config.tertiary_model)
-
-        sent_embs_3 = self._embed_all(texts, model, tokenizer)
-        tert_target_embs = self._embed_all(tertiary_target_texts, model, tokenizer)
-
-        if self.config.sequential_loading:
-            unload_model(self.config.tertiary_model)
-
-        tert_matrix = np.zeros((n_sents, n_codes))
-        for i in range(n_sents):
-            if sent_embs_3[i] is None:
-                continue
-            for j in range(n_codes):
-                if tert_target_embs[j] is None:
-                    continue
-                # Cosine distance = 1 - cosine_similarity
-                tert_matrix[i, j] = 1.0 - cosine_similarity(
-                    sent_embs_3[i], tert_target_embs[j]
-                )[0, 0]
 
         # ---- Triple-veto scoring ----
         results: Dict[str, List[CodeAssignment]] = {}
@@ -277,7 +252,7 @@ class EmbeddingCodebookClassifier:
         max_candidates = max(1, max_codes // 3)
 
         for i, segment in enumerate(segments):
-            if sent_embs_1[i] is None:
+            if sent_embs_p[i] is None:
                 results[segment.segment_id] = []
                 continue
 
@@ -290,26 +265,16 @@ class EmbeddingCodebookClassifier:
             candidates = set(nearest) | set(most_similar) | set(closest_tertiary)
 
             for j in candidates:
-                avg_sim = max(
-                    np.mean(sim_matrix[:, j]),
-                    np.mean(sim_matrix),
-                )
-                avg_dist = max(
-                    np.mean(dist_matrix[:, j]),
-                    np.mean(dist_matrix),
-                )
-                avg_tert = max(
-                    np.mean(tert_matrix[:, j]),
-                    np.mean(tert_matrix),
-                )
+                avg_sim = max(np.mean(sim_matrix[:, j]), np.mean(sim_matrix))
+                avg_dist = max(np.mean(dist_matrix[:, j]), np.mean(dist_matrix))
+                avg_tert = max(np.mean(tert_matrix[:, j]), np.mean(tert_matrix))
 
-                passes_tertiary = tert_matrix[i, j] < avg_tert / tert_thresh
                 passes_similarity = sim_matrix[i, j] > avg_sim * sim_thresh
                 passes_distance = dist_matrix[i, j] < avg_dist / dist_thresh
+                passes_tertiary = tert_matrix[i, j] < avg_tert / tert_thresh
 
-                if passes_tertiary and passes_similarity and passes_distance:
+                if passes_similarity and passes_distance and passes_tertiary:
                     code = codebook.codes[j]
-                    # Compute a normalized confidence from the similarity score
                     confidence = min(1.0, max(0.0,
                         sim_matrix[i, j] / (avg_sim * sim_thresh)
                     ))
@@ -333,18 +298,12 @@ class EmbeddingCodebookClassifier:
         segments: List[Segment],
         results: Dict[str, List[CodeAssignment]],
     ) -> Dict[str, List[str]]:
-        """Collect high-confidence segment texts as exemplars from classification results.
-
-        Per code: sorts by confidence descending, concatenates texts, and
-        truncates to max_exemplar_tokens words.
-        """
+        """Collect high-confidence segment texts as exemplars."""
         threshold = self.config.exemplar_confidence_threshold
         max_words = self.config.max_exemplar_tokens
 
-        # Build segment_id -> text lookup
         seg_text = {seg.segment_id: seg.text for seg in segments}
 
-        # Collect (confidence, text) per code
         code_candidates: Dict[str, List[Tuple[float, str]]] = {}
         for seg_id, assignments in results.items():
             for a in assignments:
@@ -353,7 +312,6 @@ class EmbeddingCodebookClassifier:
                         (a.confidence, seg_text.get(seg_id, ''))
                     )
 
-        # Sort by confidence descending, truncate to word budget
         exemplars: Dict[str, List[str]] = {}
         for code_id, candidates in code_candidates.items():
             candidates.sort(key=lambda x: x[0], reverse=True)
@@ -362,7 +320,6 @@ class EmbeddingCodebookClassifier:
             for _, text in candidates:
                 words = text.split()
                 if total_words + len(words) > max_words:
-                    # Take partial if we have nothing yet
                     remaining = max_words - total_words
                     if remaining > 0 and not collected:
                         collected.append(' '.join(words[:remaining]))
@@ -384,34 +341,29 @@ class EmbeddingCodebookClassifier:
         codebook: Codebook,
     ) -> Dict[str, List[CodeAssignment]]:
         """
-        Apply codebook to all segments via triple-LLM embedding similarity.
+        Apply codebook to all segments via Ollama embedding similarity.
 
-        If two_pass is enabled (default), runs two passes:
+        If two_pass is enabled (default):
           1. Pass 1 with any pre-populated exemplars
           2. Accumulates high-confidence segments as new exemplars
           3. Pass 2 with merged exemplars for improved accuracy
 
-        Returns a dict mapping segment_id -> list of assigned CodeAssignments.
+        Returns a dict mapping segment_id -> list of CodeAssignments.
         """
-        # Load pre-populated exemplars if available
         imported_exemplars: Dict[str, List[str]] = {}
         if self.config.exemplar_import_path:
             imported_exemplars = self._load_exemplars(self.config.exemplar_import_path)
 
-        # Pass 1
         pass1_results = self._run_single_pass(segments, codebook, imported_exemplars)
 
         if not self.config.two_pass:
             return pass1_results
 
-        # Accumulate exemplars from pass-1 results
         discovered_exemplars = self._accumulate_exemplars(segments, pass1_results)
 
-        # Save discovered exemplars if export path is set
         if self.config.exemplar_export_path and discovered_exemplars:
             self._save_exemplars(self.config.exemplar_export_path, discovered_exemplars)
 
-        # Merge imported + discovered exemplars
         merged_exemplars: Dict[str, List[str]] = {}
         for code_id in set(list(imported_exemplars.keys()) + list(discovered_exemplars.keys())):
             merged_exemplars[code_id] = (
@@ -419,5 +371,4 @@ class EmbeddingCodebookClassifier:
                 + discovered_exemplars.get(code_id, [])
             )
 
-        # Pass 2 with enriched exemplars
         return self._run_single_pass(segments, codebook, merged_exemplars)

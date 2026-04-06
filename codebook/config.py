@@ -2,6 +2,10 @@
 config.py
 ---------
 Configuration dataclasses for codebook classification methods.
+
+The embedding classifier uses local Ollama models via /api/embeddings.
+Primary: mixtral:8x7b  (ollama pull mixtral:8x7b)
+Secondary (optional): mistral:7b-instruct  (ollama pull mistral:7b-instruct)
 """
 
 from dataclasses import dataclass
@@ -10,24 +14,25 @@ from typing import Optional
 
 @dataclass
 class EmbeddingClassifierConfig:
-    """Config for the triple-LLM embedding codebook classifier.
+    """Config for the Ollama embedding codebook classifier.
 
-    Uses three causal LLMs from shared/model_loader.py, each providing
-    an independent embedding perspective via hidden-state mean-pooling:
-      1. similarity_model  – cosine similarity axis
-      2. distance_model    – Euclidean distance axis
-      3. tertiary_model    – cosine distance axis (replaces sentiment)
+    Uses one or two local Ollama models for embedding-based classification:
+      - primary_model: used for cosine-similarity and cosine-distance axes
+      - secondary_model: used for the Euclidean-distance axis; if empty, the
+        primary model is reused (single-model mode)
+
+    Embeddings are obtained via the Ollama /api/embeddings endpoint.
     """
-    similarity_model: str = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'
-    distance_model: str = 'mistralai/Mixtral-8x7B-Instruct-v0.1'
-    tertiary_model: str = 'Qwen/Qwen3-Next-80B-A3B-Instruct'
+    primary_model: str = 'mixtral:8x7b'
+    secondary_model: str = 'mistral:7b-instruct'   # set to '' to use primary for all axes
+    ollama_host: str = '0.0.0.0'
+    ollama_port: int = 11434
     similarity_threshold: float = 1.375
     distance_threshold: float = 1.325
     tertiary_threshold: float = 1.35
     max_codes_per_sentence: Optional[int] = None  # None = auto (33% of codebook, max 6)
     criteria_weight: float = 0.5
     exemplar_weight: float = 0.5
-    sequential_loading: bool = True  # load/unload models one at a time to manage VRAM
     exemplar_import_path: Optional[str] = None      # JSON file with pre-populated exemplars
     exemplar_export_path: Optional[str] = None      # where to write discovered exemplars
     max_exemplar_tokens: int = 512                  # word-count cap per code
