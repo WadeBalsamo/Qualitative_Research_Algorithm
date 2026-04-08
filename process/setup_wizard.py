@@ -242,31 +242,30 @@ class SetupWizard:
             # Use defaults
             self.config_data['segmentation'] = {
                 'use_conversational_segmenter': True,
-                'group_cross_speaker': False,
                 'max_gap_seconds': 30.0,
                 'min_words_per_sentence': 10,
                 'max_segment_duration_seconds': 300.0,
                 'min_segment_words_conversational': 60,
                 'max_segment_words_conversational': 400,
+                'use_adaptive_threshold': True,
+                'min_prominence': 0.05,
+                'use_topic_clustering': False,
+                'use_llm_refinement': False,
+                'llm_refinement_mode': 'boundary_review',
             }
             print("    Using defaults: no cross-speaker grouping, 30s max gap,")
             print("    10-word min per sentence, 5min max segment duration,")
-            print("    60-400 word segments.")
+            print("    60-400 word segments, adaptive threshold enabled.")
             print()
             return
 
         use_conv = _prompt_yes_no(
             "Use conversational segmenter (groups by topic across speakers)?", True
         )
-        group_cross = False
-        if use_conv:
-            group_cross = _prompt_yes_no(
-                "Group consecutive utterances across different speakers?", False
-            )
 
         max_gap = _prompt_float("Max time gap (seconds) between utterances to group", 30.0)
         min_words_sent = _prompt_int("Min words per sentence (shorter sentences are dropped)", 10)
-        max_duration = _prompt_float("Max segment duration (seconds)", 300.0)
+        max_duration = _prompt_float("Max segment duration (seconds)", 30.0)
 
         if use_conv:
             min_words = _prompt_int("Min words per segment (conversational)", 60)
@@ -275,14 +274,47 @@ class SetupWizard:
             min_words = _prompt_int("Min words per segment", 30)
             max_words = _prompt_int("Max words per segment", 200)
 
+        # Adaptive threshold
+        use_adaptive = _prompt_yes_no(
+            "Use adaptive similarity threshold (local minima detection)?", True
+        )
+        min_prominence = 0.05
+        if use_adaptive:
+            min_prominence = _prompt_float("Min prominence for similarity dips", 0.05)
+
+        # Topic clustering
+        use_clustering = _prompt_yes_no(
+            "Use topic clustering for additional boundary detection?", True
+        )
+
+        # LLM refinement
+        use_llm_refine = _prompt_yes_no(
+            "Use LLM-based boundary refinement?", True
+        )
+        llm_refine_mode = 'boundary_review'
+        if use_llm_refine:
+            print("    Refinement modes:")
+            print("      boundary_review     : Re-evaluate ambiguous boundaries")
+            print("      cross_speaker_merge : Merge cross-speaker conversational units")
+            print("      full                : Both passes")
+            llm_refine_mode = _prompt_choice(
+                "Refinement mode",
+                ['boundary_review', 'cross_speaker_merge', 'full'],
+                'full',
+            )
+
         self.config_data['segmentation'] = {
             'use_conversational_segmenter': use_conv,
-            'group_cross_speaker': group_cross,
             'max_gap_seconds': max_gap,
             'min_words_per_sentence': min_words_sent,
             'max_segment_duration_seconds': max_duration,
             'min_segment_words_conversational' if use_conv else 'min_segment_words': min_words,
             'max_segment_words_conversational' if use_conv else 'max_segment_words': max_words,
+            'use_adaptive_threshold': use_adaptive,
+            'min_prominence': min_prominence,
+            'use_topic_clustering': use_clustering,
+            'use_llm_refinement': use_llm_refine,
+            'llm_refinement_mode': llm_refine_mode,
         }
         print()
 
@@ -544,10 +576,17 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             max_segment_words=seg.get('max_segment_words', 200),
             min_segment_words_conversational=seg.get('min_segment_words_conversational', 60),
             max_segment_words_conversational=seg.get('max_segment_words_conversational', 400),
-            group_cross_speaker=seg.get('group_cross_speaker', False),
             max_gap_seconds=seg.get('max_gap_seconds', 30.0),
             min_words_per_sentence=seg.get('min_words_per_sentence', 10),
             max_segment_duration_seconds=seg.get('max_segment_duration_seconds', 300.0),
+            use_adaptive_threshold=seg.get('use_adaptive_threshold', True),
+            min_prominence=seg.get('min_prominence', 0.05),
+            broad_window_size=seg.get('broad_window_size', 7),
+            use_topic_clustering=seg.get('use_topic_clustering', False),
+            use_llm_refinement=seg.get('use_llm_refinement', False),
+            llm_refinement_mode=seg.get('llm_refinement_mode', 'boundary_review'),
+            llm_ambiguity_threshold=seg.get('llm_ambiguity_threshold', 0.15),
+            llm_batch_size=seg.get('llm_batch_size', 5),
         ),
         speaker_filter=SpeakerFilterConfig(
             mode=sf.get('mode', 'none'),
