@@ -37,6 +37,16 @@ class SegmentationConfig:
     max_gap_seconds: float = 30.0              # Max time gap (seconds) between utterances to group
     min_words_per_sentence: int = 10           # Min words for a sentence to be kept as segment input
     max_segment_duration_seconds: float = 300.0  # Max duration (seconds) of a single segment
+    # Adaptive threshold / dual-window / clustering
+    use_adaptive_threshold: bool = True        # Use local-minima detection instead of static percentile
+    min_prominence: float = 0.05               # Minimum prominence for adaptive threshold peaks
+    broad_window_size: int = 7                 # Window size for broad similarity curve
+    use_topic_clustering: bool = False         # Use AgglomerativeClustering for topic boundaries
+    # LLM refinement
+    use_llm_refinement: bool = False           # Enable LLM-based boundary refinement
+    llm_refinement_mode: str = 'boundary_review'  # 'boundary_review', 'cross_speaker_merge', or 'full'
+    llm_ambiguity_threshold: float = 0.15      # Similarity threshold for ambiguous boundaries
+    llm_batch_size: int = 5                    # Number of boundaries per LLM batch call
 
 
 @dataclass
