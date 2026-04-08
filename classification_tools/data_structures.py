@@ -74,6 +74,10 @@ class Segment:
     final_label_source: Optional[str] = None
     label_confidence_tier: Optional[str] = None
 
+    # Conversational segmenter fields
+    speakers_in_segment: Optional[List[str]] = None  # All speakers who contributed
+    session_file: str = ""  # Source file path (for per-transcript reporting)
+
 
 @dataclass
 class SpeakerRun:

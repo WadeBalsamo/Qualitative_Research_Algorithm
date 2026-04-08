@@ -9,18 +9,19 @@ that can later be loaded with ``qra run --config``.
 
 import json
 import os
-from typing import Optional
+from typing import Optional, List
 
 from constructs.theme_schema import ThemeFramework
 from constructs.vamr import get_vamr_framework
 from constructs.config import ThemeClassificationConfig
-from codebook.config import EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
+from codebook.config import EmbeddingClassifierConfig
 from .config import (
     PipelineConfig,
     SegmentationConfig,
     ValidationConfig,
     ConfidenceTierConfig,
 )
+from .transcript_ingestion import scan_speakers
 
 
 def _prompt(label: str, default: str = '') -> str:
@@ -75,21 +76,23 @@ class SetupWizard:
         self.custom_exemplars = {}
 
     def run(self) -> dict:
-        """Run all 9 wizard steps and return config dict."""
+        """Run all wizard steps and return config dict."""
         print("\n" + "=" * 60)
         print("  QRA Pipeline Setup Wizard")
         print("=" * 60)
         print()
 
         self._step_1_paths()
-        self._step_2_backend()
-        self._step_3_framework()
-        self._step_4_exemplars()
-        self._step_5_codebook()
-        self._step_6_classification()
-        self._step_7_confidence()
-        self._step_8_run_mode()
-        config_path = self._step_9_save()
+        self._step_2_speaker_filter()
+        self._step_3_segmentation()
+        self._step_4_backend()
+        self._step_5_framework()
+        self._step_6_exemplars()
+        self._step_7_codebook()
+        self._step_8_classification()
+        self._step_9_confidence()
+        self._step_10_run_mode()
+        config_path = self._step_11_save()
 
         return {
             'config_path': config_path,
@@ -100,20 +103,214 @@ class SetupWizard:
     # Step 1: Input/Output paths
     # -----------------------------------------------------------------
     def _step_1_paths(self):
-        print("--- Step 1/9: Input/Output Paths ---")
+        print("--- Step 1/11: Input/Output Paths ---")
         self.config_data['pipeline'] = {
-            'transcript_dir': _prompt("Transcript directory", './data/input/diarized_sessions/'),
+            'transcript_dir': _prompt("Transcript directory", './data/input/'),
             'output_dir': _prompt("Output directory", './data/output/'),
             'trial_id': _prompt("Trial ID", 'standard'),
         }
         print()
 
     # -----------------------------------------------------------------
-    # Step 2: Backend & model
+    # Step 2: Speaker filtering
     # -----------------------------------------------------------------
-    def _step_2_backend(self):
-        print("--- Step 2/9: Backend & Model ---")
-        backend = _prompt_choice("Backend", ['openrouter', 'replicate', 'huggingface', 'ollama'], 'openrouter')
+
+    # Default speakers to pre-select for exclusion (Move-MORE study)
+    _DEFAULT_EXCLUDED = ['Wade (Study Coordinator)', 'Move-MORE Study', 'Anand', 'Lani']
+
+    def _step_2_speaker_filter(self):
+        print("--- Step 2/11: Speaker Filtering ---")
+        print("    Control which speakers' sentences are included in classification.")
+        print("    Filtering is applied at the *sentence* level BEFORE segmentation,")
+        print("    so excluded speakers' content never enters segments.")
+        print()
+
+        # Scan transcripts to discover speakers
+        transcript_dir = self.config_data.get('pipeline', {}).get('transcript_dir', './data/input/')
+        discovered: dict = {}
+        if os.path.isdir(transcript_dir):
+            print(f"    Scanning transcripts in {transcript_dir} ...")
+            try:
+                discovered = scan_speakers(transcript_dir)
+            except Exception as e:
+                print(f"    Warning: Could not scan transcripts: {e}")
+
+        if discovered:
+            print(f"    Found {len(discovered)} speakers:")
+            for i, (name, count) in enumerate(discovered.items(), 1):
+                default_tag = " [default exclude]" if name in self._DEFAULT_EXCLUDED else ""
+                print(f"      {i:2d}. {name} ({count} utterances){default_tag}")
+            print()
+        else:
+            print("    No transcripts found to scan — enter speaker names manually.")
+            print()
+
+        print("    Filter modes:")
+        print("      none    : classify all speakers' segments")
+        print("      exclude : remove listed speakers' sentences before segmentation")
+        print("      isolate : keep ONLY listed speakers' sentences")
+        print()
+
+        mode = _prompt_choice("Speaker filter mode", ['none', 'exclude', 'isolate'], 'exclude')
+
+        if mode == 'none':
+            self.config_data['speaker_filter'] = {'mode': 'none', 'speakers': []}
+            print()
+            return
+
+        # Build default selection
+        if discovered:
+            if mode == 'exclude':
+                defaults = [n for n in self._DEFAULT_EXCLUDED if n in discovered]
+            else:
+                # For isolate, default to all speakers NOT in the exclusion list
+                defaults = [n for n in discovered if n not in self._DEFAULT_EXCLUDED]
+        else:
+            defaults = list(self._DEFAULT_EXCLUDED) if mode == 'exclude' else []
+
+        if defaults:
+            verb = "exclude" if mode == 'exclude' else "isolate"
+            print(f"    Default speakers to {verb}:")
+            for name in defaults:
+                print(f"      - {name}")
+            use_defaults = _prompt_yes_no(f"Use these defaults?", True)
+            if use_defaults:
+                speakers = list(defaults)
+            else:
+                speakers = self._prompt_speaker_selection(discovered, mode)
+        else:
+            speakers = self._prompt_speaker_selection(discovered, mode)
+
+        if not speakers:
+            print("    No speakers selected — falling back to default exclusion list.")
+            speakers = list(self._DEFAULT_EXCLUDED)
+
+        verb = "Excluding" if mode == 'exclude' else "Isolating"
+        print(f"    {verb}: {speakers}")
+        self.config_data['speaker_filter'] = {'mode': mode, 'speakers': speakers}
+        print()
+
+    def _prompt_speaker_selection(self, discovered: dict, mode: str) -> List[str]:
+        """Let the user select speakers from the discovered list or enter manually."""
+        speakers: List[str] = []
+
+        if discovered:
+            speaker_names = list(discovered.keys())
+            verb = "EXCLUDE" if mode == 'exclude' else "ISOLATE"
+            print(f"    Enter speaker numbers to {verb} (comma-separated), or type names manually.")
+            print(f"    Blank line when done:")
+
+            while True:
+                raw = input("      > ").strip()
+                if not raw:
+                    break
+                # Try parsing as comma-separated numbers
+                if all(part.strip().isdigit() for part in raw.split(',')):
+                    for part in raw.split(','):
+                        idx = int(part.strip()) - 1
+                        if 0 <= idx < len(speaker_names):
+                            name = speaker_names[idx]
+                            if name not in speakers:
+                                speakers.append(name)
+                                print(f"        + {name}")
+                        else:
+                            print(f"        Invalid number: {part.strip()}")
+                else:
+                    # Treat as a speaker name
+                    if raw not in speakers:
+                        speakers.append(raw)
+                        print(f"        + {raw}")
+        else:
+            verb = "EXCLUDE" if mode == 'exclude' else "ISOLATE"
+            print(f"    Enter speaker labels to {verb} (one per line, blank when done):")
+            while True:
+                name = input("      > ").strip()
+                if not name:
+                    break
+                if name not in speakers:
+                    speakers.append(name)
+
+        return speakers
+
+    # -----------------------------------------------------------------
+    # Step 3: Advanced segmentation parameters
+    # -----------------------------------------------------------------
+    def _step_3_segmentation(self):
+        print("--- Step 3/11: Segmentation Parameters ---")
+
+        if not _prompt_yes_no("Configure advanced segmentation options?", False):
+            # Use defaults
+            self.config_data['segmentation'] = {
+                'use_conversational_segmenter': True,
+                'group_cross_speaker': False,
+                'max_gap_seconds': 30.0,
+                'min_words_per_sentence': 10,
+                'max_segment_duration_seconds': 300.0,
+                'min_segment_words_conversational': 60,
+                'max_segment_words_conversational': 400,
+            }
+            print("    Using defaults: no cross-speaker grouping, 30s max gap,")
+            print("    10-word min per sentence, 5min max segment duration,")
+            print("    60-400 word segments.")
+            print()
+            return
+
+        use_conv = _prompt_yes_no(
+            "Use conversational segmenter (groups by topic across speakers)?", True
+        )
+        group_cross = False
+        if use_conv:
+            group_cross = _prompt_yes_no(
+                "Group consecutive utterances across different speakers?", False
+            )
+
+        max_gap = _prompt_float("Max time gap (seconds) between utterances to group", 30.0)
+        min_words_sent = _prompt_int("Min words per sentence (shorter sentences are dropped)", 10)
+        max_duration = _prompt_float("Max segment duration (seconds)", 300.0)
+
+        if use_conv:
+            min_words = _prompt_int("Min words per segment (conversational)", 60)
+            max_words = _prompt_int("Max words per segment (conversational)", 400)
+        else:
+            min_words = _prompt_int("Min words per segment", 30)
+            max_words = _prompt_int("Max words per segment", 200)
+
+        self.config_data['segmentation'] = {
+            'use_conversational_segmenter': use_conv,
+            'group_cross_speaker': group_cross,
+            'max_gap_seconds': max_gap,
+            'min_words_per_sentence': min_words_sent,
+            'max_segment_duration_seconds': max_duration,
+            'min_segment_words_conversational' if use_conv else 'min_segment_words': min_words,
+            'max_segment_words_conversational' if use_conv else 'max_segment_words': max_words,
+        }
+        print()
+
+    # -----------------------------------------------------------------
+    # Step 4: Backend & model
+    # -----------------------------------------------------------------
+    def _step_4_backend(self):
+        print("--- Step 4/11: Backend & Model ---")
+        backend = _prompt_choice(
+            "Backend",
+            ['openrouter', 'replicate', 'huggingface', 'ollama', 'lmstudio'],
+            'lmstudio',
+        )
+
+        # LM Studio: prompt for server URL and model name
+        if backend == 'lmstudio':
+            lmstudio_url = _prompt(
+                "LM Studio server URL", 'http://127.0.0.1:1234/v1'
+            )
+            model = _prompt("Model ID (as shown in LM Studio)", 'nvidia/nemotron-3-nano-4b')
+            print(f"    LM Studio backend: {lmstudio_url}")
+            self.config_data['theme_classification'] = {
+                'backend': 'lmstudio',
+                'model': model,
+                'lmstudio_base_url': lmstudio_url,
+            }
+            print()
+            return
 
         model = _prompt("Model ID", 'openai/gpt-4o')
 
@@ -148,10 +345,10 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
-    # Step 3: Framework selection
+    # Step 5: Framework selection
     # -----------------------------------------------------------------
-    def _step_3_framework(self):
-        print("--- Step 3/9: Theme Framework ---")
+    def _step_5_framework(self):
+        print("--- Step 5/11: Theme Framework ---")
         choice = _prompt_choice("Framework", ['vamr', 'custom'], 'vamr')
 
         if choice == 'vamr':
@@ -160,7 +357,6 @@ class SetupWizard:
         else:
             path = _prompt("Path to custom framework JSON")
             self.config_data['framework'] = {'custom_path': path}
-            # Try to load the custom framework for use in step 4
             try:
                 with open(path) as f:
                     fw_data = json.load(f)
@@ -186,17 +382,17 @@ class SetupWizard:
                 )
             except Exception as e:
                 print(f"    Warning: Could not load framework from {path}: {e}")
-                print("    Skipping exemplar customization in step 4.")
+                print("    Skipping exemplar customization.")
 
         if self.framework:
             print(f"    Framework: {self.framework.name} ({self.framework.num_themes} themes)")
         print()
 
     # -----------------------------------------------------------------
-    # Step 4: Exemplar utterances
+    # Step 6: Exemplar utterances
     # -----------------------------------------------------------------
-    def _step_4_exemplars(self):
-        print("--- Step 4/9: Exemplar Utterances ---")
+    def _step_6_exemplars(self):
+        print("--- Step 6/11: Exemplar Utterances ---")
         if not self.framework:
             print("    No framework loaded; skipping exemplar customization.")
             print()
@@ -233,10 +429,10 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
-    # Step 5: Codebook selection
+    # Step 7: Codebook selection
     # -----------------------------------------------------------------
-    def _step_5_codebook(self):
-        print("--- Step 5/9: Codebook Classification ---")
+    def _step_7_codebook(self):
+        print("--- Step 7/11: Codebook Classification ---")
         enable = _prompt_yes_no("Enable codebook classification?", False)
         self.config_data['pipeline']['run_codebook_classifier'] = enable
 
@@ -261,11 +457,11 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
-    # Step 6: Classification parameters
+    # Step 8: Classification parameters
     # -----------------------------------------------------------------
-    def _step_6_classification(self):
-        print("--- Step 6/9: Classification Parameters ---")
-        n_runs = _prompt_int("Number of runs per segment", 3)
+    def _step_8_classification(self):
+        print("--- Step 8/11: Classification Parameters ---")
+        n_runs = _prompt_int("Number of runs per segment", 1)
         temperature = _prompt_float("Temperature", 0.0)
 
         self.config_data['theme_classification']['n_runs'] = n_runs
@@ -273,10 +469,10 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
-    # Step 7: Confidence thresholds
+    # Step 9: Confidence thresholds
     # -----------------------------------------------------------------
-    def _step_7_confidence(self):
-        print("--- Step 7/9: Confidence Thresholds ---")
+    def _step_9_confidence(self):
+        print("--- Step 9/11: Confidence Thresholds ---")
         self.config_data['confidence_tiers'] = {
             'high_confidence': _prompt_float("High confidence threshold", 0.8),
             'medium_min_confidence': _prompt_float("Medium confidence threshold", 0.6),
@@ -284,10 +480,10 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
-    # Step 8: Run mode
+    # Step 10: Run mode
     # -----------------------------------------------------------------
-    def _step_8_run_mode(self):
-        print("--- Step 8/9: Run Mode ---")
+    def _step_10_run_mode(self):
+        print("--- Step 10/11: Run Mode ---")
         print("    auto        : Fully automated (no human intervention)")
         print("    interactive : Prompt for validation of uncertain results")
         print("    review      : Batch validation at end")
@@ -296,10 +492,10 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
-    # Step 9: Save & run
+    # Step 11: Save & run
     # -----------------------------------------------------------------
-    def _step_9_save(self) -> str:
-        print("--- Step 9/9: Save Configuration ---")
+    def _step_11_save(self) -> str:
+        print("--- Step 11/11: Save Configuration ---")
         default_path = os.path.join(
             self.config_data['pipeline'].get('output_dir', './data/output/'),
             'qra_config.json',
@@ -317,10 +513,14 @@ class SetupWizard:
 
 def build_config_from_wizard_data(data: dict) -> PipelineConfig:
     """Convert wizard output dict into a PipelineConfig instance."""
+    from .config import SpeakerFilterConfig
+
     pipeline = data.get('pipeline', {})
     tc = data.get('theme_classification', {})
     cb_emb = data.get('codebook_embedding', {})
     ct = data.get('confidence_tiers', {})
+    sf = data.get('speaker_filter', {})
+    seg = data.get('segmentation', {})
 
     # Resolve API credentials from environment
     backend = tc.get('backend', 'openrouter')
@@ -338,7 +538,21 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         run_mode=pipeline.get('run_mode', 'auto'),
         run_theme_labeler=pipeline.get('run_theme_labeler', True),
         run_codebook_classifier=pipeline.get('run_codebook_classifier', False),
-        segmentation=SegmentationConfig(),
+        segmentation=SegmentationConfig(
+            use_conversational_segmenter=seg.get('use_conversational_segmenter', True),
+            min_segment_words=seg.get('min_segment_words', 30),
+            max_segment_words=seg.get('max_segment_words', 200),
+            min_segment_words_conversational=seg.get('min_segment_words_conversational', 60),
+            max_segment_words_conversational=seg.get('max_segment_words_conversational', 400),
+            group_cross_speaker=seg.get('group_cross_speaker', False),
+            max_gap_seconds=seg.get('max_gap_seconds', 30.0),
+            min_words_per_sentence=seg.get('min_words_per_sentence', 10),
+            max_segment_duration_seconds=seg.get('max_segment_duration_seconds', 300.0),
+        ),
+        speaker_filter=SpeakerFilterConfig(
+            mode=sf.get('mode', 'none'),
+            speakers=sf.get('speakers', []),
+        ),
         theme_classification=ThemeClassificationConfig(
             backend=backend,
             model=tc.get('model', 'openai/gpt-4o'),
@@ -347,6 +561,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             temperature=tc.get('temperature', 0.0),
             api_key=api_key,
             replicate_api_token=replicate_token,
+            lmstudio_base_url=tc.get('lmstudio_base_url', 'http://127.0.0.1:1234/'),
         ),
         codebook_embedding=EmbeddingClassifierConfig(
             two_pass=cb_emb.get('two_pass', True),

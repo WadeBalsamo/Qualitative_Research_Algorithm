@@ -42,7 +42,11 @@ def _add_common_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         '--backend',
         default=None,
-        choices=['openrouter', 'replicate', 'huggingface', 'ollama'],
+        choices=['openrouter', 'replicate', 'huggingface', 'ollama', 'lmstudio'],
+    )
+    parser.add_argument(
+        '--lmstudio-url', default=None,
+        help='LM Studio server base URL (default: http://127.0.0.1:1234/v1)',
     )
     parser.add_argument('--model', default=None)
     parser.add_argument(
@@ -82,6 +86,21 @@ def _add_common_args(parser: argparse.ArgumentParser):
     parser.add_argument('--exemplar-weight', type=float, default=None)
     parser.add_argument('--exemplar-confidence-threshold', type=float, default=None)
     parser.add_argument('--max-exemplar-tokens', type=int, default=None)
+
+    # Speaker filtering
+    parser.add_argument(
+        '--speaker-filter-mode', default=None,
+        choices=['none', 'exclude', 'isolate'],
+        help='none: classify all | exclude: drop listed speakers | isolate: keep only listed',
+    )
+    parser.add_argument(
+        '--exclude-speakers', nargs='+', default=None, metavar='SPEAKER',
+        help='Speaker labels to exclude (use with --speaker-filter-mode exclude)',
+    )
+    parser.add_argument(
+        '--isolate-speakers', nargs='+', default=None, metavar='SPEAKER',
+        help='Speaker labels to isolate (use with --speaker-filter-mode isolate)',
+    )
 
     # Checkpoint
     parser.add_argument('--resume-from', default=None)
@@ -180,6 +199,19 @@ def _build_config(args):
     if args.resume_from is not None:
         config.resume_from = args.resume_from
 
+    # Speaker filter
+    sf_mode = getattr(args, 'speaker_filter_mode', None)
+    exclude_spk = getattr(args, 'exclude_speakers', None)
+    isolate_spk = getattr(args, 'isolate_speakers', None)
+    if sf_mode is not None:
+        config.speaker_filter.mode = sf_mode
+    if exclude_spk is not None:
+        config.speaker_filter.mode = 'exclude'
+        config.speaker_filter.speakers = exclude_spk
+    if isolate_spk is not None:
+        config.speaker_filter.mode = 'isolate'
+        config.speaker_filter.speakers = isolate_spk
+
     # Feature flags
     if args.no_theme_labeler:
         config.run_theme_labeler = False
@@ -194,6 +226,9 @@ def _build_config(args):
         tc.backend = args.backend
     if args.model is not None:
         tc.model = args.model
+    lmstudio_url = getattr(args, 'lmstudio_url', None)
+    if lmstudio_url is not None:
+        tc.lmstudio_base_url = lmstudio_url
     if args.models is not None:
         tc.models = args.models
     if args.n_runs is not None:
@@ -249,7 +284,7 @@ def _flatten_wizard_config(data: dict) -> dict:
             result[key] = pipeline[key]
 
     # Pass through sub-config dicts directly
-    for key in ('segmentation', 'theme_classification', 'codebook_embedding',
+    for key in ('segmentation', 'speaker_filter', 'theme_classification', 'codebook_embedding',
                 'codebook_llm', 'codebook_ensemble', 'validation', 'confidence_tiers'):
         if key in data:
             result[key] = data[key]
@@ -274,7 +309,7 @@ def cmd_setup(args):
     result = wizard.run()
     config_path = result['config_path']
 
-    if _prompt_yes_no_simple("Run pipeline now?", False):
+    if _prompt_yes_no_simple("Run pipeline now?", True):
         config = build_config_from_wizard_data(result['config_data'])
         framework_spec = result['config_data'].get('framework', {})
         framework = _load_framework(framework_spec.get('custom_path') or framework_spec.get('preset', 'vamr'))
@@ -358,6 +393,48 @@ def cmd_guided(args):
 # Pipeline execution
 # =========================================================================
 
+def _wait_for_lmstudio(base_url: str, timeout_s: int = 300, poll_s: int = 5) -> None:
+    """
+    Block until the LM Studio server responds to GET /v1/models, or timeout.
+
+    Prints a one-time notice on first failure, then a dot for each retry,
+    and a success message when the server comes up.  If the server does not
+    respond within ``timeout_s`` seconds the user is warned but execution
+    continues (the individual retries in the LLM client will handle it).
+    """
+    import time
+    import requests
+
+    url = base_url.rstrip('/') + '/models'
+    waited = 0
+    first_fail = True
+
+    while waited < timeout_s:
+        try:
+            r = requests.get(url, timeout=4)
+            if r.status_code < 500:
+                if not first_fail:
+                    print(" connected.")
+                return
+        except Exception:
+            pass
+
+        if first_fail:
+            print(
+                f"\n  LM Studio not yet reachable at {base_url}\n"
+                f"  Waiting up to {timeout_s}s for the server to start",
+                end='', flush=True,
+            )
+            first_fail = False
+        else:
+            print('.', end='', flush=True)
+
+        time.sleep(poll_s)
+        waited += poll_s
+
+    print(f"\n  Warning: LM Studio did not respond within {timeout_s}s — proceeding anyway.")
+
+
 def _execute_pipeline(config, framework, codebook=None, observer=None, validator=None):
     """Run the pipeline with the given config, framework, and optional hooks."""
     from process.orchestrator import run_full_pipeline
@@ -374,6 +451,12 @@ def _execute_pipeline(config, framework, codebook=None, observer=None, validator
             skip_confirmation=(config.run_mode == 'auto'),
         )
 
+    # LM Studio: wait until the server is reachable before starting
+    if config.theme_classification.backend == 'lmstudio':
+        _wait_for_lmstudio(
+            getattr(config.theme_classification, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')
+        )
+
     # Print header
     print("\n" + "=" * 70)
     print("QRA CLASSIFICATION PIPELINE")
@@ -382,6 +465,8 @@ def _execute_pipeline(config, framework, codebook=None, observer=None, validator
     print(f"  Framework: {framework.name} ({framework.num_themes} themes)")
     print(f"  Model:     {config.theme_classification.model}")
     print(f"  Backend:   {config.theme_classification.backend}")
+    if config.theme_classification.backend == 'lmstudio':
+        print(f"  LM Studio: {getattr(config.theme_classification, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')}")
     if config.run_codebook_classifier:
         print(f"  Codebook:  enabled")
     print()
