@@ -680,7 +680,9 @@ def _write_multi_model_status_entry(
         speaker = segment.speaker or "unknown"
         speakers_list = ""
         if segment.speakers_in_segment:
-            speakers_list = f" (speakers: {', '.join(segment.speakers_in_segment)})"
+            short_ids = [sp.rsplit('_', 1)[-1] if '_' in sp else sp
+                         for sp in segment.speakers_in_segment]
+            speakers_list = f" (ids: {', '.join(short_ids)})"
         sf.write(f"  Speaker: {speaker}{speakers_list}\n")
         sf.write(f"  Words: {segment.word_count}  |  "
                  f"Time: {segment.start_time_ms}ms - {segment.end_time_ms}ms\n")

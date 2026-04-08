@@ -39,6 +39,7 @@ from .transcript_ingestion import (
     load_vtt_session,
     discover_session_files,
 )
+from .llm_segmentation import LLMSegmentationRefiner
 from .dataset_assembly import (
     assemble_master_dataset,
     build_session_adjacency_index,
@@ -125,9 +126,37 @@ def run_full_pipeline(
         # Speaker filtering applied at sentence level before segmentation
         'excluded_speakers': excluded_speakers,
         'isolated_speakers': isolated_speakers,
+        'speaker_filter_mode': config.speaker_filter.mode,
+        # Adaptive threshold / dual-window / clustering
+        'use_adaptive_threshold': getattr(config.segmentation, 'use_adaptive_threshold', True),
+        'min_prominence': getattr(config.segmentation, 'min_prominence', 0.05),
+        'broad_window_size': getattr(config.segmentation, 'broad_window_size', 7),
+        'use_topic_clustering': getattr(config.segmentation, 'use_topic_clustering', False),
     }
     use_conv = getattr(config.segmentation, 'use_conversational_segmenter', True)
+    use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', False)
     segmenter = ConversationalSegmenter(seg_config) if use_conv else TranscriptSegmenter(seg_config)
+
+    # Lazily create LLM refiner if enabled (reuses theme classification backend)
+    llm_refiner = None
+    if use_llm_refine and use_conv:
+        theme_cfg = config.theme_classification
+        refiner_llm_cfg = LLMClientConfig(
+            backend=theme_cfg.backend,
+            api_key=theme_cfg.api_key,
+            replicate_api_token=theme_cfg.replicate_api_token,
+            model=theme_cfg.model,
+            lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+        )
+        llm_refiner = LLMSegmentationRefiner(
+            LLMClient(refiner_llm_cfg),
+            {
+                'mode': getattr(config.segmentation, 'llm_refinement_mode', 'boundary_review'),
+                'ambiguity_threshold': getattr(config.segmentation, 'llm_ambiguity_threshold', 0.15),
+                'batch_size': getattr(config.segmentation, 'llm_batch_size', 5),
+                'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
+            },
+        )
 
     # When using conversational segmenter, classify ALL segments (not participant-only)
     if use_conv:
@@ -157,7 +186,46 @@ def run_full_pipeline(
             session_data = load_diarized_session(session_file)
         metadata = session_data['metadata']
         metadata.setdefault('trial_id', config.trial_id)
-        metadata.setdefault('participant_id', 'unknown')
+
+        # Ensure participant_id is an anonymized ID, not a raw speaker name.
+        # If it was set in the source JSON (raw name), normalize it now.
+        sentences = session_data.get('sentences', [])
+        existing_pid = metadata.get('participant_id', '')
+        if existing_pid and not (
+            existing_pid.startswith('participant_')
+            or existing_pid.startswith('therapist_')
+            or existing_pid in ('unknown', '')
+        ):
+            _, anon_id = segmenter.speaker_norm.normalize(existing_pid)
+            metadata['participant_id'] = anon_id
+
+        if not metadata.get('participant_id'):
+            # Find the most frequent participant speaker (not therapists/excluded speakers)
+            excluded_set = set(sf.speakers) if sf.mode == 'exclude' else set()
+            isolated_set = set(sf.speakers) if sf.mode == 'isolate' else None
+
+            speaker_counts = {}
+            for sent in sentences:
+                spk = sent.get('speaker', 'unknown')
+                # Determine if this speaker should be considered a participant
+                if sf.mode == 'exclude':
+                    is_participant = spk not in excluded_set
+                elif sf.mode == 'isolate':
+                    is_participant = spk in isolated_set
+                else:
+                    is_participant = True
+
+                if is_participant and spk != 'unknown':
+                    speaker_counts[spk] = speaker_counts.get(spk, 0) + 1
+
+            # Use most frequent participant speaker, anonymized to participant_N
+            if speaker_counts:
+                primary_speaker = max(speaker_counts, key=speaker_counts.get)
+                _, anon_id = segmenter.speaker_norm.normalize(primary_speaker)
+                metadata['participant_id'] = anon_id
+            else:
+                metadata['participant_id'] = 'unknown'
+
         # For VTT files, use the filename (sans extension) as session_id
         if session_file.lower().endswith('.vtt'):
             default_session_id = os.path.splitext(os.path.basename(session_file))[0]
@@ -167,18 +235,42 @@ def run_full_pipeline(
         metadata.setdefault('session_number', 1)
         metadata.setdefault('source_file', session_file)
 
-        segments = segmenter.segment_session(
-            session_data['sentences'], metadata
-        )
+        if llm_refiner and use_conv:
+            result = segmenter.segment_session(
+                session_data['sentences'], metadata,
+                return_intermediates=True,
+            )
+            segments = result['segments']
+            segments = llm_refiner.refine(
+                segments,
+                result['sentences'],
+                result['sim_curve'],
+                result['embeddings'],
+                result.get('boundary_confidence'),
+            )
+        else:
+            segments = segmenter.segment_session(
+                session_data['sentences'], metadata
+            )
         all_segments.extend(segments)
 
     session_counts = Counter(s.session_id for s in all_segments)
     for seg in all_segments:
         seg.total_segments_in_session = session_counts[seg.session_id]
 
+    # Export speaker anonymization key (original name -> anonymized ID)
+    speaker_key = {
+        original: {'role': role, 'anonymized_id': anon_id}
+        for original, (role, anon_id) in segmenter.speaker_norm.speaker_map.items()
+    }
+    speaker_key_path = os.path.join(output_dir, 'speaker_anonymization_key.json')
+    with open(speaker_key_path, 'w') as _f:
+        json.dump(speaker_key, _f, indent=2)
+
     observer.on_stage_complete(
         "Transcript Ingestion and Segmentation",
-        f"Produced {len(all_segments)} segments from {len(session_files)} sessions",
+        f"Produced {len(all_segments)} segments from {len(session_files)} sessions; "
+        f"speaker key written to speaker_anonymization_key.json",
     )
 
     # ------------------------------------------------------------------
