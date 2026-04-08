@@ -27,3 +27,6 @@ class ThemeClassificationConfig:
     save_interval: int = 20
     ollama_host: str = '0.0.0.0'
     ollama_port: int = 11434
+    lmstudio_base_url: str = 'http://127.0.0.1:1234/v1'  # LM Studio server URL
+    classify_all_segments: bool = False  # When True, skips participant-only filter
+    context_window_segments: int = 2  # Number of preceding segments to include as context (0 = disabled)

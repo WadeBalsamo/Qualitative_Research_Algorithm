@@ -12,6 +12,7 @@ Contains both:
 import json
 import os
 import datetime
+import textwrap
 from collections import Counter
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -36,7 +37,7 @@ THEME_PROMPT_TEMPLATE = """You are a qualitative researcher trained in the \
 
 {codebook_string}
 
-Classify the following participant utterance according to these {num_themes} \
+{context_block}Classify the following participant utterance according to these {num_themes} \
 themes. The utterance starts and ends with ```.
 
 Utterance:
@@ -61,6 +62,147 @@ Rules:
 - Do NOT provide any text outside the JSON
 
 JSON:"""
+
+CONTEXT_PREAMBLE = """For context, here is the preceding conversational exchange \
+(do NOT classify this — it is background only):
+---
+{preceding_context}
+---
+
+"""
+
+CONVERSATIONAL_THEME_PROMPT_TEMPLATE = """You are a qualitative researcher \
+trained in the {framework_name} framework for analyzing therapeutic dialogue.
+
+{framework_description}
+
+{codebook_string}
+
+{context_block}Classify the following conversational excerpt according to these {num_themes} \
+themes. The excerpt may span multiple speakers and is delimited by ```.
+Focus on the overall thematic content of the exchange, not individual speaker turns.
+
+Excerpt:
+```
+{text}
+```
+
+Provide your classification as JSON with these exact fields:
+{{
+    "primary_stage": "<theme name>",
+    "primary_confidence": <float 0-1>,
+    "secondary_stage": "<theme name or null>",
+    "secondary_confidence": <float 0-1 or null>,
+    "justification": "<brief explanation citing specific speaker language>"
+}}
+
+Rules:
+- Assign exactly one primary theme that best characterizes the exchange
+- Assign a secondary theme ONLY if the exchange clearly spans two themes
+- Confidence should reflect how prototypical the exchange is (1.0 = textbook example)
+- Reference specific words or phrases from the excerpt in your justification
+- Do NOT provide any text outside the JSON
+
+JSON:"""
+
+
+# ---------------------------------------------------------------------------
+# Context window helper
+# ---------------------------------------------------------------------------
+
+MAX_CONTEXT_WORDS = 300
+
+
+def _build_context_block(
+    all_segments: List[Segment],
+    current_index: int,
+    window_size: int,
+) -> str:
+    """
+    Build a context preamble from preceding segments.
+
+    Returns an empty string if window_size is 0 or no preceding segments exist.
+    """
+    if window_size <= 0 or current_index <= 0:
+        return ''
+
+    context_parts = []
+    total_words = 0
+    start = max(0, current_index - window_size)
+
+    for seg in all_segments[start:current_index]:
+        seg_text = seg.text.strip()
+        seg_words = len(seg_text.split())
+        if total_words + seg_words > MAX_CONTEXT_WORDS:
+            # Truncate this segment to fit budget
+            remaining = MAX_CONTEXT_WORDS - total_words
+            if remaining > 0:
+                words = seg_text.split()
+                context_parts.append(' '.join(words[-remaining:]) + ' [...]')
+            break
+        context_parts.append(seg_text)
+        total_words += seg_words
+
+    if not context_parts:
+        return ''
+
+    preceding_text = '\n\n'.join(context_parts)
+    return CONTEXT_PREAMBLE.format(preceding_context=preceding_text)
+
+
+# ---------------------------------------------------------------------------
+# Short segment merging
+# ---------------------------------------------------------------------------
+
+
+def _merge_short_segments(
+    segments: List[Segment],
+    min_words: int,
+) -> List[Segment]:
+    """
+    Merge segments shorter than *min_words* into their neighbors.
+
+    Short segments are combined with the preceding segment when possible,
+    otherwise the following segment.  The merged segment inherits the
+    earlier segment's ID and start time, and the later segment's end time.
+    Text is joined with a newline separator.
+    """
+    if not segments or min_words <= 0:
+        return segments
+
+    merged: List[Segment] = []
+    for seg in segments:
+        if seg.word_count >= min_words:
+            merged.append(seg)
+        elif merged:
+            # Merge into preceding segment
+            prev = merged[-1]
+            prev.text = prev.text + "\n" + seg.text
+            prev.word_count = len(prev.text.split())
+            prev.end_time_ms = seg.end_time_ms
+            if prev.speakers_in_segment and seg.speakers_in_segment:
+                seen = set(prev.speakers_in_segment)
+                for sp in seg.speakers_in_segment:
+                    if sp not in seen:
+                        prev.speakers_in_segment.append(sp)
+                        seen.add(sp)
+        else:
+            # No preceding segment yet — hold it and merge forward
+            merged.append(seg)
+
+    # Second pass: merge any leading short segment into its follower
+    if len(merged) > 1 and merged[0].word_count < min_words:
+        first = merged.pop(0)
+        merged[0].text = first.text + "\n" + merged[0].text
+        merged[0].word_count = len(merged[0].text.split())
+        merged[0].start_time_ms = first.start_time_ms
+        merged[0].segment_id = first.segment_id
+
+    # Re-index
+    for i, seg in enumerate(merged):
+        seg.segment_index = i
+
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +262,12 @@ def _parse_single_run(
         else:
             return None
 
-        primary_name = str(parsed.get('primary_stage', '')).lower().strip()
+        primary_name = str(parsed.get('primary_stage') or '').lower().strip()
+        if not primary_name:
+            return None
         primary_id = name_to_id.get(primary_name)
+        if primary_id is None:
+            return None
 
         secondary_name = parsed.get('secondary_stage')
         secondary_id = None
@@ -136,13 +282,14 @@ def _parse_single_run(
 
         return {
             'primary_stage': primary_id,
-            'primary_confidence': float(parsed.get('primary_confidence', 0)),
+            'primary_confidence': float(parsed.get('primary_confidence') or 0),
             'secondary_stage': secondary_id,
             'secondary_confidence': secondary_conf,
             'justification': parsed.get('justification', ''),
         }
     except Exception as e:
-        print(f"  Parse error: {e}")
+        raw_snippet = str(result)[:120] if result else '<empty>'
+        print(f"  Parse error: {e} | Response: {raw_snippet}")
         return None
 
 
@@ -156,6 +303,8 @@ def _classify_multi_model(
     client: LLMClient,
     config: ThemeClassificationConfig,
     name_to_id: Dict[str, int],
+    all_segments: List[Segment] = None,
+    seg_index: int = 0,
 ) -> Dict:
     """
     Classify a segment using multiple models and cross-reference results.
@@ -174,12 +323,17 @@ def _classify_multi_model(
             codebook_string = framework.to_prompt_string(
                 randomize=config.randomize_codebook,
             )
+            context_window = getattr(config, 'context_window_segments', 2)
+            context_block = ''
+            if all_segments and context_window > 0:
+                context_block = _build_context_block(all_segments, seg_index, context_window)
             prompt = THEME_PROMPT_TEMPLATE.format(
                 framework_name=framework.name,
                 framework_description=framework.description,
                 codebook_string=codebook_string,
                 num_themes=framework.num_themes,
                 text=segment.text,
+                context_block=context_block,
             )
             try:
                 # Override model for this request
@@ -212,9 +366,7 @@ def _classify_multi_model(
     return {
         'model_results': model_results,
         'cross_model_consensus': cross_model_consensus,
-        'runs': [],  # For backward compatibility
-        'parsed_runs': [],
-        'consistency': cross_model_consensus,  # Use consensus as final result
+        'consistency': cross_model_consensus,
     }
 
 
@@ -332,6 +484,7 @@ def classify_segments_zero_shot(
         max_new_tokens=config.max_new_tokens,
         ollama_host=getattr(config, 'ollama_host', '0.0.0.0'),
         ollama_port=getattr(config, 'ollama_port', 11434),
+        lmstudio_base_url=getattr(config, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
     )
     client = LLMClient(llm_config)
 
@@ -346,6 +499,30 @@ def classify_segments_zero_shot(
     timestamp = datetime.datetime.utcnow().strftime('%y-%m-%dT%H-%M-%S')
     model_clean = config.model.replace('/', '_')
 
+    # Warn about wasteful configuration
+    if config.n_runs > 1 and config.temperature == 0.0 and not config.randomize_codebook:
+        print("  Warning: n_runs > 1 with temperature=0.0 and randomize_codebook=False "
+              "produces identical calls. Set temperature > 0, enable randomize_codebook, "
+              "or use --n-runs 1.")
+
+    # Decide which segments to classify and which prompt template to use
+    classify_all = getattr(config, 'classify_all_segments', False)
+    if classify_all:
+        target_segments = segments
+        prompt_template = CONVERSATIONAL_THEME_PROMPT_TEMPLATE
+    else:
+        target_segments = filter_participant_segments(segments)
+        prompt_template = THEME_PROMPT_TEMPLATE
+
+    # Merge trivially short segments into their neighbors before classification
+    MIN_CLASSIFIABLE_WORDS = 10
+    before_count = len(target_segments)
+    target_segments = _merge_short_segments(target_segments, MIN_CLASSIFIABLE_WORDS)
+    merged_count = before_count - len(target_segments)
+    if merged_count > 0:
+        print(f"  Merged {merged_count} short segments (<{MIN_CLASSIFIABLE_WORDS} words) "
+              f"into neighbors: {before_count} -> {len(target_segments)} segments")
+
     if use_multi_model:
         # Multi-model path: manual loop (uses its own per-model N-run logic)
         results_all: Dict[str, Any] = {}
@@ -355,18 +532,34 @@ def classify_segments_zero_shot(
                 results_all = json.load(f)
             print(f"  Resumed from checkpoint: {len(results_all)} segments already classified")
 
-        participant_segments = filter_participant_segments(segments)
-        total = len(participant_segments)
+        total = len(target_segments)
 
-        for i, segment in enumerate(participant_segments):
+        # Prepare live status file for multi-model path
+        status_path = os.path.join(
+            config.output_dir,
+            f'llm_results_status_{model_clean}_{timestamp}.txt',
+        )
+        with open(status_path, 'w') as sf:
+            sf.write(f"LLM Classification Status Log (multi-model)\n")
+            sf.write(f"Started: {datetime.datetime.utcnow().isoformat()}Z\n")
+            sf.write(f"Models: {', '.join(models)}\n")
+            sf.write(f"Total segments: {total}\n")
+            sf.write("=" * 80 + "\n\n")
+        print(f"  Live status log: {os.path.basename(status_path)}")
+
+        for i, segment in enumerate(target_segments):
             if segment.segment_id in results_all:
                 continue
 
-            if (i + 1) % 10 == 0 or i == 0:
-                print(f"  Classifying segment {i + 1}/{total}: {segment.segment_id}")
+            snippet = segment.text[:80].replace('\n', ' ')
+            if len(segment.text) > 80:
+                snippet += "..."
+            print(f"  [{i + 1}/{total}] {segment.segment_id}")
+            print(f"           \"{snippet}\"")
 
             segment_results = _classify_multi_model(
-                segment, framework, client, config, name_to_id
+                segment, framework, client, config, name_to_id,
+                all_segments=target_segments, seg_index=i,
             )
 
             results_all[segment.segment_id] = segment_results
@@ -376,25 +569,42 @@ def classify_segments_zero_shot(
                 'runs_raw': segment_results.get('runs', []),
             }
 
+            # Write live status entry for multi-model
+            _write_multi_model_status_entry(
+                status_path, segment, i, total, segment_results,
+            )
+
             if i % config.save_interval == 0:
                 _save_intermediate(results_all, metadata_all, config.output_dir, model_clean, timestamp)
 
         _save_intermediate(results_all, metadata_all, config.output_dir, model_clean, timestamp)
+
+        with open(status_path, 'a') as sf:
+            sf.write("\n" + "=" * 80 + "\n")
+            sf.write(f"COMPLETE: {total} segments classified\n")
+            sf.write(f"Finished: {datetime.datetime.utcnow().isoformat()}Z\n")
+
         return results_all, metadata_all
 
     # ----- Single-model path: delegate to shared loop -----
-    participant_segments = filter_participant_segments(segments)
+    context_window = getattr(config, 'context_window_segments', 2)
 
-    def build_prompt(segment: Segment, run: int) -> str:
+    def build_prompt(segment: Segment, run: int,
+                     all_segments: List[Segment] = None,
+                     seg_index: int = 0) -> str:
         codebook_string = framework.to_prompt_string(
             randomize=config.randomize_codebook,
         )
-        return THEME_PROMPT_TEMPLATE.format(
+        context_block = ''
+        if all_segments and context_window > 0:
+            context_block = _build_context_block(all_segments, seg_index, context_window)
+        return prompt_template.format(
             framework_name=framework.name,
             framework_description=framework.description,
             codebook_string=codebook_string,
             num_themes=framework.num_themes,
             text=segment.text,
+            context_block=context_block,
         )
 
     def parse_response(result_text: str) -> Optional[Dict]:
@@ -408,7 +618,7 @@ def classify_segments_zero_shot(
         }
 
     raw_results = classify_segments(
-        segments=participant_segments,
+        segments=target_segments,
         client=client,
         n_runs=config.n_runs,
         build_prompt=build_prompt,
@@ -422,7 +632,7 @@ def classify_segments_zero_shot(
     )
 
     # Build metadata_all for backward compatibility
-    seg_by_id = {s.segment_id: s for s in participant_segments}
+    seg_by_id = {s.segment_id: s for s in target_segments}
     metadata_all: Dict[str, Any] = {}
     for seg_id, result in raw_results.items():
         seg = seg_by_id.get(seg_id)
@@ -446,6 +656,71 @@ def _save_intermediate(
         )
         with open(path, 'w') as f:
             json.dump(data, f, indent=2, default=str)
+
+
+def _write_multi_model_status_entry(
+    status_path: str,
+    segment: Segment,
+    index: int,
+    total: int,
+    segment_results: Dict,
+):
+    """Append a human-readable status entry for one multi-model segment."""
+    with open(status_path, 'a') as sf:
+        sf.write(f"[{index + 1}/{total}] {segment.segment_id}\n")
+        sf.write("-" * 60 + "\n")
+
+        # Segment text
+        sf.write("SEGMENT TEXT:\n")
+        for line in textwrap.wrap(segment.text, width=76, initial_indent="  ", subsequent_indent="  "):
+            sf.write(line + "\n")
+        sf.write("\n")
+
+        # Segment key
+        speaker = segment.speaker or "unknown"
+        speakers_list = ""
+        if segment.speakers_in_segment:
+            speakers_list = f" (speakers: {', '.join(segment.speakers_in_segment)})"
+        sf.write(f"  Speaker: {speaker}{speakers_list}\n")
+        sf.write(f"  Words: {segment.word_count}  |  "
+                 f"Time: {segment.start_time_ms}ms - {segment.end_time_ms}ms\n")
+        sf.write(f"  Session: {segment.session_id}  |  Index: {segment.segment_index}\n\n")
+
+        # Per-model results
+        model_results = segment_results.get('model_results', {})
+        for model_id, model_data in model_results.items():
+            sf.write(f"MODEL: {model_id}\n")
+            parsed_runs = model_data.get('parsed_runs', [])
+            for r, run in enumerate(parsed_runs):
+                if isinstance(run, dict):
+                    stage = run.get('primary_stage', '?')
+                    conf = run.get('primary_confidence', '?')
+                    sec = run.get('secondary_stage')
+                    just = run.get('justification', '')
+                    sec_str = f"  secondary={sec}" if sec else ""
+                    sf.write(f"  Run {r + 1}: stage={stage}  conf={conf}{sec_str}\n")
+                    if just:
+                        for line in textwrap.wrap(just, width=72, initial_indent="    → ", subsequent_indent="      "):
+                            sf.write(line + "\n")
+            consistency = model_data.get('consistency', {})
+            if isinstance(consistency, dict):
+                sf.write(f"  → Model consensus: stage={consistency.get('primary_stage', '?')} "
+                         f"conf={consistency.get('confidence', '?')} "
+                         f"consistency={consistency.get('consistency', '?')}\n")
+            sf.write("\n")
+
+        # Cross-model consensus
+        consensus = segment_results.get('cross_model_consensus', segment_results.get('consistency', {}))
+        if isinstance(consensus, dict):
+            sf.write("FINAL RESULT (cross-model):\n")
+            sf.write(f"  Primary stage: {consensus.get('primary_stage', '?')}\n")
+            sf.write(f"  Confidence:    {consensus.get('confidence', '?')}\n")
+            sf.write(f"  Agreement:     {consensus.get('model_agreement', '?')}\n")
+            just = consensus.get('justification', '')
+            if just:
+                sf.write(f"  Justification: {just}\n")
+
+        sf.write("\n" + "=" * 80 + "\n\n")
 
 
 # ===========================================================================
@@ -515,7 +790,9 @@ class LLMCodebookClassifier:
 
         participant_segments = filter_participant_segments(segments)
 
-        def build_prompt(segment: Segment, run: int) -> str:
+        def build_prompt(segment: Segment, run: int,
+                         all_segments: List[Segment] = None,
+                         seg_index: int = 0) -> str:
             return self._build_prompt(segment, codebook)
 
         def parse_response(response: str) -> Optional[List[CodeAssignment]]:
@@ -584,7 +861,7 @@ class LLMCodebookClassifier:
             if code_def is None:
                 continue
 
-            confidence = float(entry.get('confidence', 0.5))
+            confidence = float(entry.get('confidence') or 0.5)
             if confidence < self.config.confidence_threshold:
                 continue
 
