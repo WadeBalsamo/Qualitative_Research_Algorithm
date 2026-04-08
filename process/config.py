@@ -7,7 +7,7 @@ Aggregates sub-configs from classification_tools, constructs, and codebook.
 """
 
 from dataclasses import dataclass, field, asdict, fields
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from constructs.config import ThemeClassificationConfig
 from codebook.config import (
@@ -28,6 +28,33 @@ class SegmentationConfig:
     max_segment_words: int = 200
     silence_threshold_ms: int = 1500
     semantic_shift_percentile: int = 25
+    # Conversational segmenter (groups all speakers together by topic)
+    use_conversational_segmenter: bool = True
+    min_segment_words_conversational: int = 60
+    max_segment_words_conversational: int = 400
+    # Advanced grouping parameters
+    group_cross_speaker: bool = False          # Group consecutive utterances across speakers
+    max_gap_seconds: float = 30.0              # Max time gap (seconds) between utterances to group
+    min_words_per_sentence: int = 10           # Min words for a sentence to be kept as segment input
+    max_segment_duration_seconds: float = 300.0  # Max duration (seconds) of a single segment
+
+
+@dataclass
+class SpeakerFilterConfig:
+    """Controls which speakers' segments are sent to the classifier.
+
+    mode:
+        'none'    — classify all segments (default with conversational segmenter)
+        'exclude' — drop segments whose *sole* speaker is in ``speakers``
+                    (multi-speaker segments are always kept)
+        'isolate' — keep only segments that include at least one speaker
+                    from ``speakers``
+    speakers:
+        List of speaker label strings exactly as they appear in the transcript
+        (e.g. ['Move-MORE Study', 'Wade (Study Coordinator)']).
+    """
+    mode: str = 'none'
+    speakers: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -66,6 +93,7 @@ class PipelineConfig:
 
     # Sub-configs
     segmentation: SegmentationConfig = field(default_factory=SegmentationConfig)
+    speaker_filter: SpeakerFilterConfig = field(default_factory=SpeakerFilterConfig)
     theme_classification: ThemeClassificationConfig = field(default_factory=ThemeClassificationConfig)
     codebook_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
     codebook_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
@@ -97,6 +125,7 @@ class PipelineConfig:
 
         sub_config_map = {
             'segmentation': SegmentationConfig,
+            'speaker_filter': SpeakerFilterConfig,
             'theme_classification': ThemeClassificationConfig,
             'codebook_embedding': EmbeddingClassifierConfig,
             'codebook_llm': LLMCodebookConfig,

@@ -34,7 +34,9 @@ from constructs.theme_schema import ThemeFramework
 from .config import PipelineConfig
 from .transcript_ingestion import (
     TranscriptSegmenter,
+    ConversationalSegmenter,
     load_diarized_session,
+    load_vtt_session,
     discover_session_files,
 )
 from .dataset_assembly import (
@@ -43,6 +45,9 @@ from .dataset_assembly import (
     export_theme_definitions,
     export_content_validity_test_set,
     compute_session_stage_progression,
+    export_coded_transcript,
+    export_per_transcript_stats,
+    export_cumulative_report,
 )
 from .cross_validation import (
     compute_theme_codebook_cooccurrence,
@@ -99,14 +104,34 @@ def run_full_pipeline(
         explanation_key='ingestion',
     )
 
+    # Build speaker exclusion/isolation lists from SpeakerFilterConfig
+    sf = config.speaker_filter
+    excluded_speakers = sf.speakers if sf.mode == 'exclude' else []
+    isolated_speakers = sf.speakers if sf.mode == 'isolate' else []
+
     seg_config = {
         'embedding_model': config.segmentation.embedding_model,
         'min_segment_words': config.segmentation.min_segment_words,
         'max_segment_words': config.segmentation.max_segment_words,
         'silence_threshold_ms': config.segmentation.silence_threshold_ms,
         'semantic_shift_percentile': config.segmentation.semantic_shift_percentile,
+        'min_segment_words_conversational': config.segmentation.min_segment_words_conversational,
+        'max_segment_words_conversational': config.segmentation.max_segment_words_conversational,
+        # Advanced grouping parameters
+        'group_cross_speaker': getattr(config.segmentation, 'group_cross_speaker', False),
+        'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
+        'min_words_per_sentence': getattr(config.segmentation, 'min_words_per_sentence', 10),
+        'max_segment_duration_seconds': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
+        # Speaker filtering applied at sentence level before segmentation
+        'excluded_speakers': excluded_speakers,
+        'isolated_speakers': isolated_speakers,
     }
-    segmenter = TranscriptSegmenter(seg_config)
+    use_conv = getattr(config.segmentation, 'use_conversational_segmenter', True)
+    segmenter = ConversationalSegmenter(seg_config) if use_conv else TranscriptSegmenter(seg_config)
+
+    # When using conversational segmenter, classify ALL segments (not participant-only)
+    if use_conv:
+        config.theme_classification.classify_all_segments = True
 
     session_files = discover_session_files(config.transcript_dir)
     if not session_files:
@@ -116,21 +141,31 @@ def run_full_pipeline(
         )
         observer.on_stage_progress(
             "Transcript Ingestion and Segmentation",
-            "Looking for JSON files directly...",
+            "Looking for JSON and VTT files directly...",
         )
-        import glob
-        session_files = sorted(glob.glob(
-            os.path.join(config.transcript_dir, '**/*.json'), recursive=True
-        ))
+        import glob as _glob
+        session_files = sorted(
+            set(_glob.glob(os.path.join(config.transcript_dir, '**/*.json'), recursive=True))
+            | set(_glob.glob(os.path.join(config.transcript_dir, '**/*.vtt'), recursive=True))
+        )
 
     all_segments: List[Segment] = []
     for session_file in session_files:
-        session_data = load_diarized_session(session_file)
+        if session_file.lower().endswith('.vtt'):
+            session_data = load_vtt_session(session_file)
+        else:
+            session_data = load_diarized_session(session_file)
         metadata = session_data['metadata']
         metadata.setdefault('trial_id', config.trial_id)
         metadata.setdefault('participant_id', 'unknown')
-        metadata.setdefault('session_id', os.path.basename(os.path.dirname(session_file)))
+        # For VTT files, use the filename (sans extension) as session_id
+        if session_file.lower().endswith('.vtt'):
+            default_session_id = os.path.splitext(os.path.basename(session_file))[0]
+        else:
+            default_session_id = os.path.basename(os.path.dirname(session_file))
+        metadata.setdefault('session_id', default_session_id)
         metadata.setdefault('session_number', 1)
+        metadata.setdefault('source_file', session_file)
 
         segments = segmenter.segment_session(
             session_data['sentences'], metadata
@@ -182,8 +217,18 @@ def run_full_pipeline(
         theme_config = config.theme_classification
         theme_config.output_dir = os.path.join(output_dir, 'llm_raw')
 
+        segments_to_classify = _apply_speaker_filter(all_segments, config.speaker_filter)
+        n_filtered = len(all_segments) - len(segments_to_classify)
+        if n_filtered:
+            observer.on_stage_progress(
+                "Zero-Shot LLM Theme Classification",
+                f"Speaker filter ({config.speaker_filter.mode}): "
+                f"{len(segments_to_classify)} of {len(all_segments)} segments selected "
+                f"({n_filtered} excluded)",
+            )
+
         results_all, metadata_all = classify_segments_zero_shot(
-            segments=all_segments,
+            segments=segments_to_classify,
             framework=framework,
             config=theme_config,
             resume_from=config.resume_from,
@@ -236,9 +281,10 @@ def run_full_pipeline(
 
         # Embedding classification
         observer.on_stage_progress("Codebook Classification", "Running embedding-based classification...")
+        cb_segments = _apply_speaker_filter(all_segments, config.speaker_filter)
         embedding_classifier = EmbeddingCodebookClassifier(config.codebook_embedding)
         embedding_results = embedding_classifier.classify_segments(
-            all_segments, codebook
+            cb_segments, codebook
         )
 
         # LLM classification
@@ -249,11 +295,12 @@ def run_full_pipeline(
             api_key=theme_cfg.api_key,
             replicate_api_token=theme_cfg.replicate_api_token,
             model=theme_cfg.model,
+            lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
         )
         llm_client = LLMClient(llm_cfg)
         llm_classifier = LLMCodebookClassifier(llm_client, config.codebook_llm)
         llm_results = llm_classifier.classify_segments(
-            all_segments, codebook, output_dir=codebook_output_dir,
+            cb_segments, codebook, output_dir=codebook_output_dir,
         )
 
         # Ensemble reconciliation
@@ -418,6 +465,45 @@ def run_full_pipeline(
     )
 
     # ------------------------------------------------------------------
+    # Stage 7: Coded Transcript + Statistics Reports
+    # ------------------------------------------------------------------
+    observer.on_stage_start("Report Generation", "7", explanation_key='report_generation')
+
+    reports_dir = os.path.join(output_dir, 'reports')
+    os.makedirs(reports_dir, exist_ok=True)
+
+    # Per-session coded transcripts
+    for session_id, session_df in master_df.groupby('session_id'):
+        segs_for_session = [s for s in all_segments if s.session_id == session_id]
+        transcript_path = os.path.join(reports_dir, f"coded_transcript_{session_id}.txt")
+        export_coded_transcript(segs_for_session, framework, codebook, transcript_path)
+        observer.on_stage_progress(
+            "Report Generation",
+            f"  Coded transcript: reports/coded_transcript_{session_id}.txt",
+        )
+
+    # Per-transcript stats (one JSON per session)
+    stats_dir = os.path.join(reports_dir, 'per_transcript')
+    export_per_transcript_stats(master_df, framework, codebook, stats_dir)
+    observer.on_stage_progress(
+        "Report Generation",
+        f"  Per-transcript stats: reports/per_transcript/stats_<session>.json",
+    )
+
+    # Cumulative report across all transcripts
+    cumulative_path = os.path.join(reports_dir, f'cumulative_report_{ts}.json')
+    export_cumulative_report(master_df, framework, codebook, cumulative_path)
+    observer.on_stage_progress(
+        "Report Generation",
+        f"  Cumulative report: reports/cumulative_report_{ts}.json",
+    )
+
+    observer.on_stage_complete(
+        "Report Generation",
+        f"Reports written to {reports_dir}",
+    )
+
+    # ------------------------------------------------------------------
     # Pipeline Complete
     # ------------------------------------------------------------------
     observer.on_pipeline_complete(
@@ -438,6 +524,43 @@ def run_full_pipeline(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _apply_speaker_filter(
+    segments: List[Segment], filter_cfg
+) -> List[Segment]:
+    """
+    Return the subset of segments that should be classified, based on
+    SpeakerFilterConfig.
+
+    'none'    — return all segments unchanged
+    'exclude' — drop segments whose sole speaker is in the filter list;
+                multi-speaker ("multiple") segments are always kept
+    'isolate' — keep segments whose speaker is in the filter list, OR
+                whose speakers_in_segment contains at least one listed speaker
+    """
+    mode = getattr(filter_cfg, 'mode', 'none')
+    speakers = set(getattr(filter_cfg, 'speakers', []))
+
+    if mode == 'none' or not speakers:
+        return segments
+
+    if mode == 'exclude':
+        return [
+            s for s in segments
+            if s.speaker == 'multiple' or s.speaker not in speakers
+        ]
+
+    if mode == 'isolate':
+        def _matches(seg: Segment) -> bool:
+            if seg.speaker in speakers:
+                return True
+            if seg.speakers_in_segment:
+                return any(sp in speakers for sp in seg.speakers_in_segment)
+            return False
+        return [s for s in segments if _matches(s)]
+
+    return segments
+
 
 def _validate_theme_classifications(all_segments: List[Segment], validator) -> None:
     """Identify and validate uncertain theme classifications."""
