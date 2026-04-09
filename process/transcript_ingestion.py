@@ -53,6 +53,16 @@ class SpeakerNormalizer:
         self.participant_counter = 0
         self.therapist_counter = 0
 
+        # Pre-register known therapist/participant speakers so they appear
+        # in the anonymization key even if their sentences are filtered
+        # before segmentation.
+        if filter_mode == 'exclude':
+            for name in sorted(excluded_speakers or []):
+                self.normalize(name)  # registers as therapist
+        elif filter_mode == 'isolate':
+            for name in sorted(isolated_speakers or []):
+                self.normalize(name)  # registers as participant
+
     def normalize(self, speaker_name: str) -> Tuple[str, str]:
         """
         Get the (role, normalized_id) for a speaker name.
@@ -357,18 +367,14 @@ class TranscriptSegmenter:
 
 class ConversationalSegmenter:
     """
-    Groups multi-speaker utterances into coherent conversational segments.
+    Groups utterances into coherent single-speaker segments.
 
-    Unlike TranscriptSegmenter (which processes each speaker's run
-    independently), this segmenter treats the full transcript as a stream,
-    grouping consecutive utterances from ALL speakers into topically coherent
-    chunks.  Each output segment's text uses anonymized speaker IDs:
-
-        participant_1: I was thinking about what you said last week...
-        participant_2: That resonates with me too...
-
-    Excluded speakers' sentences are stripped *before* segmentation so their
-    content never enters the semantic grouping or output text.
+    Treats the full transcript as a stream, forcing boundaries at every
+    speaker change so each output segment contains speech from exactly
+    one speaker.  Excluded speakers (therapists/facilitators) remain in
+    the pipeline as their own segments — downstream processing (the LLM
+    refiner or mechanical fallback) attaches their speech as context to
+    adjacent participant segments before removing them.
 
     Speaker names are normalized to anonymous IDs (participant_1, therapist_2, etc.)
     based on the speaker filter configuration.
@@ -392,7 +398,6 @@ class ConversationalSegmenter:
         filter_mode = config.get('speaker_filter_mode', 'none')
         self.speaker_norm = SpeakerNormalizer(excluded, isolated, filter_mode)
         # Advanced grouping parameters
-        self.group_cross_speaker = config.get('group_cross_speaker', False)
         self.max_gap_seconds = config.get('max_gap_seconds', 30.0)
         self.min_words_per_sentence = config.get('min_words_per_sentence', 10)
         self.max_segment_duration_seconds = config.get('max_segment_duration_seconds', 300.0)
@@ -404,16 +409,18 @@ class ConversationalSegmenter:
         self.min_prominence: float = config.get('min_prominence', 0.05)
         self.broad_window_size: int = config.get('broad_window_size', 7)
         self.use_topic_clustering: bool = config.get('use_topic_clustering', False)
+        # Process logger (optional)
+        self.plog = config.get('process_logger', None)
 
     def segment_session(
         self, sentences: List[Dict], session_metadata: Dict,
         return_intermediates: bool = False,
     ) -> Union[List['Segment'], Dict[str, Any]]:
         """
-        Segment a session transcript into multi-speaker conversational chunks.
+        Segment a session transcript into single-speaker segments.
 
-        Excluded/isolated speakers are filtered at the sentence level *before*
-        semantic grouping, so their content never enters segments.
+        Short sentences are folded into same-speaker neighbors. Speaker
+        changes always force boundaries, producing single-speaker segments.
 
         Parameters
         ----------
@@ -427,23 +434,44 @@ class ConversationalSegmenter:
             'boundary_confidence' instead of just the segment list.
         """
         if not sentences:
-            return {'segments': [], 'sim_curve': np.array([]),
-                    'broad_sim_curve': np.array([]), 'embeddings': np.array([]),
-                    'sentences': [], 'boundary_confidence': {}} if return_intermediates else []
+            empty = {'segments': [], 'sim_curve': np.array([]),
+                     'broad_sim_curve': np.array([]), 'embeddings': np.array([]),
+                     'sentences': [], 'boundary_confidence': {},
+                     'original_sentences': []}
+            return empty if return_intermediates else []
+
+        # Keep unfiltered sentences for downstream context expansion
+        original_sentences = list(sentences)
+
+        if self.plog:
+            session_id = session_metadata.get('session_id', '?')
+            self.plog.section(f"SESSION: {session_id}")
+            self.plog.log_sentences("ALL SENTENCES (pre-filter)", original_sentences)
 
         # --- Sentence-level speaker filtering ---
+        before_filter = list(sentences)
         sentences = self._filter_sentences_by_speaker(sentences)
 
-        # --- Filter short sentences (below min_words_per_sentence) ---
-        sentences = [
-            s for s in sentences
-            if len(s.get('text', '').split()) >= self.min_words_per_sentence
-        ]
+        if self.plog:
+            excluded_set = set(self.excluded_speakers) if self.excluded_speakers else set()
+            self.plog.log_sentence_filter(before_filter, sentences, excluded_set)
+            self.plog.log_sentences("SENTENCES AFTER FILTER", sentences)
+
+        # --- Fold short sentences into adjacent same-speaker neighbors ---
+        before_fold = list(sentences)
+        sentences = self._fold_short_sentences(sentences)
+
+        if self.plog:
+            self.plog.log_fold_short(before_fold, sentences)
+            if len(before_fold) != len(sentences):
+                self.plog.log_sentences("SENTENCES AFTER FOLD", sentences)
 
         if not sentences:
-            return {'segments': [], 'sim_curve': np.array([]),
-                    'broad_sim_curve': np.array([]), 'embeddings': np.array([]),
-                    'sentences': [], 'boundary_confidence': {}} if return_intermediates else []
+            empty = {'segments': [], 'sim_curve': np.array([]),
+                     'broad_sim_curve': np.array([]), 'embeddings': np.array([]),
+                     'sentences': [], 'boundary_confidence': {},
+                     'original_sentences': original_sentences}
+            return empty if return_intermediates else []
 
         texts = [s['text'] for s in sentences]
         embeddings = self.embedding_model.encode(texts, normalize_embeddings=True)
@@ -454,14 +482,21 @@ class ConversationalSegmenter:
         boundaries = self._find_boundaries(sim_curve, pause_curve, sentences,
                                            embeddings=embeddings)
 
-        # Compute boundary confidence (present in both narrow and broad curves)
+        # Compute boundary confidence using all available signals
         boundary_confidence = self._classify_boundary_confidence(
-            boundaries, sim_curve, broad_sim_curve, pause_curve, sentences
+            boundaries, sim_curve, broad_sim_curve, pause_curve, sentences,
+            embeddings=embeddings,
         )
+
+        if self.plog:
+            self.plog.log_boundaries(boundaries, boundary_confidence, sentences)
 
         segments = self._build_segments(sentences, boundaries, session_metadata)
         for i, seg in enumerate(segments):
             seg.segment_index = i
+
+        if self.plog:
+            self.plog.log_segments("SEGMENTS AFTER BUILD+MERGE", segments)
 
         if return_intermediates:
             return {
@@ -471,11 +506,18 @@ class ConversationalSegmenter:
                 'embeddings': embeddings,
                 'sentences': sentences,
                 'boundary_confidence': boundary_confidence,
+                'original_sentences': original_sentences,
             }
         return segments
 
     def _filter_sentences_by_speaker(self, sentences: List[Dict]) -> List[Dict]:
-        """Remove sentences from excluded speakers or keep only isolated speakers."""
+        """Filter sentences by speaker before segmentation.
+
+        Excluded speakers (therapists/facilitators) are removed so their
+        speech is not embedded or segmented. The original unfiltered
+        sentences are preserved in intermediates for the LLM refiner to
+        use as context when expanding segment boundaries.
+        """
         if self.excluded_speakers:
             excluded_set = set(self.excluded_speakers)
             sentences = [s for s in sentences if s.get('speaker', '') not in excluded_set]
@@ -485,6 +527,102 @@ class ConversationalSegmenter:
         return sentences
 
     # ------------------------------------------------------------------
+
+    def _fold_short_sentences(self, sentences: List[Dict]) -> List[Dict]:
+        """Fold short sentences into the nearest adjacent sentence by time.
+
+        Instead of dropping sentences below ``min_words_per_sentence``,
+        fold them into the nearest neighbor:
+        1. First, try nearest same-speaker neighbor (by time distance)
+        2. If no same-speaker neighbor exists, merge with nearest neighbor overall
+        """
+        if not sentences:
+            return sentences
+
+        short = [
+            len(s.get('text', '').split()) < self.min_words_per_sentence
+            for s in sentences
+        ]
+        if not any(short):
+            return sentences
+
+        result = [dict(s) for s in sentences]
+        absorbed = [False] * len(result)
+
+        for i, is_short in enumerate(short):
+            if not is_short:
+                continue
+
+            speaker = result[i].get('speaker', '')
+            short_start = result[i].get('start', 0)
+            short_end = result[i].get('end', 0)
+
+            # Find nearest same-speaker neighbor by time
+            nearest_same_speaker_idx = None
+            nearest_same_speaker_dist = float('inf')
+
+            for j in range(len(result)):
+                if j == i or absorbed[j]:
+                    continue
+                if result[j].get('speaker', '') == speaker:
+                    # Calculate temporal distance to this neighbor
+                    j_start = result[j].get('start', 0)
+                    j_end = result[j].get('end', 0)
+                    if j < i:
+                        # Previous neighbor: distance from its end to our start
+                        dist = short_start - j_end
+                    else:
+                        # Next neighbor: distance from our end to its start
+                        dist = j_start - short_end
+
+                    if dist >= 0 and dist < nearest_same_speaker_dist:
+                        nearest_same_speaker_idx = j
+                        nearest_same_speaker_dist = dist
+
+            # If found same-speaker neighbor, merge with it
+            if nearest_same_speaker_idx is not None:
+                j = nearest_same_speaker_idx
+                if j < i:
+                    # Merge into previous neighbor (append short to end)
+                    result[j]['text'] = result[j]['text'] + ' ' + result[i]['text']
+                    result[j]['end'] = result[i].get('end', result[j].get('end', 0))
+                else:
+                    # Merge into next neighbor (prepend short to start)
+                    result[j]['text'] = result[i]['text'] + ' ' + result[j]['text']
+                    result[j]['start'] = result[i].get('start', result[j].get('start', 0))
+                absorbed[i] = True
+                continue
+
+            # No same-speaker neighbor found; find nearest overall by time
+            nearest_idx = None
+            nearest_dist = float('inf')
+
+            for j in range(len(result)):
+                if j == i or absorbed[j]:
+                    continue
+                j_start = result[j].get('start', 0)
+                j_end = result[j].get('end', 0)
+                if j < i:
+                    dist = short_start - j_end
+                else:
+                    dist = j_start - short_end
+
+                if dist >= 0 and dist < nearest_dist:
+                    nearest_idx = j
+                    nearest_dist = dist
+
+            # Merge with nearest neighbor overall if found
+            if nearest_idx is not None:
+                j = nearest_idx
+                if j < i:
+                    result[j]['text'] = result[j]['text'] + ' ' + result[i]['text']
+                    result[j]['end'] = result[i].get('end', result[j].get('end', 0))
+                else:
+                    result[j]['text'] = result[i]['text'] + ' ' + result[j]['text']
+                    result[j]['start'] = result[i].get('start', result[j].get('start', 0))
+                absorbed[i] = True
+
+        return [s for s, ab in zip(result, absorbed) if not ab]
 
     def _compute_similarity_curve(
         self, embeddings: np.ndarray, window: int = 3
@@ -560,11 +698,13 @@ class ConversationalSegmenter:
         self, boundaries: List[int], sim_curve: np.ndarray,
         broad_sim_curve: np.ndarray, pause_curve: np.ndarray,
         sentences: List[Dict],
+        embeddings: Optional[np.ndarray] = None,
     ) -> Dict[int, str]:
         """Classify each boundary as 'confident' or 'ambiguous'.
 
-        Confident boundaries: speaker changes, gap-exceeded, or present
-        as dips in both narrow and broad similarity curves.
+        Confident boundaries: speaker changes, gap-exceeded, present
+        as dips in both narrow and broad similarity curves, or confirmed
+        by topic clustering.
         Ambiguous boundaries: only present in the narrow curve — candidates
         for LLM refinement.
         """
@@ -578,17 +718,21 @@ class ConversationalSegmenter:
         else:
             broad_dips = set()
 
+        # Use topic clustering as an additional confidence signal
+        cluster_boundaries = set()
+        if self.use_topic_clustering and embeddings is not None:
+            cluster_boundaries = self._find_topic_cluster_boundaries(embeddings)
+
         for b in boundaries:
             # Speaker change or gap => always confident
             is_gap = b < len(pause_curve) and pause_curve[b] > max_gap_ms
             is_speaker_change = (
-                not self.group_cross_speaker and
                 b + 1 < len(sentences) and
                 sentences[b].get('speaker', '') != sentences[b + 1].get('speaker', '')
             )
             if is_gap or is_speaker_change:
                 confidence[b] = 'confident'
-            elif b in broad_dips:
+            elif b in broad_dips or b in cluster_boundaries:
                 confidence[b] = 'confident'
             else:
                 confidence[b] = 'ambiguous'
@@ -627,9 +771,8 @@ class ConversationalSegmenter:
                 i < len(pause_curve) and
                 pause_curve[i] > max_gap_ms
             )
-            # Force boundary on speaker change when group_cross_speaker is False
+            # Speaker changes always force a boundary
             is_speaker_change = (
-                not self.group_cross_speaker and
                 i + 1 < len(sentences) and
                 sentences[i].get('speaker', '') != sentences[i + 1].get('speaker', '')
             )
@@ -668,7 +811,7 @@ class ConversationalSegmenter:
 
             # Split oversized segments (word count or duration)
             duration_s = (chunk[-1].get('end', 0) - chunk[0].get('start', 0))
-            if word_count > self.max_words or duration_s > self.max_segment_duration_seconds:
+            if (word_count > self.max_words or duration_s > self.max_segment_duration_seconds) and len(chunk) > 1:
                 mid = len(chunk) // 2
                 segments.extend(self._build_segments(
                     chunk[:mid], [], metadata, offset + len(segments)
@@ -678,46 +821,28 @@ class ConversationalSegmenter:
                 ))
                 continue
 
-            # Normalize speakers — must happen before text build to detect multi-speaker
-            unique_original_speakers = list(dict.fromkeys(s['speaker'] for s in chunk))
-            unique_speakers = [self.speaker_norm.get_normalized_id(sp) for sp in unique_original_speakers]
+            # Single-speaker: speaker changes always force boundaries
+            original_speaker = chunk[0]['speaker']
+            normalized_id = self.speaker_norm.get_normalized_id(original_speaker)
+            speaker_role = self.speaker_norm.get_role(original_speaker)
 
-            # Determine dominant speaker for segment identity
-            dominant_original = max(
-                unique_original_speakers,
-                key=lambda sp: sum(
-                    len(s['text'].split()) for s in chunk if s['speaker'] == sp
-                )
-            )
-            dominant_id = self.speaker_norm.get_normalized_id(dominant_original)
-            dominant_role = self.speaker_norm.get_role(dominant_original)
-            speaker_field = dominant_role if len(unique_speakers) == 1 else "multiple"
-
-            # Include numeric speaker labels only when multiple speakers are present
-            if len(unique_original_speakers) > 1:
-                lines = []
-                for s in chunk:
-                    num = self.speaker_norm.get_normalized_id(s['speaker']).rsplit('_', 1)[-1]
-                    lines.append(f"{num}: {s['text']}")
-                text = "\n".join(lines)
-            else:
-                text = " ".join(s['text'] for s in chunk)
+            text = " ".join(s['text'] for s in chunk)
 
             seg = Segment(
                 segment_id=(
-                    f"{metadata['trial_id']}_{dominant_id}_"
+                    f"{metadata['trial_id']}_{normalized_id}_"
                     f"S{metadata['session_number']:02d}_{offset + len(segments):04d}"
                 ),
                 trial_id=metadata['trial_id'],
-                participant_id=dominant_id,
+                participant_id=normalized_id,
                 session_id=metadata['session_id'],
                 session_number=metadata['session_number'],
                 start_time_ms=int(chunk[0].get('start', 0) * 1000),
                 end_time_ms=int(chunk[-1].get('end', 0) * 1000),
-                speaker=speaker_field,
+                speaker=speaker_role,
                 text=text,
                 word_count=word_count,
-                speakers_in_segment=unique_speakers,
+                speakers_in_segment=[normalized_id],
                 session_file=metadata.get('source_file', ''),
             )
             segments.append(seg)
@@ -725,35 +850,47 @@ class ConversationalSegmenter:
         return self._merge_undersized(segments)
 
     def _merge_undersized(self, segments: List['Segment']) -> List['Segment']:
+        """Bidirectional same-speaker merge for undersized segments.
+
+        Pass 1 (backward): merge into previous segment if same speaker.
+        Pass 2 (forward): for still-undersized, merge into next if same speaker.
+        Segments at speaker boundaries that can't merge stay as-is.
+        """
         if len(segments) <= 1:
             return segments
+
+        # Pass 1: backward merge — same speaker identity required, not just role
         merged = [segments[0]]
         for seg in segments[1:]:
             if seg.word_count < self.min_words and merged:
-                # Block cross-speaker merges when grouping is disabled
-                if not self.group_cross_speaker:
-                    prev_speakers = set(merged[-1].speakers_in_segment or [merged[-1].speaker])
-                    curr_speakers = set(seg.speakers_in_segment or [seg.speaker])
-                    if prev_speakers != curr_speakers:
-                        merged.append(seg)
-                        continue
                 prev = merged[-1]
-                prev.text = prev.text + "\n" + seg.text
-                prev.word_count = len(prev.text.split())
-                prev.end_time_ms = seg.end_time_ms
-                # Update speaker field
-                if prev.speaker != seg.speaker:
-                    prev.speaker = "multiple"
-                # Merge speakers lists
-                if prev.speakers_in_segment and seg.speakers_in_segment:
-                    seen = set(prev.speakers_in_segment)
-                    for sp in seg.speakers_in_segment:
-                        if sp not in seen:
-                            prev.speakers_in_segment.append(sp)
-                            seen.add(sp)
-            else:
-                merged.append(seg)
-        return merged
+                if prev.participant_id == seg.participant_id:
+                    prev.text = prev.text + " " + seg.text
+                    prev.word_count = len(prev.text.split())
+                    prev.end_time_ms = seg.end_time_ms
+                    continue
+            merged.append(seg)
+
+        # Pass 2: forward merge for still-undersized — same speaker identity required
+        if len(merged) <= 1:
+            return merged
+        result = []
+        i = 0
+        while i < len(merged):
+            seg = merged[i]
+            if seg.word_count < self.min_words and i + 1 < len(merged):
+                next_seg = merged[i + 1]
+                if seg.participant_id == next_seg.participant_id:
+                    next_seg.text = seg.text + " " + next_seg.text
+                    next_seg.word_count = len(next_seg.text.split())
+                    next_seg.start_time_ms = seg.start_time_ms
+                    next_seg.segment_id = seg.segment_id
+                    i += 1
+                    continue
+            result.append(seg)
+            i += 1
+
+        return result
 
 
 # ---------------------------------------------------------------------------

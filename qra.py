@@ -78,6 +78,10 @@ def _add_common_args(parser: argparse.ArgumentParser):
     parser.add_argument('--no-theme-labeler', action='store_true')
     parser.add_argument('--run-codebook-classifier', action='store_true')
     parser.add_argument('--no-codebook-classifier', action='store_true')
+    parser.add_argument(
+        '--verbose-segmentation', action='store_true',
+        help='Write process_log.txt with every LLM prompt/response and segmentation step',
+    )
 
     # Embedding classifier settings
     parser.add_argument('--no-two-pass', action='store_true')
@@ -219,6 +223,8 @@ def _build_config(args):
         config.run_codebook_classifier = True
     if args.no_codebook_classifier:
         config.run_codebook_classifier = False
+    if getattr(args, 'verbose_segmentation', False):
+        config.segmentation.verbose_segmentation = True
 
     # Backend & model
     tc = config.theme_classification
