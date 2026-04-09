@@ -74,6 +74,8 @@ def assemble_master_dataset(
             'participant_id': seg.participant_id,
             'session_id': seg.session_id,
             'session_number': seg.session_number,
+            'cohort_id': seg.cohort_id,
+            'session_variant': seg.session_variant,
             'segment_index': seg.segment_index,
             'start_time_ms': seg.start_time_ms,
             'end_time_ms': seg.end_time_ms,

@@ -47,7 +47,7 @@ Utterance:
 
 Provide your classification as JSON with these exact fields:
 {{
-    "primary_stage": "<theme name>",
+    "primary_stage": "<theme name or null>",
     "primary_confidence": <float 0-1>,
     "secondary_stage": "<theme name or null>",
     "secondary_confidence": <float 0-1 or null>,
@@ -55,7 +55,7 @@ Provide your classification as JSON with these exact fields:
 }}
 
 Rules:
-- Assign exactly one primary theme
+- Assign exactly one primary theme, or null if the utterance is irrelevant to the study
 - Assign a secondary theme ONLY if the utterance clearly expresses two themes
 - Confidence should reflect how prototypical the expression is (1.0 = textbook example)
 - Reference specific words or phrases in your justification
@@ -252,7 +252,13 @@ def _parse_single_run(
     result: Any,
     name_to_id: Dict[str, int],
 ) -> Optional[Dict]:
-    """Parse a single LLM response into structured fields."""
+    """Parse a single LLM response into structured fields.
+
+    Returns:
+    - None if parsing failed (malformed response)
+    - Dict with primary_stage=None if content is irrelevant to study
+    - Dict with primary_stage=<id> for valid classifications
+    """
     if result is None:
         return None
 
@@ -264,12 +270,28 @@ def _parse_single_run(
         else:
             return None
 
-        primary_name = str(parsed.get('primary_stage') or '').lower().strip()
-        if not primary_name:
+        # Handle primary_stage: check if explicitly null vs. missing/invalid
+        if 'primary_stage' not in parsed:
+            # Required field missing → parse failure
             return None
-        primary_id = name_to_id.get(primary_name)
-        if primary_id is None:
-            return None
+
+        primary_stage_raw = parsed['primary_stage']
+        primary_id = None
+
+        if primary_stage_raw is None:
+            # JSON had "primary_stage": null → irrelevant content
+            primary_id = None
+        else:
+            primary_name = str(primary_stage_raw).lower().strip()
+            if not primary_name or primary_name in ('null', 'none'):
+                # String "null" or "none" → irrelevant content
+                primary_id = None
+            else:
+                # Try to map to theme ID
+                primary_id = name_to_id.get(primary_name)
+                if primary_id is None:
+                    # LLM produced invalid theme name → parse failure
+                    return None
 
         secondary_name = parsed.get('secondary_stage')
         secondary_id = None

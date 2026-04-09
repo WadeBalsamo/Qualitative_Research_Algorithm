@@ -294,13 +294,15 @@ class TranscriptSegmenter:
 
             segment = Segment(
                 segment_id=(
-                    f"{metadata['trial_id']}_{normalized_id}_"
-                    f"S{metadata['session_number']:02d}_{offset + len(segments):04d}"
+                    f"{metadata['trial_id']}_{metadata['session_id']}_"
+                    f"p{normalized_id.split('_')[-1]}_seg{offset + len(segments):04d}"
                 ),
                 trial_id=metadata['trial_id'],
                 participant_id=normalized_id,
                 session_id=metadata['session_id'],
                 session_number=metadata['session_number'],
+                cohort_id=metadata.get('cohort_id'),
+                session_variant=metadata.get('session_variant', ''),
                 start_time_ms=int(seg_sentences[0].get('start', 0) * 1000),
                 end_time_ms=int(seg_sentences[-1].get('end', 0) * 1000),
                 speaker=normalized_role,
@@ -830,13 +832,15 @@ class ConversationalSegmenter:
 
             seg = Segment(
                 segment_id=(
-                    f"{metadata['trial_id']}_{normalized_id}_"
-                    f"S{metadata['session_number']:02d}_{offset + len(segments):04d}"
+                    f"{metadata['trial_id']}_{metadata['session_id']}_"
+                    f"p-{normalized_id.split('_')[-1]}_seg-{offset + len(segments):04d}"
                 ),
                 trial_id=metadata['trial_id'],
                 participant_id=normalized_id,
                 session_id=metadata['session_id'],
                 session_number=metadata['session_number'],
+                cohort_id=metadata.get('cohort_id'),
+                session_variant=metadata.get('session_variant', ''),
                 start_time_ms=int(chunk[0].get('start', 0) * 1000),
                 end_time_ms=int(chunk[-1].get('end', 0) * 1000),
                 speaker=speaker_role,
@@ -1035,3 +1039,25 @@ def scan_speakers(input_dir: str) -> Dict[str, int]:
 
     # Sort by utterance count descending
     return dict(sorted(speaker_counts.items(), key=lambda kv: -kv[1]))
+
+
+def parse_session_id_metadata(session_id_stem: str) -> dict:
+    """Parse a canonical session ID stem (e.g. 'c1s4a', 'c2s7') into structured metadata.
+
+    Expected format: c{cohort}s{session_number}[variant]
+      - c1s3    → cohort_id=1, session_number=3, session_variant=''
+      - c1s4a   → cohort_id=1, session_number=4, session_variant='a'
+      - c2s8b   → cohort_id=2, session_number=8, session_variant='b'
+
+    Returns a dict with keys: cohort_id (int|None), session_number (int),
+    session_variant (str). Falls back to session_number=1 if pattern doesn't match.
+    """
+    import re
+    m = re.fullmatch(r'c(\d+)s(\d+)([a-z]?)', session_id_stem.strip(), re.IGNORECASE)
+    if not m:
+        return {'cohort_id': None, 'session_number': 1, 'session_variant': ''}
+    return {
+        'cohort_id': int(m.group(1)),
+        'session_number': int(m.group(2)),
+        'session_variant': m.group(3).lower(),
+    }
