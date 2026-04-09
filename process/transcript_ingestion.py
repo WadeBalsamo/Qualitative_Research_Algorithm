@@ -833,7 +833,7 @@ class ConversationalSegmenter:
             seg = Segment(
                 segment_id=(
                     f"{metadata['trial_id']}_{metadata['session_id']}_"
-                    f"p-{normalized_id.split('_')[-1]}_seg-{offset + len(segments):04d}"
+                    f"p{normalized_id.split('_')[-1]}_seg{offset + len(segments):04d}"
                 ),
                 trial_id=metadata['trial_id'],
                 participant_id=normalized_id,

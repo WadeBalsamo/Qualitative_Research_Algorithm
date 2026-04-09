@@ -513,17 +513,6 @@ class SetupWizard:
         }
         print()
 
-    # -----------------------------------------------------------------
-    # Step 10: Run mode
-    # -----------------------------------------------------------------
-    def _step_10_run_mode(self):
-        print("--- Step 11/12: Run Mode ---")
-        print("    auto        : Fully automated (no human intervention)")
-        print("    interactive : Prompt for validation of uncertain results")
-        print("    review      : Batch validation at end")
-        mode = _prompt_choice("Run mode", ['auto', 'interactive', 'review'], 'auto')
-        self.config_data['pipeline']['run_mode'] = mode
-        print()
 
     # -----------------------------------------------------------------
     # Step 10: Post-pipeline Analysis
@@ -547,6 +536,18 @@ class SetupWizard:
             print("    Analysis can be run manually: python qra.py analyze --output-dir ./data/output/")
         print()
 
+    # -----------------------------------------------------------------
+    # Step 11: Run mode
+    # -----------------------------------------------------------------
+    def _step_11_run_mode(self):
+        print("--- Step 11/12: Run Mode ---")
+        print("    auto        : Fully automated (no human intervention)")
+        print("    interactive : Prompt for validation of uncertain results")
+        print("    review      : Batch validation at end")
+        mode = _prompt_choice("Run mode", ['auto', 'interactive', 'review'], 'auto')
+        self.config_data['pipeline']['run_mode'] = mode
+        print()
+        
     # -----------------------------------------------------------------
     # Step 12: Save & run
     # -----------------------------------------------------------------
