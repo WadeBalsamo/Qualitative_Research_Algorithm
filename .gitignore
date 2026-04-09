@@ -6,3 +6,6 @@ MoveMORE-Partial-Dataset/
 #data/input/*
 data/*.vtt
 data/*
+__pycache__/
+.venv/
+wait_and_process.sh
