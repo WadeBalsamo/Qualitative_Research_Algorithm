@@ -30,6 +30,8 @@ class Segment:
     participant_id: str = ""
     session_id: str = ""
     session_number: int = 0
+    cohort_id: Optional[int] = None
+    session_variant: str = ''   # '' for normal sessions, 'a'/'b' for split sessions (e.g. c1s4a)
 
     # Temporal fields
     segment_index: int = 0
