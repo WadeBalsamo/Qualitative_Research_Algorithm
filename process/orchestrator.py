@@ -40,6 +40,7 @@ from .transcript_ingestion import (
     discover_session_files,
 )
 from .llm_segmentation import LLMSegmentationRefiner
+from .process_logger import ProcessLogger
 from .dataset_assembly import (
     assemble_master_dataset,
     build_session_adjacency_index,
@@ -97,6 +98,11 @@ def run_full_pipeline(
 
     run_mode = getattr(config, 'run_mode', 'auto')
 
+    # Process logger (verbose segmentation mode)
+    _verbose = getattr(config.segmentation, 'verbose_segmentation', False)
+    _plog_path = os.path.join(output_dir, 'process_log.txt') if _verbose else None
+    plog = ProcessLogger(_plog_path)
+
     # ------------------------------------------------------------------
     # Stage 1: Transcript Ingestion and Segmentation
     # ------------------------------------------------------------------
@@ -119,7 +125,6 @@ def run_full_pipeline(
         'min_segment_words_conversational': config.segmentation.min_segment_words_conversational,
         'max_segment_words_conversational': config.segmentation.max_segment_words_conversational,
         # Advanced grouping parameters
-        'group_cross_speaker': getattr(config.segmentation, 'group_cross_speaker', False),
         'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
         'min_words_per_sentence': getattr(config.segmentation, 'min_words_per_sentence', 10),
         'max_segment_duration_seconds': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
@@ -132,9 +137,11 @@ def run_full_pipeline(
         'min_prominence': getattr(config.segmentation, 'min_prominence', 0.05),
         'broad_window_size': getattr(config.segmentation, 'broad_window_size', 7),
         'use_topic_clustering': getattr(config.segmentation, 'use_topic_clustering', False),
+        # Process logger
+        'process_logger': plog,
     }
     use_conv = getattr(config.segmentation, 'use_conversational_segmenter', True)
-    use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', False)
+    use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', True)
     segmenter = ConversationalSegmenter(seg_config) if use_conv else TranscriptSegmenter(seg_config)
 
     # Lazily create LLM refiner if enabled (reuses theme classification backend)
@@ -147,20 +154,27 @@ def run_full_pipeline(
             replicate_api_token=theme_cfg.replicate_api_token,
             model=theme_cfg.model,
             lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+            no_reasoning=True,  # Segmentation uses simple true/false prompts; CoT wastes tokens
         )
         llm_refiner = LLMSegmentationRefiner(
             LLMClient(refiner_llm_cfg),
             {
-                'mode': getattr(config.segmentation, 'llm_refinement_mode', 'boundary_review'),
+                'mode': getattr(config.segmentation, 'llm_refinement_mode', 'full'),
                 'ambiguity_threshold': getattr(config.segmentation, 'llm_ambiguity_threshold', 0.15),
                 'batch_size': getattr(config.segmentation, 'llm_batch_size', 5),
+                'excluded_speakers': excluded_speakers,
+                'max_context_words': config.segmentation.max_segment_words_conversational,
+                'max_context_duration_s': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
                 'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
+                'process_logger': plog,
             },
+            speaker_normalizer=segmenter.speaker_norm,
         )
 
-    # When using conversational segmenter, classify ALL segments (not participant-only)
-    if use_conv:
-        config.theme_classification.classify_all_segments = True
+    # When using conversational segmenter, default to participant-only classification
+    # (therapist segments are filtered out early; set classify_all_segments=True to override)
+    if use_conv and not hasattr(config.theme_classification, 'classify_all_segments'):
+        config.theme_classification.classify_all_segments = False
 
     session_files = discover_session_files(config.transcript_dir)
     if not session_files:
@@ -247,6 +261,7 @@ def run_full_pipeline(
                 result['sim_curve'],
                 result['embeddings'],
                 result.get('boundary_confidence'),
+                original_sentences=result.get('original_sentences'),
             )
         else:
             segments = segmenter.segment_session(
@@ -257,6 +272,8 @@ def run_full_pipeline(
     session_counts = Counter(s.session_id for s in all_segments)
     for seg in all_segments:
         seg.total_segments_in_session = session_counts[seg.session_id]
+
+    plog.close()
 
     # Export speaker anonymization key (original name -> anonymized ID)
     speaker_key = {
@@ -625,10 +642,9 @@ def _apply_speaker_filter(
     SpeakerFilterConfig.
 
     'none'    — return all segments unchanged
-    'exclude' — drop segments whose sole speaker is in the filter list;
-                multi-speaker ("multiple") segments are always kept
-    'isolate' — keep segments whose speaker is in the filter list, OR
-                whose speakers_in_segment contains at least one listed speaker
+    'exclude' — drop therapist segments (by role) from classification.
+                Therapist sentences are already filtered before segmentation,
+                but this catches any remaining therapist segments.
     """
     mode = getattr(filter_cfg, 'mode', 'none')
     speakers = set(getattr(filter_cfg, 'speakers', []))
@@ -639,17 +655,8 @@ def _apply_speaker_filter(
     if mode == 'exclude':
         return [
             s for s in segments
-            if s.speaker == 'multiple' or s.speaker not in speakers
+            if s.speaker != 'therapist'
         ]
-
-    if mode == 'isolate':
-        def _matches(seg: Segment) -> bool:
-            if seg.speaker in speakers:
-                return True
-            if seg.speakers_in_segment:
-                return any(sp in speakers for sp in seg.speakers_in_segment)
-            return False
-        return [s for s in segments if _matches(s)]
 
     return segments
 

@@ -74,20 +74,22 @@ CONTEXT_PREAMBLE = """For context, here is the preceding conversational exchange
 CONVERSATIONAL_THEME_PROMPT_TEMPLATE = """You are a qualitative researcher \
 trained in the {framework_name} framework for analyzing therapeutic dialogue.
 
-{framework_description}
+\n {framework_description}
 
-{codebook_string}
+\n {codebook_string}
 
-{context_block}Classify the following conversational excerpt according to these {num_themes} \
-themes. The excerpt may span multiple speakers and is delimited by ```.
-Focus on the overall thematic content of the exchange, not individual speaker turns.
+\n {context_block}
 
-Excerpt:
+\n  Classify the following conversational excerpt according to these {num_themes} \
+themes. The excerpt may include surrounding context from other speakers. \
+Focus on the thematic content of the participant's speech.
+
+\n Excerpt:
 ```
 {text}
 ```
 
-Provide your classification as JSON with these exact fields:
+\n Provide your classification as JSON with these exact fields:
 {{
     "primary_stage": "<theme name>",
     "primary_confidence": <float 0-1>,
@@ -96,10 +98,10 @@ Provide your classification as JSON with these exact fields:
     "justification": "<brief explanation citing specific speaker language>"
 }}
 
-Rules:
-- Assign exactly one primary theme that best characterizes the exchange
+\n Rules:
+- Assign exactly one primary theme that best characterizes the exchange, or null if the segment is irrelevant to study
 - Assign a secondary theme ONLY if the exchange clearly spans two themes
-- Confidence should reflect how prototypical the exchange is (1.0 = textbook example)
+- Confidence should reflect how prototypical the exchange is (1.0 = textbook example, 0.0 = not representative)
 - Reference specific words or phrases from the excerpt in your justification
 - Do NOT provide any text outside the JSON
 

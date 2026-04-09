@@ -47,6 +47,7 @@ class LLMClientConfig:
     lmstudio_base_url: str = 'http://127.0.0.1:1234/v1'  # LM Studio OpenAI-compatible endpoint
     use_gpu: bool = True  # Use GPU if available for Hugging Face models
     batch_size: int = 1  # For future batch processing
+    no_reasoning: bool = False  # Disable chain-of-thought tokens (LM Studio, Ollama thinking models)
 
 
 class LLMClient:
@@ -347,6 +348,14 @@ class LLMClient:
 
         for attempt in range(self.config.max_retries):
             try:
+                ollama_options = {
+                    "temperature": self.config.temperature,
+                    "num_ctx": num_ctx,
+                    # num_predict -1 means "generate until stop or context full"
+                    "num_predict": -1,
+                }
+                if self.config.no_reasoning:
+                    ollama_options["think"] = False  # Qwen3/thinking model: disable CoT
                 response = requests.post(
                     url=f"{base_url}/api/chat",
                     json={
@@ -354,12 +363,7 @@ class LLMClient:
                         "messages": [{"role": "user", "content": prompt}],
                         "stream": False,
                         "format": "json",
-                        "options": {
-                            "temperature": self.config.temperature,
-                            "num_ctx": num_ctx,
-                            # num_predict -1 means "generate until stop or context full"
-                            "num_predict": -1,
-                        },
+                        "options": ollama_options,
                     },
                     timeout=self.config.timeout,
                 )
@@ -420,18 +424,21 @@ class LLMClient:
 
         for attempt in range(self.config.max_retries):
             try:
+                json_body = {
+                    "model": self.config.model,
+                    "temperature": self.config.temperature,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                }
+                if self.config.no_reasoning:
+                    json_body["include_reasoning"] = False
                 response = requests.post(
                     url=f"{base_url}/chat/completions",
                     headers={
                         "Authorization": "Bearer lm-studio",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": self.config.model,
-                        "temperature": self.config.temperature,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": max_tokens,
-                    },
+                    json=json_body,
                     timeout=self.config.timeout,
                 )
                 data = response.json()

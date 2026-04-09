@@ -112,17 +112,17 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
-    # Step 2: Speaker filtering
+    # Step 2: Speaker role identification
     # -----------------------------------------------------------------
 
-    # Default speakers to pre-select for exclusion (Move-MORE study)
-    _DEFAULT_EXCLUDED = ['Wade (Study Coordinator)', 'Move-MORE Study', 'Anand', 'Lani']
+    # Default speakers to pre-select as therapy facilitators (Move-MORE study)
+    _DEFAULT_THERAPISTS = [ 'Move-MORE Study', 'Anand', 'Lani', 'Wade (Study Coordinator)', 'Wade Balsamo (Study Coordinator)', 'Michelle Berg']
 
     def _step_2_speaker_filter(self):
-        print("--- Step 2/11: Speaker Filtering ---")
-        print("    Control which speakers' sentences are included in classification.")
-        print("    Filtering is applied at the *sentence* level BEFORE segmentation,")
-        print("    so excluded speakers' content never enters segments.")
+        print("--- Step 2/11: Speaker Role Identification ---")
+        print("    Identify which speakers are therapists/facilitators and which")
+        print("    are participants. Therapist dialogue is preserved as read-only")
+        print("    conversational context for adjacent participant segments.")
         print()
 
         # Scan transcripts to discover speakers
@@ -138,67 +138,68 @@ class SetupWizard:
         if discovered:
             print(f"    Found {len(discovered)} speakers:")
             for i, (name, count) in enumerate(discovered.items(), 1):
-                default_tag = " [default exclude]" if name in self._DEFAULT_EXCLUDED else ""
+                default_tag = " [therapist]" if name in self._DEFAULT_THERAPISTS else " [participant]"
                 print(f"      {i:2d}. {name} ({count} utterances){default_tag}")
             print()
         else:
             print("    No transcripts found to scan — enter speaker names manually.")
             print()
 
-        print("    Filter modes:")
-        print("      none    : classify all speakers' segments")
-        print("      exclude : remove listed speakers' sentences before segmentation")
-        print("      isolate : keep ONLY listed speakers' sentences")
-        print()
-
-        mode = _prompt_choice("Speaker filter mode", ['none', 'exclude', 'isolate'], 'exclude')
-
-        if mode == 'none':
-            self.config_data['speaker_filter'] = {'mode': 'none', 'speakers': []}
-            print()
-            return
-
-        # Build default selection
+        # Build default therapist selection
         if discovered:
-            if mode == 'exclude':
-                defaults = [n for n in self._DEFAULT_EXCLUDED if n in discovered]
-            else:
-                # For isolate, default to all speakers NOT in the exclusion list
-                defaults = [n for n in discovered if n not in self._DEFAULT_EXCLUDED]
+            defaults = [n for n in self._DEFAULT_THERAPISTS if n in discovered]
         else:
-            defaults = list(self._DEFAULT_EXCLUDED) if mode == 'exclude' else []
+            defaults = list(self._DEFAULT_THERAPISTS)
 
         if defaults:
-            verb = "exclude" if mode == 'exclude' else "isolate"
-            print(f"    Default speakers to {verb}:")
+            print("    Default therapist/facilitator speakers:")
             for name in defaults:
                 print(f"      - {name}")
-            use_defaults = _prompt_yes_no(f"Use these defaults?", True)
+            use_defaults = _prompt_yes_no("Use these defaults?", True)
             if use_defaults:
-                speakers = list(defaults)
+                therapists = list(defaults)
             else:
-                speakers = self._prompt_speaker_selection(discovered, mode)
+                therapists = self._prompt_therapist_selection(discovered)
         else:
-            speakers = self._prompt_speaker_selection(discovered, mode)
+            therapists = self._prompt_therapist_selection(discovered)
 
-        if not speakers:
-            print("    No speakers selected — falling back to default exclusion list.")
-            speakers = list(self._DEFAULT_EXCLUDED)
+        if not therapists:
+            print("    No therapists identified — all speakers treated as participants.")
 
-        verb = "Excluding" if mode == 'exclude' else "Isolating"
-        print(f"    {verb}: {speakers}")
-        self.config_data['speaker_filter'] = {'mode': mode, 'speakers': speakers}
+        # Option to exclude therapist utterances from classification
+        exclude_from_classification = True
+        if therapists:
+            print()
+            print("    Therapist utterances can be excluded from classification")
+            print("    while still being used as conversational context.")
+            exclude_from_classification = _prompt_yes_no(
+                "Exclude therapist utterances from classification?", True
+            )
+
+        if therapists and exclude_from_classification:
+            print(f"    Therapists (excluded from classification): {therapists}")
+            self.config_data['speaker_filter'] = {
+                'mode': 'exclude',
+                'speakers': therapists,
+            }
+        elif therapists:
+            print(f"    Therapists (included in classification): {therapists}")
+            self.config_data['speaker_filter'] = {
+                'mode': 'none',
+                'speakers': therapists,
+            }
+        else:
+            self.config_data['speaker_filter'] = {'mode': 'none', 'speakers': []}
         print()
 
-    def _prompt_speaker_selection(self, discovered: dict, mode: str) -> List[str]:
-        """Let the user select speakers from the discovered list or enter manually."""
+    def _prompt_therapist_selection(self, discovered: dict) -> List[str]:
+        """Let the user select therapist speakers from discovered list or enter manually."""
         speakers: List[str] = []
 
         if discovered:
             speaker_names = list(discovered.keys())
-            verb = "EXCLUDE" if mode == 'exclude' else "ISOLATE"
-            print(f"    Enter speaker numbers to {verb} (comma-separated), or type names manually.")
-            print(f"    Blank line when done:")
+            print("    Enter speaker numbers for THERAPISTS (comma-separated),")
+            print("    or type names manually. Blank line when done:")
 
             while True:
                 raw = input("      > ").strip()
@@ -212,17 +213,15 @@ class SetupWizard:
                             name = speaker_names[idx]
                             if name not in speakers:
                                 speakers.append(name)
-                                print(f"        + {name}")
+                                print(f"        + {name} (therapist)")
                         else:
                             print(f"        Invalid number: {part.strip()}")
                 else:
-                    # Treat as a speaker name
                     if raw not in speakers:
                         speakers.append(raw)
-                        print(f"        + {raw}")
+                        print(f"        + {raw} (therapist)")
         else:
-            verb = "EXCLUDE" if mode == 'exclude' else "ISOLATE"
-            print(f"    Enter speaker labels to {verb} (one per line, blank when done):")
+            print("    Enter therapist/facilitator speaker labels (one per line, blank when done):")
             while True:
                 name = input("      > ").strip()
                 if not name:
@@ -242,20 +241,21 @@ class SetupWizard:
             # Use defaults
             self.config_data['segmentation'] = {
                 'use_conversational_segmenter': True,
-                'max_gap_seconds': 30.0,
+                'max_gap_seconds': 15.0,
                 'min_words_per_sentence': 10,
-                'max_segment_duration_seconds': 300.0,
+                'max_segment_duration_seconds': 60.0,
                 'min_segment_words_conversational': 60,
-                'max_segment_words_conversational': 400,
+                'max_segment_words_conversational': 300,
                 'use_adaptive_threshold': True,
                 'min_prominence': 0.05,
-                'use_topic_clustering': False,
-                'use_llm_refinement': False,
-                'llm_refinement_mode': 'boundary_review',
+                'use_topic_clustering': True,
+                'use_llm_refinement': True,
+                'llm_refinement_mode': 'full',
             }
-            print("    Using defaults: no cross-speaker grouping, 30s max gap,")
-            print("    10-word min per sentence, 5min max segment duration,")
-            print("    60-400 word segments, adaptive threshold enabled.")
+            print("    Using defaults: single-speaker segments, 15s max gap,")
+            print("    10-word min per sentence (shorter folded into neighbors),")
+            print("    5min max segment duration, 60-400 word segments,")
+            print("    adaptive threshold + LLM refinement enabled.")
             print()
             return
 
@@ -263,16 +263,16 @@ class SetupWizard:
             "Use conversational segmenter (groups by topic across speakers)?", True
         )
 
-        max_gap = _prompt_float("Max time gap (seconds) between utterances to group", 30.0)
-        min_words_sent = _prompt_int("Min words per sentence (shorter sentences are dropped)", 10)
-        max_duration = _prompt_float("Max segment duration (seconds)", 30.0)
+        max_gap = _prompt_float("Max time gap (seconds) between utterances to group", 15.0)
+        min_words_sent = _prompt_int("Min words per sentence (shorter are folded into neighbors)", 10)
+        max_duration = _prompt_float("Max segment duration (seconds)", 60.0)
 
         if use_conv:
-            min_words = _prompt_int("Min words per segment (conversational)", 60)
-            max_words = _prompt_int("Max words per segment (conversational)", 400)
+            min_words = _prompt_int("Min words per segment (conversational)", 20)
+            max_words = _prompt_int("Max words per segment (conversational)", 300)
         else:
-            min_words = _prompt_int("Min words per segment", 30)
-            max_words = _prompt_int("Max words per segment", 200)
+            min_words = _prompt_int("Min words per segment", 20)
+            max_words = _prompt_int("Max words per segment", 300)
 
         # Adaptive threshold
         use_adaptive = _prompt_yes_no(
@@ -289,17 +289,18 @@ class SetupWizard:
 
         # LLM refinement
         use_llm_refine = _prompt_yes_no(
-            "Use LLM-based boundary refinement?", True
+            "Use LLM-assisted segmentation refinement (boundary review + context selection)?", True
         )
-        llm_refine_mode = 'boundary_review'
+        llm_refine_mode = 'full'
         if use_llm_refine:
             print("    Refinement modes:")
             print("      boundary_review     : Re-evaluate ambiguous boundaries")
-            print("      cross_speaker_merge : Merge cross-speaker conversational units")
-            print("      full                : Both passes")
+            print("      context_expansion   : Expand segments with surrounding dialogue")
+            print("      coherence_check     : Split oversized segments at natural boundaries")
+            print("      full                : All three passes")
             llm_refine_mode = _prompt_choice(
                 "Refinement mode",
-                ['boundary_review', 'cross_speaker_merge', 'full'],
+                ['boundary_review', 'context_expansion', 'coherence_check', 'full'],
                 'full',
             )
 
@@ -575,10 +576,10 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             min_segment_words=seg.get('min_segment_words', 30),
             max_segment_words=seg.get('max_segment_words', 200),
             min_segment_words_conversational=seg.get('min_segment_words_conversational', 60),
-            max_segment_words_conversational=seg.get('max_segment_words_conversational', 400),
-            max_gap_seconds=seg.get('max_gap_seconds', 30.0),
+            max_segment_words_conversational=seg.get('max_segment_words_conversational', 300),
+            max_gap_seconds=seg.get('max_gap_seconds', 15.0),
             min_words_per_sentence=seg.get('min_words_per_sentence', 10),
-            max_segment_duration_seconds=seg.get('max_segment_duration_seconds', 300.0),
+            max_segment_duration_seconds=seg.get('max_segment_duration_seconds', 60.0),
             use_adaptive_threshold=seg.get('use_adaptive_threshold', True),
             min_prominence=seg.get('min_prominence', 0.05),
             broad_window_size=seg.get('broad_window_size', 7),
