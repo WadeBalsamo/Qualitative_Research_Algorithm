@@ -91,8 +91,9 @@ class SetupWizard:
         self._step_7_codebook()
         self._step_8_classification()
         self._step_9_confidence()
-        self._step_10_run_mode()
-        config_path = self._step_11_save()
+        self._step_10_analysis()
+        self._step_11_run_mode()
+        config_path = self._step_12_save()
 
         return {
             'config_path': config_path,
@@ -116,7 +117,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     # Default speakers to pre-select as therapy facilitators (Move-MORE study)
-    _DEFAULT_THERAPISTS = [ 'Move-MORE Study', 'Anand', 'Lani', 'Wade (Study Coordinator)', 'Wade Balsamo (Study Coordinator)', 'Michelle Berg']
+    _DEFAULT_THERAPISTS = [ 'Move-MORE Study','Instructor', 'Anand', 'Lani', 'Wade (Study Coordinator)', 'Wade Balsamo (Study Coordinator)', 'Michelle Berg']
 
     def _step_2_speaker_filter(self):
         print("--- Step 2/11: Speaker Role Identification ---")
@@ -516,7 +517,7 @@ class SetupWizard:
     # Step 10: Run mode
     # -----------------------------------------------------------------
     def _step_10_run_mode(self):
-        print("--- Step 10/11: Run Mode ---")
+        print("--- Step 11/12: Run Mode ---")
         print("    auto        : Fully automated (no human intervention)")
         print("    interactive : Prompt for validation of uncertain results")
         print("    review      : Batch validation at end")
@@ -525,10 +526,32 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
-    # Step 11: Save & run
+    # Step 10: Post-pipeline Analysis
     # -----------------------------------------------------------------
-    def _step_11_save(self) -> str:
-        print("--- Step 11/11: Save Configuration ---")
+    def _step_10_analysis(self):
+        print("--- Step 10/12: Post-Pipeline Analysis ---")
+        print("    After the pipeline completes, the analysis module can generate:")
+        print("    - Per-participant longitudinal reports (VA-MR progression)")
+        print("    - Per-session summaries with prototypical exemplars")
+        print("    - Per-construct (stage + codebook) analyses")
+        print("    - Graph-ready CSVs for R/Python visualization")
+        print("    - Feasibility and validity assessment")
+        print()
+        auto_analyze = _prompt_yes_no(
+            "Automatically run analysis after pipeline completes?", True
+        )
+        self.config_data['pipeline']['auto_analyze'] = auto_analyze
+        if auto_analyze:
+            print("    Analysis will run automatically at the end of the pipeline.")
+        else:
+            print("    Analysis can be run manually: python qra.py analyze --output-dir ./data/output/")
+        print()
+
+    # -----------------------------------------------------------------
+    # Step 12: Save & run
+    # -----------------------------------------------------------------
+    def _step_12_save(self) -> str:
+        print("--- Step 12/12: Save Configuration ---")
         default_path = os.path.join(
             self.config_data['pipeline'].get('output_dir', './data/output/'),
             'qra_config.json',
@@ -571,6 +594,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         run_mode=pipeline.get('run_mode', 'auto'),
         run_theme_labeler=pipeline.get('run_theme_labeler', True),
         run_codebook_classifier=pipeline.get('run_codebook_classifier', False),
+        auto_analyze=pipeline.get('auto_analyze', True),
         segmentation=SegmentationConfig(
             use_conversational_segmenter=seg.get('use_conversational_segmenter', True),
             min_segment_words=seg.get('min_segment_words', 30),

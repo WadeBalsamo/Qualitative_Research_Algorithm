@@ -115,6 +115,9 @@ class PipelineConfig:
     # Resume from checkpoint
     resume_from: Optional[str] = None
 
+    # Post-pipeline results analysis
+    auto_analyze: bool = False
+
     # Downstream
     autoresearch_dir: str = '../autoresearch/'
 

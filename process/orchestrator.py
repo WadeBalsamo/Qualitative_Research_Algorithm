@@ -240,13 +240,19 @@ def run_full_pipeline(
             else:
                 metadata['participant_id'] = 'unknown'
 
-        # For VTT files, use the filename (sans extension) as session_id
+        # For VTT files, use the filename stem as session_id and parse cohort/session metadata
         if session_file.lower().endswith('.vtt'):
-            default_session_id = os.path.splitext(os.path.basename(session_file))[0]
+            stem = os.path.splitext(os.path.basename(session_file))[0]
+            from .transcript_ingestion import parse_session_id_metadata
+            parsed = parse_session_id_metadata(stem)
+            metadata.setdefault('session_id', stem)
+            metadata.setdefault('session_number', parsed['session_number'])
+            metadata.setdefault('cohort_id', parsed['cohort_id'])
+            metadata.setdefault('session_variant', parsed['session_variant'])
         else:
             default_session_id = os.path.basename(os.path.dirname(session_file))
-        metadata.setdefault('session_id', default_session_id)
-        metadata.setdefault('session_number', 1)
+            metadata.setdefault('session_id', default_session_id)
+            metadata.setdefault('session_number', 1)
         metadata.setdefault('source_file', session_file)
 
         if llm_refiner and use_conv:
@@ -626,6 +632,26 @@ def run_full_pipeline(
         with open(log_path, 'w') as f:
             for entry in validator.validation_log:
                 f.write(json.dumps(entry) + '\n')
+
+    # ------------------------------------------------------------------
+    # Optional: Post-pipeline Results Analysis
+    # ------------------------------------------------------------------
+    if getattr(config, 'auto_analyze', False):
+        try:
+            from analysis.runner import run_analysis
+            observer.on_stage_start("Results Analysis", "8",
+                                    explanation_key='results_analysis')
+            analysis_result = run_analysis(output_dir, verbose=False)
+            observer.on_stage_complete(
+                "Results Analysis",
+                f"Analysis complete: {len(analysis_result['files_generated'])} files "
+                f"written to reports/analysis/",
+            )
+        except ImportError:
+            pass  # analysis module not available — skip silently
+        except Exception as e:
+            print(f"\n  Warning: results analysis failed: {e}")
+            print(f"  Run manually: python qra.py analyze --output-dir {output_dir}")
 
     return master_df
 

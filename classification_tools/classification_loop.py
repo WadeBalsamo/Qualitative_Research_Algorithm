@@ -23,6 +23,31 @@ from .llm_client import LLMClient
 
 T = TypeVar('T')
 
+# Stage mapping: index to name (VA-MR framework)
+STAGE_NAMES = {
+    0: 'Vigilance',
+    1: 'Avoidance',
+    2: 'Metacognition',
+    3: 'Reappraisal',
+}
+
+
+def _ms_to_timecode(ms: int) -> str:
+    """Convert milliseconds to SRT timecode format (HH:MM:SS.mmm)."""
+    total_seconds = ms // 1000
+    milliseconds = ms % 1000
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+
+def _stage_name(stage_id: Any) -> str:
+    """Convert stage ID (int) to stage name, or return original if not found."""
+    if isinstance(stage_id, int) and stage_id in STAGE_NAMES:
+        return STAGE_NAMES[stage_id]
+    return str(stage_id)
+
 
 def filter_participant_segments(segments: List[Segment]) -> List[Segment]:
     """Return only segments where ``speaker == 'participant'``."""
@@ -208,7 +233,12 @@ def _write_status_entry(
 ):
     """Append a human-readable status entry for one segment to the status file."""
     with open(status_path, 'a') as sf:
-        sf.write(f"[{index + 1}/{total}] {segment.segment_id}\n")
+        start_tc = _ms_to_timecode(segment.start_time_ms)
+        end_tc = _ms_to_timecode(segment.end_time_ms)
+        sf.write(f" {segment.segment_id}\n\n")
+        
+        sf.write(f"  Session: {segment.session_id}  |  [{index + 1}/{total}]  |  "
+                 f"Time: {start_tc} --> {end_tc}\n")
         sf.write("-" * 60 + "\n")
 
         # Segment text (wrapped for readability)
@@ -224,38 +254,37 @@ def _write_status_entry(
             short_ids = [sp.rsplit('_', 1)[-1] if '_' in sp else sp
                          for sp in segment.speakers_in_segment]
             speakers_list = f" (ids: {', '.join(short_ids)})"
-        sf.write(f"  Speaker: {speaker}{speakers_list}\n")
-        sf.write(f"  Words: {segment.word_count}  |  "
-                 f"Time: {segment.start_time_ms}ms - {segment.end_time_ms}ms\n")
-        sf.write(f"  Session: {segment.session_id}  |  Index: {segment.segment_index}\n\n")
+      #  sf.write(f"  Speaker: {speaker}{speakers_list}\n")
+      #  sf.write(f"  Words: {segment.word_count})"
 
         # Per-run results
-        sf.write(f"CLASSIFICATION RUNS ({len(run_results)} successful):\n")
-        for r, run in enumerate(run_results):
-            if isinstance(run, dict):
-                stage = run.get('primary_stage', '?')
-                conf = run.get('primary_confidence', '?')
-                sec = run.get('secondary_stage')
-                just = run.get('justification', '')
-                sec_str = f"  secondary={sec}" if sec else ""
-                sf.write(f"  Run {r + 1}: stage={stage}  conf={conf}{sec_str}\n")
-                if just:
-                    for line in textwrap.wrap(just, width=72, initial_indent="    → ", subsequent_indent="      "):
-                        sf.write(line + "\n")
-            else:
-                sf.write(f"  Run {r + 1}: {run}\n")
+        if len(run_results) >1:
+            sf.write(f"CLASSIFICATION RUNS ({len(run_results)} successful):\n")
+            for r, run in enumerate(run_results):
+                if isinstance(run, dict):
+                    stage = _stage_name(run.get('primary_stage', '?'))
+                    conf = run.get('primary_confidence', '?')
+                    sec = run.get('secondary_stage')
+                    just = run.get('justification', '')
+                    sec_str = f"  secondary={_stage_name(sec)}" if sec else ""
+                    sf.write(f"  Run {r + 1}: stage={stage}  conf={conf}{sec_str}\n")
+                    if just:
+                        for line in textwrap.wrap(just, width=72, initial_indent="    → ", subsequent_indent="      "):
+                            sf.write(line + "\n")
+                else:
+                    sf.write(f"  Run {r + 1}: {run}\n")
 
         # Merged / consistency result
-        sf.write("\nFINAL RESULT:\n")
+        sf.write("\nCLASSIFICATION:\n")
         if isinstance(merged, dict):
             consistency = merged.get('consistency', {})
             if isinstance(consistency, dict):
-                sf.write(f"  Primary stage: {consistency.get('primary_stage', '?')}\n")
+                sf.write(f"  Stage: {_stage_name(consistency.get('primary_stage', '?'))}\n")
                 sf.write(f"  Confidence:    {consistency.get('confidence', '?')}\n")
-                sf.write(f"  Consistency:   {consistency.get('consistency', '?')}/3\n")
+          #      sf.write(f"  Consistency:   {consistency.get('consistency', '?')}/3\n")
                 sec = consistency.get('secondary_stage')
                 if sec:
-                    sf.write(f"  Secondary:     {sec} ({consistency.get('secondary_confidence', '?')})\n")
+                    sf.write(f"  Secondary:     {_stage_name(sec)} ({consistency.get('secondary_confidence', '?')})\n")
                 just = consistency.get('justification', '')
                 if just:
                     sf.write(f"  Justification: {just}\n")

@@ -109,6 +109,13 @@ def _add_common_args(parser: argparse.ArgumentParser):
     # Checkpoint
     parser.add_argument('--resume-from', default=None)
 
+    # Post-pipeline analysis
+    parser.add_argument(
+        '--auto-analyze',
+        action='store_true',
+        help='Automatically run results analysis after the pipeline completes',
+    )
+
 
 # =========================================================================
 # Config building
@@ -274,6 +281,9 @@ def _build_config(args):
     if args.medium_confidence_threshold is not None:
         config.confidence_tiers.medium_min_confidence = args.medium_confidence_threshold
 
+    if getattr(args, 'auto_analyze', False):
+        config.auto_analyze = True
+
     return config
 
 
@@ -357,6 +367,31 @@ def cmd_run(args):
         _preload_huggingface_models(config)
 
     _execute_pipeline(config, framework, codebook)
+
+
+def cmd_analyze(args):
+    """Run post-hoc results analysis on an existing pipeline output directory."""
+    from analysis.runner import run_analysis
+
+    output_dir = args.output_dir
+    if not os.path.isdir(output_dir):
+        print(f"Error: output directory not found: {output_dir}")
+        sys.exit(1)
+
+    print("\n" + "=" * 70)
+    print("QRA RESULTS ANALYSIS")
+    print("=" * 70)
+    print(f"  Output dir: {output_dir}")
+    print()
+
+    result = run_analysis(output_dir, verbose=True)
+
+    print(f"\nAnalysis complete.")
+    print(f"  {result['n_segments']} segments | "
+          f"{result['n_participants']} participants | "
+          f"{result['n_sessions']} sessions")
+    print(f"  Reports: {output_dir}/reports/analysis/")
+    print(f"  Files generated: {len(result['files_generated'])}")
 
 
 def cmd_guided(args):
@@ -550,6 +585,12 @@ Examples:
 
   # HuggingFace multi-model pipeline
   python qra.py run --backend huggingface
+
+  # Run pipeline and auto-generate analysis reports afterward
+  python qra.py run --backend lmstudio --auto-analyze
+
+  # Analyze existing pipeline output (standalone post-hoc)
+  python qra.py analyze --output-dir ./data/output/
         """,
     )
 
@@ -577,6 +618,23 @@ Examples:
     )
     _add_common_args(guided_parser)
 
+    # ---- analyze ----
+    analyze_parser = subparsers.add_parser(
+        'analyze',
+        help='Run results analysis on an existing pipeline output directory',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Reads master_segment_dataset.csv and theme_definitions.json from OUTPUT_DIR\n'
+            'and produces per-session, per-participant, per-construct, and longitudinal\n'
+            'reports in OUTPUT_DIR/reports/analysis/.'
+        ),
+    )
+    analyze_parser.add_argument(
+        '--output-dir', '-o',
+        required=True,
+        help='Path to pipeline output directory containing master_segment_dataset.csv',
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -590,6 +648,8 @@ Examples:
             cmd_run(args)
         elif args.command == 'guided':
             cmd_guided(args)
+        elif args.command == 'analyze':
+            cmd_analyze(args)
     except KeyboardInterrupt:
         print("\n\nPipeline interrupted by user.")
         sys.exit(1)
