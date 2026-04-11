@@ -4,34 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Qualitative Research Algorithm (QRA)** is an LLM-based classification pipeline for analyzing therapeutic dialogue transcripts. It classifies dialogue segments into theme/stage categories (e.g., VA-MR framework: Vigilance, Avoidance, Metacognition, Reappraisal) and optionally applies multi-label phenomenology codebook classification.
-
-Key characteristics:
-- **Framework-agnostic**: Works with any theme framework (VA-MR is the preset)
-- **Multi-backend support**: Hugging Face (local), OpenRouter, Replicate, Ollama, LM Studio
-- **6-stage pipeline**: Ingestion → Segmentation → Codebook classification (optional) → Theme classification → Validation → Assembly
-- **Composable**: Can run theme-only or codebook-only or theme + codebook classification and correlation
-- **Human-in-the-loop**: Interactive validation for uncertain classifications
-
-## Common Commands
-
-**Interactive setup wizard (recommended for first-time use)**:
-```bash
-python qra.py setup
-```
-Creates a reusable JSON config file through a 9-step guided wizard.
-
-**Quick run with defaults (VA-MR, HuggingFace backend)**:
-```bash
-python qra.py run --transcript-dir ./data/input/ --output-dir ./data/output/
-```
-
-**Run from saved config**:
-```bash
-python qra.py run --config ./my_config.json --mode interactive
-```
- 
-CLI args override config file values.
+**Qualitative Research Algorithm (QRA)** is an LLM-based classification pipeline for analyzing therapeutic dialogue transcripts. It classifies dialogue segments into theme/stage categories (e.g., VA-MR framework: Vigilance, Avoidance, Metacognition, Reappraisal) and optionally applies multi-label phenomenology codebook classification. Your job is to focus on the Analysis module
 
 ## Architecture
 
@@ -145,8 +118,6 @@ Configs are serialized to JSON via `PipelineConfig.to_json()` and deserialized v
 1. **Speaker filtering is critical for LLM efficiency**: Always consider whether segments should be classified or used as context only.
 2. **Segmentation must produce coherent utterances**: Embedding-based segmentation uses semantic similarity; if it's creating mid-sentence breaks, the sentence-transformer embedding threshold may need tuning in `llm_segmentation.py`.
 3. **Confidence tiers are computed post-hoc**: A segment's confidence level depends on agreement across runs, not the LLM's own confidence scores. See `classification_tools/validation.py`.
-4. **Codebook classification is optional but separate**: It does not feed into theme labels and vice versa. Results are merged at the assembly stage.
-5. **Human validation is interactive**: Calling `python qra.py run --mode interactive` will prompt for validation decisions. These prompts happen in `human_validator.py`.
 
 ## Testing and Debugging
 

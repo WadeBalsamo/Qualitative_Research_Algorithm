@@ -36,6 +36,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     from .construct import generate_all_construct_reports
     from .graphing import export_all_graphing_datasets
     from .longitudinal import generate_longitudinal_summary
+    from .stage_progression import compute_session_stage_progression
 
     def log(msg):
         if verbose:
@@ -44,7 +45,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     # ----------------------------------------------------------------
     # 1. Load data
     # ----------------------------------------------------------------
-    log("[1/6] Loading segments...")
+    log("[1/8] Loading segments...")
     try:
         df = load_segments(output_dir)
     except FileNotFoundError as e:
@@ -76,7 +77,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
 
     # Create output subdirs
     base_analysis = os.path.join(output_dir, 'reports', 'analysis')
-    for sub in ('participants', 'sessions', 'constructs', 'graphing'):
+    for sub in ('participants', 'sessions', 'constructs', 'graphing', 'figures'):
         os.makedirs(os.path.join(base_analysis, sub), exist_ok=True)
 
     files_generated = []
@@ -84,7 +85,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     # ----------------------------------------------------------------
     # 2. Per-session analyses
     # ----------------------------------------------------------------
-    log(f"[2/6] Generating per-session analyses ({n_sessions} sessions)...")
+    log(f"[2/8] Generating per-session analyses ({n_sessions} sessions)...")
     try:
         session_reports = generate_all_session_analyses(df, framework, output_dir)
         for r in session_reports:
@@ -102,7 +103,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     # ----------------------------------------------------------------
     # 3. Per-participant reports
     # ----------------------------------------------------------------
-    log(f"[3/6] Generating per-participant reports ({n_participants} participants)...")
+    log(f"[3/8] Generating per-participant reports ({n_participants} participants)...")
     try:
         participant_reports = generate_all_participant_reports(df, framework, output_dir)
         for r in participant_reports:
@@ -121,7 +122,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     # 4. Per-construct reports
     # ----------------------------------------------------------------
     n_stages = len(framework)
-    log(f"[4/6] Generating per-construct reports ({n_stages} stages + codebook codes)...")
+    log(f"[4/8] Generating per-construct reports ({n_stages} stages + codebook codes)...")
     try:
         generate_all_construct_reports(df, framework, output_dir)
         # Collect written files
@@ -139,7 +140,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     # ----------------------------------------------------------------
     # 5. Graph-ready CSVs
     # ----------------------------------------------------------------
-    log("[5/6] Exporting graph-ready datasets...")
+    log("[5/8] Exporting graph-ready datasets...")
     try:
         csv_paths = export_all_graphing_datasets(df, framework, output_dir)
         files_generated.extend(csv_paths)
@@ -152,13 +153,40 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     # ----------------------------------------------------------------
     # 6. Longitudinal summary
     # ----------------------------------------------------------------
-    log("[6/6] Generating longitudinal summary...")
+    log("[6/8] Generating longitudinal summary...")
     try:
         generate_longitudinal_summary(df, participant_reports, framework, output_dir)
         files_generated.append(os.path.join(base_analysis, 'longitudinal_summary.json'))
         log("    Longitudinal summary written.")
     except Exception as e:
         print(f"  Warning: longitudinal summary failed: {e}")
+        if verbose:
+            traceback.print_exc()
+
+    # ----------------------------------------------------------------
+    # 7. Session stage progression
+    # ----------------------------------------------------------------
+    log("[7/8] Computing session stage progression...")
+    try:
+        progression_df = compute_session_stage_progression(df, framework, output_dir)
+        files_generated.append(os.path.join(base_analysis, 'session_stage_progression.csv'))
+        log(f"    {len(progression_df)} progression rows written.")
+    except Exception as e:
+        print(f"  Warning: session stage progression failed: {e}")
+        if verbose:
+            traceback.print_exc()
+
+    # ----------------------------------------------------------------
+    # 8. Figures
+    # ----------------------------------------------------------------
+    log("[8/8] Generating analysis figures...")
+    try:
+        from .figures import generate_all_figures
+        fig_paths = generate_all_figures(df, framework, output_dir)
+        files_generated.extend(fig_paths)
+        log(f"    {len(fig_paths)} figures written to reports/analysis/figures/.")
+    except Exception as e:
+        print(f"  Warning: figure generation failed: {e}")
         if verbose:
             traceback.print_exc()
 

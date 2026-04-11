@@ -554,6 +554,9 @@ def run_full_pipeline(
         os.path.join(output_dir, f'session_adjacency_{ts}.jsonl'),
     )
 
+    # NOTE: The canonical per-participant stage progression is now in
+    # analysis/stage_progression.py. This legacy call groups by session_id
+    # only and is kept for backward compatibility with existing tooling.
     id_to_short = framework.build_id_to_short_map()
     progression_df = compute_session_stage_progression(master_df, id_to_short)
     if len(progression_df) > 0:

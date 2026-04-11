@@ -245,12 +245,55 @@ def export_participant_stage_dominant(
     return result
 
 
+def export_combined_cohort_group_trajectories(
+    df: pd.DataFrame,
+    framework: dict,
+    output_dir: str,
+) -> pd.DataFrame:
+    """Export group-level mean theme proportions per session_number, combining all cohorts.
+
+    Unlike export_group_theme_trajectories which keeps cohorts separate,
+    this groups by session_number only — treating the same session number
+    across cohorts as the same longitudinal timepoint.
+
+    Columns: session_number, stage_0_mean, stage_1_mean, ..., n_participants
+    """
+    stage_ids = sorted(framework.keys())
+
+    part_rows = []
+    for (pid, snum), group in df.groupby(['participant_id', 'session_number']):
+        n = len(group)
+        row = {'participant_id': pid, 'session_number': int(snum)}
+        for st in stage_ids:
+            row[f'stage_{st}_pct'] = int((group['final_label'] == st).sum()) / n if n > 0 else 0.0
+        part_rows.append(row)
+
+    part_df = pd.DataFrame(part_rows)
+    if part_df.empty:
+        return part_df
+
+    agg = part_df.groupby('session_number').agg(
+        n_participants=('participant_id', 'count'),
+        **{f'stage_{st}_mean': (f'stage_{st}_pct', 'mean') for st in stage_ids},
+    ).reset_index()
+
+    agg = agg.sort_values('session_number').reset_index(drop=True)
+
+    for st in stage_ids:
+        agg[f'stage_{st}_mean'] = agg[f'stage_{st}_mean'].round(4)
+
+    out = _ensure_graphing_dir(output_dir)
+    path = os.path.join(out, 'combined_cohort_group_trajectories.csv')
+    agg.to_csv(path, index=False)
+    return agg
+
+
 def export_all_graphing_datasets(
     df: pd.DataFrame,
     framework: dict,
     output_dir: str,
 ) -> list:
-    """Orchestrate all five graph-ready CSV exports.
+    """Orchestrate all graph-ready CSV exports.
 
     Returns list of file paths written.
     """
@@ -268,6 +311,12 @@ def export_all_graphing_datasets(
         paths.append(os.path.join(out, 'group_theme_trajectories.csv'))
     except Exception as e:
         print(f"  Warning: group_theme_trajectories CSV failed: {e}")
+
+    try:
+        export_combined_cohort_group_trajectories(df, framework, output_dir)
+        paths.append(os.path.join(out, 'combined_cohort_group_trajectories.csv'))
+    except Exception as e:
+        print(f"  Warning: combined_cohort_group_trajectories CSV failed: {e}")
 
     try:
         export_codebook_prevalence_by_participant_session(df, output_dir)
