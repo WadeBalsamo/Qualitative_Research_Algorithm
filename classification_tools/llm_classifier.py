@@ -512,8 +512,18 @@ def classify_segments_zero_shot(
     )
     client = LLMClient(llm_config)
 
-    use_multi_model = len(models) > 1
-    if use_multi_model:
+    per_run_models = getattr(config, 'per_run_models', None) or []
+    use_per_run_models = len(per_run_models) == config.n_runs and len(per_run_models) >= 2
+
+    # Multi-model cross-referencing path is only active when no per-run model
+    # assignment is configured (per_run_models takes precedence).
+    use_multi_model = len(models) > 1 and not use_per_run_models
+
+    if use_per_run_models:
+        print(f"  Per-run model assignment ({config.n_runs} runs, {config.n_runs} distinct raters)")
+        for i, model_id in enumerate(per_run_models):
+            print(f"    Run {i + 1}: {model_id}")
+    elif use_multi_model:
         print(f"  Using multi-model cross-referencing with {len(models)} models")
         from .model_loader import get_model_display_name
         for model_id in models:
@@ -653,6 +663,7 @@ def classify_segments_zero_shot(
         resume_from=resume_from,
         file_prefix='llm_results',
         model_tag=model_clean,
+        per_run_models=per_run_models if use_per_run_models else None,
     )
 
     # Build metadata_all for backward compatibility

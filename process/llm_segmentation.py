@@ -109,7 +109,8 @@ class LLMSegmentationRefiner:
         # Embedding similarity thresholds for context gating
         self.context_attach_threshold = config.get('context_attach_threshold', 0.30)
         self.context_skip_threshold = config.get('context_skip_threshold', 0.22)
-        # Cached embedding model (loaded lazily)
+        # Embedding model ID for context gating and coherence checks (lazy-loaded)
+        self.embedding_model_id = config.get('embedding_model', 'Qwen/Qwen3-Embedding-8B')
         self._embed_model = None
         # Process logger (optional)
         self.plog = config.get('process_logger', None)
@@ -118,7 +119,10 @@ class LLMSegmentationRefiner:
         """Lazy-load and cache the sentence embedding model."""
         if self._embed_model is None:
             from sentence_transformers import SentenceTransformer
-            self._embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+            self._embed_model = SentenceTransformer(
+                self.embedding_model_id,
+                trust_remote_code=True,
+            )
         return self._embed_model
 
     def refine(
