@@ -496,7 +496,7 @@ class SetupWizard:
     def _step_8_classification(self):
         print("--- Step 8/11: Classification Parameters ---")
         n_runs = _prompt_int("Number of runs per segment", 1)
-        temperature = _prompt_float("Temperature", 0.0)
+        temperature = _prompt_float("Temperature", 0.1)
 
         self.config_data['theme_classification']['n_runs'] = n_runs
         self.config_data['theme_classification']['temperature'] = temperature

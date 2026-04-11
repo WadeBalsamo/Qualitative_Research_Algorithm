@@ -443,8 +443,11 @@ class LLMClient:
                 )
                 data = response.json()
 
-                if 'choices' not in data or not data['choices']:
-                    err_msg = data.get('error', {}).get('message', '') or str(data)[:200]
+                if not isinstance(data, dict) or 'choices' not in data or not data['choices']:
+                    if isinstance(data, dict):
+                        err_msg = data.get('error', {}).get('message', '') or str(data)[:200]
+                    else:
+                        err_msg = str(data)[:200]
                     raise ValueError(f"LM Studio returned no choices: {err_msg}")
 
                 result_text, exhausted = self._extract_content(data['choices'][0])
