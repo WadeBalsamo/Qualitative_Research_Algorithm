@@ -16,8 +16,10 @@ import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 
+import re
+
 from .loader import sort_session_ids
-from .stage_progression import compute_state_transition_matrix
+from .stage_progression import compute_state_transition_matrix, compute_cross_session_transitions
 
 # Qualitative palette for up to 8 stages; extra stages get cycled.
 _BASE_COLORS = [
@@ -116,8 +118,7 @@ def plot_dominant_stage_heatmap(
               fontsize=8, frameon=True)
 
     fig.tight_layout()
-    out_dir = _ensure_figures_dir(output_dir)
-    path = os.path.join(out_dir, 'dominant_stage_heatmap.png')
+    path = os.path.join(output_dir, 'dominant_stage_heatmap.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
@@ -176,8 +177,7 @@ def plot_group_longitudinal_trajectory(
     ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
-    out_dir = _ensure_figures_dir(output_dir)
-    path = os.path.join(out_dir, 'group_longitudinal_trajectory.png')
+    path = os.path.join(output_dir, 'group_longitudinal_trajectory.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
@@ -304,11 +304,132 @@ def plot_transition_heatmap(
     fig.colorbar(im, ax=ax, shrink=0.8, label='Count')
     fig.tight_layout()
 
-    out_dir = _ensure_figures_dir(output_dir)
-    path = os.path.join(out_dir, 'state_transition_heatmap.png')
+    path = os.path.join(output_dir, 'state_transition_heatmap.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
+
+
+# -----------------------------------------------------------------------
+# Figure 5: Between-session (cross-session) transition heatmap
+# -----------------------------------------------------------------------
+
+def plot_cross_session_transition_heatmap(
+    df: pd.DataFrame,
+    framework: dict,
+    output_dir: str,
+) -> str:
+    """Heatmap of between-session dominant-theme transition counts.
+
+    Each cell (row=from_stage, col=to_stage) counts how many times a
+    participant's dominant theme changed from one session to the next.
+    Saved to reports/analysis/figures/cross_session_transition_heatmap.png.
+    """
+    cross_matrix, _ = compute_cross_session_transitions(df, framework)
+    if cross_matrix.empty:
+        return ''
+
+    labels = cross_matrix.index.tolist()
+    matrix = cross_matrix.values
+
+    fig, ax = plt.subplots(figsize=(max(6, len(labels) + 2), max(5, len(labels) + 1)))
+
+    im = ax.imshow(matrix, cmap='Blues', interpolation='nearest')
+
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_xlabel('To Stage (next session)')
+    ax.set_ylabel('From Stage (current session)')
+    ax.set_title('Between-Session Theme Transitions\n(Dominant Stage: Session N → Session N+1)')
+
+    for i in range(len(labels)):
+        for j in range(len(labels)):
+            val = matrix[i, j]
+            text_color = 'white' if val > matrix.max() * 0.6 else 'black'
+            ax.text(j, i, str(int(val)), ha='center', va='center',
+                    fontsize=10, color=text_color, fontweight='bold')
+
+    fig.colorbar(im, ax=ax, shrink=0.8, label='Transitions')
+    fig.tight_layout()
+
+    out_dir = _ensure_figures_dir(output_dir)
+    path = os.path.join(out_dir, 'cross_session_transition_heatmap.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+# -----------------------------------------------------------------------
+# Figure 6: Per-stage prevalence by session (bar chart)
+# -----------------------------------------------------------------------
+
+def plot_stage_prevalence_by_session(
+    df: pd.DataFrame,
+    stage_id: int,
+    framework: dict,
+    output_dir: str,
+) -> str:
+    """Bar chart of per-session prevalence for a single VA-MR stage.
+
+    Includes a horizontal line for overall mean prevalence.
+    Saved to reports/analysis/figures/stage_{name}_prevalence.png.
+    """
+    stage_info = framework.get(stage_id, {})
+    stage_name = stage_info.get('short_name', f'Stage {stage_id}')
+    color = _stage_colors(framework)[stage_id]
+
+    session_numbers = sorted(df['session_number'].unique().tolist())
+    prevalences = []
+    for snum in session_numbers:
+        sdf = df[df['session_number'] == snum]
+        n = len(sdf)
+        cnt = int((sdf['final_label'] == stage_id).sum())
+        prevalences.append(cnt / n if n > 0 else 0.0)
+
+    overall_mean = sum(prevalences) / len(prevalences) if prevalences else 0.0
+
+    fig, ax = plt.subplots(figsize=(max(7, len(session_numbers) * 0.8 + 2), 5))
+
+    bars = ax.bar(range(len(session_numbers)), prevalences, color=color, alpha=0.8, edgecolor='white')
+    ax.axhline(overall_mean, color='#333333', linestyle='--', linewidth=1.5,
+               label=f'Mean {overall_mean:.1%}')
+
+    ax.set_xticks(range(len(session_numbers)))
+    ax.set_xticklabels([str(s) for s in session_numbers])
+    ax.set_xlabel('Session Number')
+    ax.set_ylabel('Proportion of Segments')
+    ax.set_title(f'{stage_name}: Prevalence Across Sessions')
+    ax.set_ylim(0, min(1.05, max(prevalences) * 1.3 + 0.1) if prevalences else 1.05)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0%}'))
+    ax.legend(fontsize=9)
+    ax.grid(True, axis='y', alpha=0.3)
+
+    fig.tight_layout()
+    slug = re.sub(r'[^a-z0-9]+', '_', stage_name.lower()).strip('_')
+    out_dir = _ensure_figures_dir(output_dir)
+    path = os.path.join(out_dir, f'stage_{slug}_prevalence.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+def plot_all_stage_prevalence_charts(
+    df: pd.DataFrame,
+    framework: dict,
+    output_dir: str,
+) -> list:
+    """Generate prevalence-by-session bar charts for all stages."""
+    paths = []
+    for stage_id in sorted(framework.keys()):
+        try:
+            path = plot_stage_prevalence_by_session(df, stage_id, framework, output_dir)
+            if path:
+                paths.append(path)
+        except Exception as e:
+            print(f"  Warning: stage prevalence chart failed for stage {stage_id}: {e}")
+    return paths
 
 
 # -----------------------------------------------------------------------
@@ -328,6 +449,8 @@ def generate_all_figures(
         ('group longitudinal trajectory', lambda: plot_group_longitudinal_trajectory(df, framework, output_dir)),
         ('per-participant trajectories', lambda: plot_all_participant_trajectories(df, framework, output_dir)),
         ('state transition heatmap', lambda: plot_transition_heatmap(df, framework, output_dir)),
+        ('cross-session transition heatmap', lambda: plot_cross_session_transition_heatmap(df, framework, output_dir)),
+        ('stage prevalence charts', lambda: plot_all_stage_prevalence_charts(df, framework, output_dir)),
     ]
 
     for name, gen in generators:
