@@ -16,6 +16,10 @@ class ThemeClassificationConfig:
     """Parameters for zero-shot LLM theme classification."""
     model: str = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'  # Primary model (used when models list is empty)
     models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
+    # Per-run model assignment: when len == n_runs, run[i] uses per_run_models[i].
+    # This improves interrater reliability by making each run an independent rater.
+    # Required when n_runs is 2 or 3 (wizard enforces this).
+    per_run_models: List[str] = field(default_factory=list)
     temperature: float = 0.0
     n_runs: int = 3
     randomize_codebook: bool = True

@@ -67,6 +67,7 @@ def classify_segments(
     file_prefix: str = 'classification',
     model_tag: Optional[str] = None,
     serialize_result: Optional[Callable[[Any], Any]] = None,
+    per_run_models: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Shared classification loop for N LLM runs per segment.
@@ -100,6 +101,12 @@ def classify_segments(
     serialize_result : callable or None
         Optional function to make a result JSON-serializable for
         checkpointing.  If None, results are stored as-is.
+    per_run_models : list of str or None
+        When provided and ``len == n_runs``, run *i* uses ``per_run_models[i]``
+        instead of ``client.config.model``.  Enables distinct-model interrater
+        reliability: each run is an independent rater.  The client's model is
+        restored after each segment.  Early-exit optimisation is disabled when
+        this is active so all raters always produce a result.
 
     Returns
     -------
@@ -147,7 +154,13 @@ def classify_segments(
         print(f"           \"{snippet}\"")
 
         run_results: List[Any] = []
+        use_per_run_models = (
+            per_run_models is not None and len(per_run_models) == n_runs
+        )
+        original_model = client.config.model
         for run in range(n_runs):
+            if use_per_run_models:
+                client.config.model = per_run_models[run]
             prompt = build_prompt(segment, run, segments, i)
             try:
                 result_text, _ = client.request(prompt)
@@ -158,12 +171,16 @@ def classify_segments(
             except Exception as e:
                 print(f"  Error on {segment.segment_id}, run {run}: {e}")
 
-            # Early exit: first 2 runs agree with high confidence — skip remaining
-            if (len(run_results) >= 2 and run < n_runs - 1
+            # Early exit: first 2 runs agree with high confidence — skip remaining.
+            # Disabled when per_run_models is active so every distinct rater runs.
+            if (not use_per_run_models
+                    and len(run_results) >= 2 and run < n_runs - 1
                     and isinstance(run_results[-1], dict) and isinstance(run_results[-2], dict)):
                 if (run_results[-1].get('primary_stage') == run_results[-2].get('primary_stage')
                         and (run_results[-1].get('primary_confidence') or 0) >= 0.7):
                     break
+        if use_per_run_models:
+            client.config.model = original_model
 
         if run_results:
             ok_count += 1
