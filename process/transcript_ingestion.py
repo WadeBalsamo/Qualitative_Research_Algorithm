@@ -121,7 +121,7 @@ class TranscriptSegmenter:
 
     def __init__(self, config: dict):
         self.embedding_model = SentenceTransformer(
-            config.get('embedding_model', 'all-MiniLM-L6-v2')
+            config.get('embedding_model', 'Qwen/Qwen3-Embedding-8B')
         )
         self.min_words = config.get('min_segment_words', 30)
         self.max_words = config.get('max_segment_words', 200)
@@ -387,7 +387,7 @@ class ConversationalSegmenter:
 
     def __init__(self, config: dict):
         self.embedding_model = SentenceTransformer(
-            config.get('embedding_model', 'all-MiniLM-L6-v2')
+            config.get('embedding_model', 'Qwen/Qwen3-Embedding-8B')
         )
         self.min_words = config.get('min_segment_words_conversational', 60)
         self.max_words = config.get('max_segment_words_conversational', 400)

@@ -117,7 +117,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     # Default speakers to pre-select as therapy facilitators (Move-MORE study)
-    _DEFAULT_THERAPISTS = [ 'Move-MORE Study','Instructor', 'Anand', 'Lani', 'Wade (Study Coordinator)', 'Wade Balsamo (Study Coordinator)', 'Michelle Berg']
+    _DEFAULT_THERAPISTS = [ 'Move-MORE Study','Instructor', 'Anand', 'Lani', 'Wade (Study Coordinator)', 'Rebecca Heron', 'Wade Balsamo (Study Coordinator)', 'Michelle Berg']
 
     def _step_2_speaker_filter(self):
         print("--- Step 2/11: Speaker Role Identification ---")
@@ -336,7 +336,7 @@ class SetupWizard:
             lmstudio_url = _prompt(
                 "LM Studio server URL", 'http://127.0.0.1:1234/v1'
             )
-            model = _prompt("Model ID (as shown in LM Studio)", 'nvidia/nemotron-3-nano-4b')
+            model = _prompt("Model ID (as shown in LM Studio)", 'nvidia/nemotron-3-super')
             print(f"    LM Studio backend: {lmstudio_url}")
             self.config_data['theme_classification'] = {
                 'backend': 'lmstudio',
@@ -481,6 +481,18 @@ class SetupWizard:
             path = _prompt("Path to custom codebook JSON")
             self.config_data['codebook'] = {'custom_path': path}
 
+        print()
+        print("    Codebook classification uses two complementary methods:")
+        print("    1. Embedding similarity  — Qwen/Qwen3-Embedding-8B (default)")
+        print("       4096-dim embeddings purpose-built for complex semantic retrieval.")
+        print("       First run downloads ~16 GB from HuggingFace (then cached).")
+        print("       Segments are encoded as queries; codebook entries as passages")
+        print("       (asymmetric encoding for better construct retrieval).")
+        print("       Use 'all-MiniLM-L6-v2' in your config for a 90 MB alternative.")
+        print("    2. LLM zero-shot prompt  — uses your configured LM Studio model")
+        print("    Both results are reconciled by an ensemble step.")
+        print()
+
         two_pass = _prompt_yes_no("Enable two-pass embedding classification?", True)
         self.config_data['codebook_embedding'] = {'two_pass': two_pass}
 
@@ -490,17 +502,69 @@ class SetupWizard:
 
         print()
 
+    # Default LM Studio models for per-run interrater assignment
+    _DEFAULT_LMSTUDIO_RUN_MODELS = [
+        'qwen/qwen3-coder-480b',
+        'microsoft/phi-4-reasoning-plus',
+    ]
+
     # -----------------------------------------------------------------
     # Step 8: Classification parameters
     # -----------------------------------------------------------------
     def _step_8_classification(self):
         print("--- Step 8/11: Classification Parameters ---")
-        n_runs = _prompt_int("Number of runs per segment", 1)
+        n_runs = _prompt_int("Number of runs per segment", 3)
         temperature = _prompt_float("Temperature", 0.1)
 
         self.config_data['theme_classification']['n_runs'] = n_runs
         self.config_data['theme_classification']['temperature'] = temperature
+
+        # Per-run model assignment is required when n_runs is 2 or 3
+        if n_runs in (2, 3):
+            self._configure_per_run_models(n_runs)
+
         print()
+
+    def _configure_per_run_models(self, n_runs: int):
+        """Configure a distinct model for each run to improve interrater reliability.
+
+        Required when n_runs is 2 or 3.  Each run acts as an independent rater;
+        the majority-vote consistency score then reflects genuine cross-model
+        agreement rather than stochastic variation within one model.
+        """
+        primary_model = self.config_data.get('theme_classification', {}).get('model', '')
+
+        # Build defaults: primary model first, then fill from LM Studio defaults
+        defaults: List[str] = []
+        if primary_model:
+            defaults.append(primary_model)
+        for m in self._DEFAULT_LMSTUDIO_RUN_MODELS:
+            if m not in defaults:
+                defaults.append(m)
+        # Pad to n_runs if needed
+        while len(defaults) < n_runs:
+            defaults.append(defaults[-1])
+
+        print()
+        print(f"    Multi-model interrater reliability: {n_runs} runs, {n_runs} distinct models")
+        print("    Each run uses a separate model so the consistency score reflects")
+        print("    genuine cross-model agreement, not within-model stochasticity.")
+        print()
+
+        per_run_models: List[str] = []
+        for i in range(n_runs):
+            model = _prompt(f"Model for run {i + 1}", defaults[i])
+            per_run_models.append(model)
+
+        # Warn if duplicates — allowed but defeats the purpose
+        if len(set(per_run_models)) < n_runs:
+            print("    Warning: duplicate models detected — runs sharing a model will not")
+            print("    provide independent ratings. Consider using distinct models.")
+
+        self.config_data['theme_classification']['per_run_models'] = per_run_models
+        print(f"    Configured {n_runs} rater models:")
+        for i, m in enumerate(per_run_models):
+            print(f"      Run {i + 1}: {m}")
 
     # -----------------------------------------------------------------
     # Step 9: Confidence thresholds
@@ -554,7 +618,7 @@ class SetupWizard:
     def _step_12_save(self) -> str:
         print("--- Step 12/12: Save Configuration ---")
         default_path = os.path.join(
-            self.config_data['pipeline'].get('output_dir', './data/output/'),
+            self.config_data['pipeline'].get('output_dir', './data/output/meta/'),
             'qra_config.json',
         )
         save_path = _prompt("Save config to", default_path)
@@ -622,6 +686,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             backend=backend,
             model=tc.get('model', 'openai/gpt-4o'),
             models=tc.get('models', []),
+            per_run_models=tc.get('per_run_models', []),
             n_runs=tc.get('n_runs', 3),
             temperature=tc.get('temperature', 0.0),
             api_key=api_key,

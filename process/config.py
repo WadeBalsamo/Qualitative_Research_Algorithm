@@ -23,7 +23,7 @@ _SECRET_KEYS = frozenset({'api_key', 'replicate_api_token'})
 @dataclass
 class SegmentationConfig:
     """Parameters for transcript segmentation."""
-    embedding_model: str = 'all-MiniLM-L6-v2'
+    embedding_model: str = 'Qwen/Qwen3-Embedding-8B'
     min_segment_words: int = 30
     max_segment_words: int = 200
     silence_threshold_ms: int = 1500

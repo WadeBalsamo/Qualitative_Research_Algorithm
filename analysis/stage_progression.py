@@ -97,7 +97,7 @@ def compute_session_stage_progression(
             na_position='last',
         ).reset_index(drop=True)
 
-    out_dir = os.path.join(output_dir, 'reports', 'analysis')
+    out_dir = os.path.join(output_dir, 'reports', 'longitudinal')
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, 'session_stage_progression.csv')
     result.to_csv(path, index=False)

@@ -34,7 +34,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     from .participant import generate_all_participant_reports
     from .session import generate_all_session_analyses
     from .construct import generate_all_construct_reports
-    from .graphing import export_all_graphing_datasets
+    from .graphing import export_all_graphing_datasets, build_session_adjacency_index
     from .longitudinal import generate_longitudinal_summary
     from .stage_progression import compute_session_stage_progression
     from .text_reports import (
@@ -85,6 +85,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     base_analysis = os.path.join(output_dir, 'reports', 'analysis')
     for sub in ('participants', 'sessions', 'constructs', 'graphing', 'figures'):
         os.makedirs(os.path.join(base_analysis, sub), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'reports', 'longitudinal'), exist_ok=True)
 
     files_generated = []
 
@@ -171,15 +172,26 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
             traceback.print_exc()
 
     # ----------------------------------------------------------------
-    # 7. Session stage progression
+    # 7. Longitudinal outputs: session stage progression + adjacency index
     # ----------------------------------------------------------------
+    longitudinal_dir = os.path.join(output_dir, 'reports', 'longitudinal')
     log("[7/9] Computing session stage progression...")
     try:
         progression_df = compute_session_stage_progression(df, framework, output_dir)
-        files_generated.append(os.path.join(base_analysis, 'session_stage_progression.csv'))
+        files_generated.append(os.path.join(longitudinal_dir, 'session_stage_progression.csv'))
         log(f"    {len(progression_df)} progression rows written.")
     except Exception as e:
         print(f"  Warning: session stage progression failed: {e}")
+        if verbose:
+            traceback.print_exc()
+
+    log("       Building session adjacency index...")
+    try:
+        build_session_adjacency_index(df, output_dir)
+        files_generated.append(os.path.join(longitudinal_dir, 'session_adjacency.jsonl'))
+        log(f"    Session adjacency index written.")
+    except Exception as e:
+        print(f"  Warning: session adjacency index failed: {e}")
         if verbose:
             traceback.print_exc()
 

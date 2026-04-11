@@ -43,10 +43,8 @@ from .llm_segmentation import LLMSegmentationRefiner
 from .process_logger import ProcessLogger
 from .dataset_assembly import (
     assemble_master_dataset,
-    build_session_adjacency_index,
     export_theme_definitions,
     export_content_validity_test_set,
-    compute_session_stage_progression,
     export_coded_transcript,
     export_per_transcript_stats,
     export_cumulative_report,
@@ -57,7 +55,7 @@ from .cross_validation import (
 )
 from .pipeline_hooks import PipelineObserver, SilentObserver
 
-from codebook.embedding_classifier import EmbeddingCodebookClassifier
+from codebook.embedding_classifier import EmbeddingCodebookClassifier, ensure_embedding_model_ready
 from codebook.ensemble import CodebookEnsemble
 
 
@@ -98,9 +96,20 @@ def run_full_pipeline(
 
     run_mode = getattr(config, 'run_mode', 'auto')
 
+    # ------------------------------------------------------------------
+    # Pre-flight: ensure embedding model is downloaded before the pipeline
+    # starts.  Both segmentation and codebook classification use the same
+    # model; downloading it now avoids a surprise mid-run pause.
+    # ------------------------------------------------------------------
+    seg_emb_model = config.segmentation.embedding_model
+    print(f"  Checking embedding model: {seg_emb_model}")
+    ensure_embedding_model_ready(seg_emb_model)
+
     # Process logger (verbose segmentation mode)
     _verbose = getattr(config.segmentation, 'verbose_segmentation', False)
-    _plog_path = os.path.join(output_dir, 'process_log.txt') if _verbose else None
+    meta_dir = os.path.join(output_dir, 'meta')
+    os.makedirs(meta_dir, exist_ok=True)
+    _plog_path = os.path.join(meta_dir, 'process_log.txt') if _verbose else None
     plog = ProcessLogger(_plog_path)
 
     # ------------------------------------------------------------------
@@ -166,6 +175,7 @@ def run_full_pipeline(
                 'max_context_words': config.segmentation.max_segment_words_conversational,
                 'max_context_duration_s': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
                 'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
+                'embedding_model': config.segmentation.embedding_model,
                 'process_logger': plog,
             },
             speaker_normalizer=segmenter.speaker_norm,
@@ -397,22 +407,31 @@ def run_full_pipeline(
         # Embedding classification
         observer.on_stage_progress("Codebook Classification", "Running embedding-based classification...")
         cb_segments = _apply_speaker_filter(all_segments, config.speaker_filter)
+
         embedding_classifier = EmbeddingCodebookClassifier(config.codebook_embedding)
         embedding_results = embedding_classifier.classify_segments(
             cb_segments, codebook
         )
 
-        # LLM classification
+        # LLM classification — reuses the same backend/model as theme classification
         observer.on_stage_progress("Codebook Classification", "Running LLM-based classification...")
         theme_cfg = config.theme_classification
+        # Use the primary model (not per-run models) for codebook LLM classification.
+        # Per-run model rotation is a theme-classification feature; codebook uses one model.
+        codebook_model = theme_cfg.model
         llm_cfg = LLMClientConfig(
             backend=theme_cfg.backend,
             api_key=theme_cfg.api_key,
             replicate_api_token=theme_cfg.replicate_api_token,
-            model=theme_cfg.model,
+            model=codebook_model,
+            temperature=theme_cfg.temperature,
             lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+            ollama_host=getattr(theme_cfg, 'ollama_host', '0.0.0.0'),
+            ollama_port=getattr(theme_cfg, 'ollama_port', 11434),
         )
         llm_client = LLMClient(llm_cfg)
+        # Set the output dir on the codebook_llm config so checkpoints land in the right place
+        config.codebook_llm.output_dir = codebook_output_dir
         llm_classifier = LLMCodebookClassifier(llm_client, config.codebook_llm)
         llm_results = llm_classifier.classify_segments(
             cb_segments, codebook, output_dir=codebook_output_dir,
@@ -548,34 +567,6 @@ def run_full_pipeline(
         os.path.join(output_dir, f'master_segments_{ts}.jsonl'),
         confidence_tiers=confidence_tier_config,
     )
-
-    build_session_adjacency_index(
-        master_df,
-        os.path.join(output_dir, f'session_adjacency_{ts}.jsonl'),
-    )
-
-    # NOTE: The canonical per-participant stage progression is now in
-    # analysis/stage_progression.py. This legacy call groups by session_id
-    # only and is kept for backward compatibility with existing tooling.
-    id_to_short = framework.build_id_to_short_map()
-    progression_df = compute_session_stage_progression(master_df, id_to_short)
-    if len(progression_df) > 0:
-        progression_path = os.path.join(output_dir, f'session_stage_progression_{ts}.csv')
-        progression_df.to_csv(progression_path, index=False)
-        observer.on_stage_progress(
-            "Dataset Assembly",
-            f"Exported session stage progression for {len(progression_df)} sessions",
-        )
-        avg_forward = progression_df['forward_transitions'].mean()
-        avg_backward = progression_df['backward_transitions'].mean()
-        observer.on_stage_progress(
-            "Dataset Assembly",
-            f"Avg forward transitions per session: {avg_forward:.1f}",
-        )
-        observer.on_stage_progress(
-            "Dataset Assembly",
-            f"Avg backward transitions per session: {avg_backward:.1f}",
-        )
 
     observer.on_stage_complete(
         "Dataset Assembly",

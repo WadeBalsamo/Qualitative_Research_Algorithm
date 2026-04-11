@@ -85,6 +85,11 @@ def _add_common_args(parser: argparse.ArgumentParser):
 
     # Embedding classifier settings
     parser.add_argument('--no-two-pass', action='store_true')
+    parser.add_argument(
+        '--embedding-model', default=None,
+        help='Sentence-transformer model for codebook embedding classification '
+             '(default: Qwen/Qwen3-Embedding-8B; use all-MiniLM-L6-v2 for lightweight)',
+    )
     parser.add_argument('--exemplar-import-path', default=None)
     parser.add_argument('--criteria-weight', type=float, default=None)
     parser.add_argument('--exemplar-weight', type=float, default=None)
@@ -264,6 +269,8 @@ def _build_config(args):
     emb = config.codebook_embedding
     if args.no_two_pass:
         emb.two_pass = False
+    if getattr(args, 'embedding_model', None) is not None:
+        emb.embedding_model = args.embedding_model
     if args.exemplar_import_path is not None:
         emb.exemplar_import_path = args.exemplar_import_path
     if args.criteria_weight is not None:
@@ -502,12 +509,20 @@ def _execute_pipeline(config, framework, codebook=None, observer=None, validator
     print("\n" + "=" * 70)
     print("QRA CLASSIFICATION PIPELINE")
     print("=" * 70)
+    tc = config.theme_classification
     print(f"  Mode:      {config.run_mode}")
     print(f"  Framework: {framework.name} ({framework.num_themes} themes)")
-    print(f"  Model:     {config.theme_classification.model}")
-    print(f"  Backend:   {config.theme_classification.backend}")
-    if config.theme_classification.backend == 'lmstudio':
-        print(f"  LM Studio: {getattr(config.theme_classification, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')}")
+    per_run = getattr(tc, 'per_run_models', []) or []
+    use_per_run = len(per_run) >= 2 and len(per_run) == tc.n_runs
+    if use_per_run:
+        print(f"  Models:    {tc.n_runs} distinct raters (per-run interrater)")
+        for i, m in enumerate(per_run):
+            print(f"             Run {i + 1}: {m}")
+    else:
+        print(f"  Model:     {tc.model}")
+    print(f"  Backend:   {tc.backend}")
+    if tc.backend == 'lmstudio':
+        print(f"  LM Studio: {getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')}")
     if config.run_codebook_classifier:
         print(f"  Codebook:  enabled")
     print()
