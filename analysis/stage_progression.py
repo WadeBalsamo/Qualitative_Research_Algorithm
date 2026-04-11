@@ -105,6 +105,60 @@ def compute_session_stage_progression(
     return result
 
 
+def compute_cross_session_transitions(
+    df: pd.DataFrame,
+    framework: dict,
+) -> tuple:
+    """Compute between-session dominant-theme transitions per participant.
+
+    For each participant, builds a sequence of (session_id, dominant_stage)
+    ordered by session_number, then records transitions from session N to N+1.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Cleaned analysis DataFrame.
+    framework : dict
+        Maps int stage_id -> {short_name, ...}.
+
+    Returns
+    -------
+    (cross_session_matrix, participant_sequences) where:
+        cross_session_matrix : DataFrame (n_stages × n_stages) of transition counts
+        participant_sequences : dict {participant_id: [(session_id, stage_id, stage_name), ...]}
+    """
+    stage_ids = sorted(framework.keys())
+    n = len(stage_ids)
+    matrix = np.zeros((n, n), dtype=int)
+    id_to_idx = {sid: i for i, sid in enumerate(stage_ids)}
+
+    participant_sequences = {}
+
+    for pid in sorted(df['participant_id'].unique()):
+        pdf = df[df['participant_id'] == pid]
+        sessions = sort_session_ids(pdf['session_id'].unique().tolist())
+
+        seq = []
+        for sid in sessions:
+            sdf = pdf[pdf['session_id'] == sid]
+            if sdf.empty:
+                continue
+            dominant = int(sdf['final_label'].mode().iloc[0])
+            name = framework.get(dominant, {}).get('short_name', f'Stage {dominant}')
+            seq.append((sid, dominant, name))
+
+        participant_sequences[pid] = seq
+
+        for a, b in zip(seq[:-1], seq[1:]):
+            fa, fb = a[1], b[1]
+            if fa in id_to_idx and fb in id_to_idx:
+                matrix[id_to_idx[fa]][id_to_idx[fb]] += 1
+
+    labels = [framework[sid].get('short_name', f'Stage {sid}') for sid in stage_ids]
+    cross_session_matrix = pd.DataFrame(matrix, index=labels, columns=labels)
+    return cross_session_matrix, participant_sequences
+
+
 def compute_state_transition_matrix(
     df: pd.DataFrame,
     framework: dict,
