@@ -261,21 +261,24 @@ def generate_all_construct_reports(
     df: pd.DataFrame,
     framework: dict,
     output_dir: str,
-) -> None:
+) -> list:
     """Generate all stage reports and all codebook code reports.
 
+    Returns list of stage report dicts.
     Skips codebook code reports if no codebook_labels_ensemble data is present.
     """
+    stage_reports = []
     # VA-MR stage reports
     for stage_id in sorted(framework.keys()):
         try:
-            generate_stage_report(df, stage_id, framework, output_dir)
+            report = generate_stage_report(df, stage_id, framework, output_dir)
+            stage_reports.append(report)
         except Exception as e:
             print(f"  Warning: stage report failed for stage {stage_id}: {e}")
 
     # Codebook code reports — only if data present
     if 'codebook_labels_ensemble' not in df.columns:
-        return
+        return stage_reports
 
     # Collect all unique code IDs
     all_codes = set()
@@ -284,7 +287,7 @@ def generate_all_construct_reports(
             all_codes.update(codes)
 
     if not all_codes:
-        return
+        return stage_reports
 
     for code_id in sorted(all_codes):
         if not code_id:
@@ -293,3 +296,5 @@ def generate_all_construct_reports(
             generate_codebook_code_report(df, code_id, framework, output_dir)
         except Exception as e:
             print(f"  Warning: codebook report failed for {code_id}: {e}")
+
+    return stage_reports
