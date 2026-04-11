@@ -9,3 +9,15 @@ data/*
 __pycache__/
 .venv/
 wait_and_process.sh
+CLAUDE.md
+claw/
+.gitignore
+.claw/
+.sandbox-tmp/
+*/.sandbox-tmp/
+*/.sandbox-home/
+.sandbox-home/
+*/.claude
+*/__pycache__/
+.claude
+__pycache__/
