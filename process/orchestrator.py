@@ -164,6 +164,7 @@ def run_full_pipeline(
             model=theme_cfg.model,
             lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
             no_reasoning=True,  # Segmentation uses simple true/false prompts; CoT wastes tokens
+            process_logger=plog,
         )
         llm_refiner = LLMSegmentationRefiner(
             LLMClient(refiner_llm_cfg),
@@ -296,7 +297,7 @@ def run_full_pipeline(
         original: {'role': role, 'anonymized_id': anon_id}
         for original, (role, anon_id) in segmenter.speaker_norm.speaker_map.items()
     }
-    speaker_key_path = os.path.join(output_dir, 'speaker_anonymization_key.json')
+    speaker_key_path = os.path.join(meta_dir, 'speaker_anonymization_key.json')
     with open(speaker_key_path, 'w') as _f:
         json.dump(speaker_key, _f, indent=2)
 
@@ -317,11 +318,11 @@ def run_full_pipeline(
     content_validity_items = create_content_validity_test_set(framework)
     export_theme_definitions(
         framework,
-        os.path.join(output_dir, 'theme_definitions.json'),
+        os.path.join(meta_dir, 'theme_definitions.json'),
     )
     export_content_validity_test_set(
         content_validity_items,
-        os.path.join(output_dir, 'content_validity_test_set.jsonl'),
+        os.path.join(meta_dir, 'content_validity_test_set.jsonl'),
     )
 
     observer.on_stage_complete(
@@ -357,6 +358,7 @@ def run_full_pipeline(
             framework=framework,
             config=theme_config,
             resume_from=config.resume_from,
+            process_logger=plog,
         )
 
         # Response Parsing
@@ -428,6 +430,7 @@ def run_full_pipeline(
             lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
             ollama_host=getattr(theme_cfg, 'ollama_host', '0.0.0.0'),
             ollama_port=getattr(theme_cfg, 'ollama_port', 11434),
+            process_logger=plog,
         )
         llm_client = LLMClient(llm_cfg)
         # Set the output dir on the codebook_llm config so checkpoints land in the right place

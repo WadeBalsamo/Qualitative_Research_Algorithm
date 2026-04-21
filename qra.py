@@ -441,7 +441,7 @@ def cmd_guided(args):
 # Pipeline execution
 # =========================================================================
 
-def _wait_for_lmstudio(base_url: str, timeout_s: int = 300, poll_s: int = 5) -> None:
+def _wait_for_lmstudio(base_url: str, timeout_s: int = 32000, poll_s: int = 5) -> None:
     """
     Block until the LM Studio server responds to GET /v1/models, or timeout.
 

@@ -109,8 +109,32 @@ class ProcessLogger:
     # LLM I/O logging
     # ------------------------------------------------------------------
 
+    def log_llm_prompt(self, model: str, prompt: str):
+        """Log a prompt immediately before it is sent to the LLM."""
+        self._write()
+        label = f"LLM PROMPT → {model}"
+        self._write(f"┌─ {label} {'─' * max(0, 67 - len(label))}")
+        for line in textwrap.wrap(prompt, width=76, initial_indent='│   ', subsequent_indent='│   '):
+            self._write(line)
+        self._write("└" + "─" * 70)
+
+    def log_llm_response(self, response_text: str, reasoning: str = ''):
+        """Log the full LLM response including chain-of-thought reasoning tokens."""
+        self._write()
+        self._write(f"┌─ LLM RESPONSE {'─' * 55}")
+        if reasoning:
+            self._write("│ REASONING (chain-of-thought):")
+            for line in reasoning.splitlines():
+                self._write(f"│   {line}")
+            self._write("│")
+        self._write("│ RESPONSE (unparsed):")
+        resp = response_text if response_text else '(empty)'
+        for line in resp.splitlines():
+            self._write(f"│   {line}")
+        self._write("└" + "─" * 70)
+
     def log_llm_call(self, call_type: str, prompt: str, response: str, decision: str = ''):
-        """Log a full LLM prompt and response."""
+        """Log a full LLM prompt and response (legacy helper kept for compatibility)."""
         self._write()
         self._write(f"┌─ LLM CALL: {call_type} {'─' * (60 - len(call_type))}")
         self._write("│ PROMPT:")

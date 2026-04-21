@@ -26,7 +26,7 @@ attempts to salvage a JSON object from ``reasoning_content`` before giving up.
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List
 
 
 @dataclass
@@ -39,7 +39,7 @@ class LLMClientConfig:
     models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
     temperature: float = 0.0
     max_new_tokens: int = 512  # Used by Replicate and HuggingFace only
-    timeout: int = 300
+    timeout: int = 600
     max_retries: int = 3
     retry_base_delay: float = 2.0
     ollama_host: str = '0.0.0.0'
@@ -48,6 +48,7 @@ class LLMClientConfig:
     use_gpu: bool = True  # Use GPU if available for Hugging Face models
     batch_size: int = 1  # For future batch processing
     no_reasoning: bool = False  # Disable chain-of-thought tokens (LM Studio, Ollama thinking models)
+    process_logger: Optional[Any] = field(default=None, compare=False, repr=False)  # ProcessLogger instance for I/O tracing
 
 
 class LLMClient:
@@ -68,15 +69,30 @@ class LLMClient:
 
     def request(self, prompt: str) -> Tuple[Optional[str], Optional[Dict]]:
         """Send a prompt to the configured backend and return (text, metadata)."""
+        plog = self.config.process_logger
+        if plog:
+            plog.log_llm_prompt(self.config.model, prompt)
+
         if self.config.backend == 'replicate':
-            return self._replicate_request(prompt)
+            result_text, metadata = self._replicate_request(prompt)
         elif self.config.backend == 'ollama':
-            return self._ollama_request(prompt)
+            result_text, metadata = self._ollama_request(prompt)
         elif self.config.backend == 'huggingface':
-            return self._huggingface_request(prompt)
+            result_text, metadata = self._huggingface_request(prompt)
         elif self.config.backend == 'lmstudio':
-            return self._lmstudio_request(prompt)
-        return self._openrouter_request(prompt)
+            result_text, metadata = self._lmstudio_request(prompt)
+        else:
+            result_text, metadata = self._openrouter_request(prompt)
+
+        if plog:
+            reasoning = ''
+            if metadata and isinstance(metadata, dict):
+                choices = metadata.get('choices', [])
+                if choices:
+                    reasoning = choices[0].get('message', {}).get('reasoning_content') or ''
+            plog.log_llm_response(result_text or '(empty)', reasoning)
+
+        return result_text, metadata
 
     def multi_model_request(
         self, prompt: str, models: Optional[List[str]] = None
@@ -445,7 +461,8 @@ class LLMClient:
 
                 if not isinstance(data, dict) or 'choices' not in data or not data['choices']:
                     if isinstance(data, dict):
-                        err_msg = data.get('error', {}).get('message', '') or str(data)[:200]
+                        err_obj = data.get('error') or {}
+                        err_msg = (err_obj.get('message', '') if isinstance(err_obj, dict) else str(err_obj)) or str(data)[:200]
                     else:
                         err_msg = str(data)[:200]
                     raise ValueError(f"LM Studio returned no choices: {err_msg}")
