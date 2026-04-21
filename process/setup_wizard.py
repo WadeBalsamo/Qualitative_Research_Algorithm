@@ -243,10 +243,10 @@ class SetupWizard:
             self.config_data['segmentation'] = {
                 'use_conversational_segmenter': True,
                 'max_gap_seconds': 15.0,
-                'min_words_per_sentence': 10,
+                'min_words_per_sentence': 20,
                 'max_segment_duration_seconds': 60.0,
                 'min_segment_words_conversational': 60,
-                'max_segment_words_conversational': 300,
+                'max_segment_words_conversational': 500,
                 'use_adaptive_threshold': True,
                 'min_prominence': 0.05,
                 'use_topic_clustering': True,
@@ -254,8 +254,8 @@ class SetupWizard:
                 'llm_refinement_mode': 'full',
             }
             print("    Using defaults: single-speaker segments, 15s max gap,")
-            print("    10-word min per sentence (shorter folded into neighbors),")
-            print("    5min max segment duration, 60-400 word segments,")
+            print("    20-word min per sentence (shorter folded into neighbors),")
+            print("    5min max segment duration, 60-500 word segments,")
             print("    adaptive threshold + LLM refinement enabled.")
             print()
             return
@@ -265,15 +265,15 @@ class SetupWizard:
         )
 
         max_gap = _prompt_float("Max time gap (seconds) between utterances to group", 15.0)
-        min_words_sent = _prompt_int("Min words per sentence (shorter are folded into neighbors)", 10)
+        min_words_sent = _prompt_int("Min words per sentence (shorter are folded into neighbors)", 20)
         max_duration = _prompt_float("Max segment duration (seconds)", 60.0)
 
         if use_conv:
-            min_words = _prompt_int("Min words per segment (conversational)", 20)
-            max_words = _prompt_int("Max words per segment (conversational)", 300)
+            min_words = _prompt_int("Min words per segment (conversational)", 60)
+            max_words = _prompt_int("Max words per segment (conversational)", 500)
         else:
-            min_words = _prompt_int("Min words per segment", 20)
-            max_words = _prompt_int("Max words per segment", 300)
+            min_words = _prompt_int("Min words per segment", 60)
+            max_words = _prompt_int("Max words per segment", 500)
 
         # Adaptive threshold
         use_adaptive = _prompt_yes_no(
@@ -334,9 +334,9 @@ class SetupWizard:
         # LM Studio: prompt for server URL and model name
         if backend == 'lmstudio':
             lmstudio_url = _prompt(
-                "LM Studio server URL", 'http://127.0.0.1:1234/v1'
+                "LM Studio server URL", 'http://10.0.0.58:1234/v1'
             )
-            model = _prompt("Model ID (as shown in LM Studio)", 'nvidia/nemotron-3-super')
+            model = _prompt("Primary model (used for segmentation, classification, and all LLM calls)", 'nvidia/nemotron-3-super')
             print(f"    LM Studio backend: {lmstudio_url}")
             self.config_data['theme_classification'] = {
                 'backend': 'lmstudio',
@@ -483,18 +483,23 @@ class SetupWizard:
 
         print()
         print("    Codebook classification uses two complementary methods:")
-        print("    1. Embedding similarity  — Qwen/Qwen3-Embedding-8B (default)")
-        print("       4096-dim embeddings purpose-built for complex semantic retrieval.")
-        print("       First run downloads ~16 GB from HuggingFace (then cached).")
+        print("    1. Embedding similarity  — sentence-transformer model (configurable below)")
         print("       Segments are encoded as queries; codebook entries as passages")
         print("       (asymmetric encoding for better construct retrieval).")
-        print("       Use 'all-MiniLM-L6-v2' in your config for a 90 MB alternative.")
-        print("    2. LLM zero-shot prompt  — uses your configured LM Studio model")
+        print("    2. LLM zero-shot prompt  — uses your configured primary model")
         print("    Both results are reconciled by an ensemble step.")
         print()
 
+        print("    Embedding model options:")
+        print("      Qwen/Qwen3-Embedding-8B  — 4096-dim, best quality, ~16 GB download (default)")
+        print("      all-MiniLM-L6-v2         — 384-dim, lightweight, 90 MB, no download needed")
+        print()
+        embedding_model = _prompt("Embedding model", 'Qwen/Qwen3-Embedding-8B')
         two_pass = _prompt_yes_no("Enable two-pass embedding classification?", True)
-        self.config_data['codebook_embedding'] = {'two_pass': two_pass}
+        self.config_data['codebook_embedding'] = {
+            'embedding_model': embedding_model,
+            'two_pass': two_pass,
+        }
 
         exemplar_path = _prompt("Exemplar import path (blank for none)", '')
         if exemplar_path:
@@ -504,8 +509,8 @@ class SetupWizard:
 
     # Default LM Studio models for per-run interrater assignment
     _DEFAULT_LMSTUDIO_RUN_MODELS = [
-        'qwen/qwen3-coder-480b',
-        'microsoft/phi-4-reasoning-plus',
+        'google/gemma-4-31b',
+        'qwen/qwen3-next-80b',
     ]
 
     # -----------------------------------------------------------------
@@ -513,58 +518,61 @@ class SetupWizard:
     # -----------------------------------------------------------------
     def _step_8_classification(self):
         print("--- Step 8/11: Classification Parameters ---")
-        n_runs = _prompt_int("Number of runs per segment", 3)
+        n_runs = _prompt_int("Number of classification runs per segment", 3)
         temperature = _prompt_float("Temperature", 0.1)
 
         self.config_data['theme_classification']['n_runs'] = n_runs
         self.config_data['theme_classification']['temperature'] = temperature
 
-        # Per-run model assignment is required when n_runs is 2 or 3
-        if n_runs in (2, 3):
+        # When n_runs > 1, offer adversarial checker models for interrater reliability.
+        # Run 1 is always the primary model; we only ask for the additional checkers.
+        if n_runs >= 2:
             self._configure_per_run_models(n_runs)
 
         print()
 
     def _configure_per_run_models(self, n_runs: int):
-        """Configure a distinct model for each run to improve interrater reliability.
+        """Configure adversarial checker models for interrater reliability.
 
-        Required when n_runs is 2 or 3.  Each run acts as an independent rater;
-        the majority-vote consistency score then reflects genuine cross-model
-        agreement rather than stochastic variation within one model.
+        Run 1 is always the primary model (set in Step 4).  The user is only
+        asked to supply the n_runs-1 additional checker models.  The majority-vote
+        consistency score then reflects genuine cross-model agreement rather than
+        stochastic variation within one model.
         """
         primary_model = self.config_data.get('theme_classification', {}).get('model', '')
+        n_checkers = n_runs - 1
 
-        # Build defaults: primary model first, then fill from LM Studio defaults
-        defaults: List[str] = []
-        if primary_model:
-            defaults.append(primary_model)
-        for m in self._DEFAULT_LMSTUDIO_RUN_MODELS:
-            if m not in defaults:
-                defaults.append(m)
-        # Pad to n_runs if needed
-        while len(defaults) < n_runs:
-            defaults.append(defaults[-1])
+        # Build checker defaults from the LM Studio preset list, excluding primary
+        checker_defaults: List[str] = [
+            m for m in self._DEFAULT_LMSTUDIO_RUN_MODELS if m != primary_model
+        ]
+        while len(checker_defaults) < n_checkers:
+            checker_defaults.append(checker_defaults[-1] if checker_defaults else primary_model)
 
         print()
-        print(f"    Multi-model interrater reliability: {n_runs} runs, {n_runs} distinct models")
-        print("    Each run uses a separate model so the consistency score reflects")
-        print("    genuine cross-model agreement, not within-model stochasticity.")
+        print(f"    Interrater reliability: {n_runs} runs total")
+        print(f"      Run 1: {primary_model}  (primary model)")
+        if n_checkers > 0:
+            print(f"    Enter {n_checkers} additional checker model(s).")
+            print("    Each acts as an independent rater; majority-vote consistency reflects")
+            print("    genuine cross-model agreement, not within-model stochasticity.")
         print()
 
-        per_run_models: List[str] = []
-        for i in range(n_runs):
-            model = _prompt(f"Model for run {i + 1}", defaults[i])
+        per_run_models: List[str] = [primary_model]
+        for i in range(n_checkers):
+            default = checker_defaults[i] if i < len(checker_defaults) else ''
+            model = _prompt(f"Checker model {i + 1}", default)
             per_run_models.append(model)
 
-        # Warn if duplicates — allowed but defeats the purpose
         if len(set(per_run_models)) < n_runs:
-            print("    Warning: duplicate models detected — runs sharing a model will not")
-            print("    provide independent ratings. Consider using distinct models.")
+            print("    Warning: duplicate models — runs sharing a model will not provide")
+            print("    independent ratings. Consider using distinct models.")
 
         self.config_data['theme_classification']['per_run_models'] = per_run_models
         print(f"    Configured {n_runs} rater models:")
         for i, m in enumerate(per_run_models):
-            print(f"      Run {i + 1}: {m}")
+            label = " (primary)" if i == 0 else f" (checker {i})"
+            print(f"      Run {i + 1}: {m}{label}")
 
     # -----------------------------------------------------------------
     # Step 9: Confidence thresholds
@@ -667,7 +675,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             min_segment_words_conversational=seg.get('min_segment_words_conversational', 60),
             max_segment_words_conversational=seg.get('max_segment_words_conversational', 300),
             max_gap_seconds=seg.get('max_gap_seconds', 15.0),
-            min_words_per_sentence=seg.get('min_words_per_sentence', 10),
+            min_words_per_sentence=seg.get('min_words_per_sentence', 20),
             max_segment_duration_seconds=seg.get('max_segment_duration_seconds', 60.0),
             use_adaptive_threshold=seg.get('use_adaptive_threshold', True),
             min_prominence=seg.get('min_prominence', 0.05),
@@ -695,6 +703,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         ),
         codebook_embedding=EmbeddingClassifierConfig(
             two_pass=cb_emb.get('two_pass', True),
+            embedding_model=cb_emb.get('embedding_model', 'Qwen/Qwen3-Embedding-8B'),
             exemplar_import_path=cb_emb.get('exemplar_import_path'),
         ),
         validation=ValidationConfig(),

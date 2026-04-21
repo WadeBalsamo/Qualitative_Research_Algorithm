@@ -72,6 +72,103 @@ def _find_transition_examples(df: pd.DataFrame, from_stage: int, to_stage: int,
     return examples
 
 
+def _find_transition_examples_by_cohort_session(
+    df: pd.DataFrame, from_stage: int, to_stage: int,
+) -> list:
+    """Find one example per (cohort_id, session_id) for from_stage → to_stage.
+
+    Returns list of dicts sorted by (cohort_id, session_id), each with keys:
+    cohort_id, session_id, participant_id, from_text, to_text, from_conf, to_conf.
+    """
+    seen_keys = set()
+    examples = []
+    has_conf = 'llm_confidence_primary' in df.columns
+
+    for (pid, sid), group in df.groupby(['participant_id', 'session_id']):
+        cohort = group['cohort_id'].dropna().iloc[0] if group['cohort_id'].notna().any() else None
+        cid = int(cohort) if cohort is not None and not pd.isna(cohort) else None
+        key = (cid, sid)
+        if key in seen_keys:
+            continue
+
+        group = group.sort_values('segment_index')
+        labels = group['final_label'].astype(int).tolist()
+        texts = group['text'].tolist()
+        confs = (group['llm_confidence_primary'].tolist() if has_conf else [0.0] * len(texts))
+
+        for i in range(len(labels) - 1):
+            if labels[i] == from_stage and labels[i + 1] == to_stage:
+                seen_keys.add(key)
+                examples.append({
+                    'cohort_id': cid,
+                    'session_id': sid,
+                    'participant_id': pid,
+                    'from_text': texts[i],
+                    'to_text': texts[i + 1],
+                    'from_conf': float(confs[i] or 0),
+                    'to_conf': float(confs[i + 1] or 0),
+                })
+                break
+
+    examples.sort(key=lambda e: (e['cohort_id'] if e['cohort_id'] is not None else 9999, e['session_id']))
+    return examples
+
+
+def _find_cross_transition_examples_by_cohort_session(
+    df: pd.DataFrame, from_stage: int, to_stage: int,
+    participant_sequences: dict,
+) -> list:
+    """Find one quote per (cohort_id, from_session_id) for a between-session transition.
+
+    Scans participant_sequences for consecutive dominant-stage pairs matching
+    from_stage → to_stage, then picks the highest-confidence segment in that
+    participant's from-session that carries from_stage.
+
+    Returns list of dicts sorted by (cohort_id, session_id):
+    cohort_id, from_session_id, to_session_id, participant_id, text, conf.
+    """
+    has_conf = 'llm_confidence_primary' in df.columns
+    seen_keys = set()
+    examples = []
+
+    for pid, seq in sorted(participant_sequences.items()):
+        for i in range(len(seq) - 1):
+            from_sid, from_dom, _ = seq[i]
+            to_sid, to_dom, _ = seq[i + 1]
+            if from_dom != from_stage or to_dom != to_stage:
+                continue
+
+            # One example per (cohort, from_session)
+            sub = df[(df['participant_id'] == pid) & (df['session_id'] == from_sid)
+                     & (df['final_label'] == from_stage)]
+            if sub.empty:
+                continue
+
+            cohort = sub['cohort_id'].dropna().iloc[0] if sub['cohort_id'].notna().any() else None
+            cid = int(cohort) if cohort is not None and not pd.isna(cohort) else None
+            key = (cid, from_sid)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            if has_conf and sub['llm_confidence_primary'].notna().any():
+                row = sub.sort_values('llm_confidence_primary', ascending=False).iloc[0]
+            else:
+                row = sub.iloc[0]
+
+            examples.append({
+                'cohort_id': cid,
+                'from_session_id': from_sid,
+                'to_session_id': to_sid,
+                'participant_id': pid,
+                'text': str(row.get('text', '')).strip(),
+                'conf': float(row.get('llm_confidence_primary', 0) or 0),
+            })
+
+    examples.sort(key=lambda e: (e['cohort_id'] if e['cohort_id'] is not None else 9999, e['from_session_id']))
+    return examples
+
+
 def _cross_session_example(df: pd.DataFrame, pid: str, sessions: list,
                             from_idx: int) -> dict:
     """Find a representative quote from the session at from_idx in sessions."""
@@ -411,21 +508,27 @@ def generate_transition_explanation(
         lines.append(f'  {stage_names[fr]:<20} → {stage_names[to]:<20} {cnt:>4}x  [{direction}]')
     lines.append('')
 
-    # Example quotes for top 3 non-self transitions
+    # Example quotes for top non-self transitions — one per (cohort, session)
     non_self = [(cnt, fr, to) for cnt, fr, to in pairs if fr != to]
     if non_self:
-        lines.append('Example quotes for top within-session transitions:')
-        for cnt, fr, to in non_self[:3]:
-            examples = _find_transition_examples(df, fr, to, framework, n=1)
+        lines.append('Exemplar quotes by cohort and session (within-session transitions):')
+        for cnt, fr, to in non_self[:5]:
+            examples = _find_transition_examples_by_cohort_session(df, fr, to)
             if not examples:
                 continue
-            ex = examples[0]
-            lines.append(f'\n  {stage_names[fr]} → {stage_names[to]}'
-                         f'  ({ex["participant_id"]}, session {ex["session_id"]}):')
-            from_text = ex['from_text'].strip()
-            to_text = ex['to_text'].strip()
-            lines.append(f'  FROM: {_wrap_quote(from_text, indent=8).lstrip()}')
-            lines.append(f'    TO: {_wrap_quote(to_text, indent=8).lstrip()}')
+            direction = 'forward' if to > fr else 'backward'
+            lines.append(
+                f'\n  ── {stage_names[fr]} → {stage_names[to]}  ({cnt}x, [{direction}]) ──'
+            )
+            for ex in examples:
+                cohort_label = f'Cohort {ex["cohort_id"]}' if ex['cohort_id'] is not None else 'Cohort ?'
+                lines.append(
+                    f'  [{cohort_label} / {ex["session_id"]}]  '
+                    f'participant: {ex["participant_id"]}  '
+                    f'conf: {ex["from_conf"]:.2f}→{ex["to_conf"]:.2f}'
+                )
+                lines.append(f'    FROM: {_wrap_quote(ex["from_text"].strip(), indent=10).lstrip()}')
+                lines.append(f'      TO: {_wrap_quote(ex["to_text"].strip(), indent=10).lstrip()}')
         lines.append('')
 
     # ── Between-session ──
@@ -451,6 +554,29 @@ def generate_transition_explanation(
         direction = 'stay' if fr == to else ('advance' if to > fr else 'regress')
         lines.append(f'  {stage_names[fr]:<20} → {stage_names[to]:<20} {cnt:>4}x  [{direction}]')
     lines.append('')
+
+    # Exemplar quotes for top between-session transitions — one per (cohort, session)
+    non_self_cross = [(cnt, fr, to) for cnt, fr, to in cross_pairs if fr != to]
+    if non_self_cross:
+        lines.append('Exemplar quotes by cohort and session (between-session transitions):')
+        for cnt, fr, to in non_self_cross[:5]:
+            examples = _find_cross_transition_examples_by_cohort_session(
+                df, fr, to, participant_sequences
+            )
+            if not examples:
+                continue
+            direction = 'advance' if to > fr else 'regress'
+            lines.append(
+                f'\n  ── {stage_names[fr]} → {stage_names[to]}  ({cnt}x, [{direction}]) ──'
+            )
+            for ex in examples:
+                cohort_label = f'Cohort {ex["cohort_id"]}' if ex['cohort_id'] is not None else 'Cohort ?'
+                lines.append(
+                    f'  [{cohort_label} / {ex["from_session_id"]} → {ex["to_session_id"]}]  '
+                    f'participant: {ex["participant_id"]}  conf: {ex["conf"]:.2f}'
+                )
+                lines.append(f'    {_wrap_quote(ex["text"], indent=4).lstrip()}')
+        lines.append('')
 
     # Per-participant sequences
     lines.append('Individual participant trajectories (dominant stage per session):')

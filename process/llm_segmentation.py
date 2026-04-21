@@ -115,14 +115,55 @@ class LLMSegmentationRefiner:
         # Process logger (optional)
         self.plog = config.get('process_logger', None)
 
+    # Minimum free VRAM (bytes) required to load the embedding model on GPU.
+    # Qwen3-8B at float16 is ~16 GB; set a conservative floor so that if
+    # LM Studio already occupies most VRAM we fall back to CPU gracefully.
+    _MIN_VRAM_FOR_EMBED_GB = 10.0
+
     def _get_embed_model(self):
-        """Lazy-load and cache the sentence embedding model."""
-        if self._embed_model is None:
-            from sentence_transformers import SentenceTransformer
-            self._embed_model = SentenceTransformer(
-                self.embedding_model_id,
-                trust_remote_code=True,
-            )
+        """Lazy-load the sentence embedding model with VRAM-aware device selection.
+
+        Tries CUDA (float16) first.  Falls back to CPU if insufficient free
+        VRAM so that LM Studio and the embedding model don't fight over memory.
+        """
+        if self._embed_model is not None:
+            return self._embed_model
+
+        import torch
+        from sentence_transformers import SentenceTransformer
+
+        device = "cpu"
+        model_kwargs: dict = {}
+
+        if torch.cuda.is_available():
+            try:
+                props = torch.cuda.get_device_properties(0)
+                free_bytes = props.total_memory - torch.cuda.memory_reserved(0)
+                free_gb = free_bytes / 1024 ** 3
+                if free_gb >= self._MIN_VRAM_FOR_EMBED_GB:
+                    device = "cuda"
+                    model_kwargs["torch_dtype"] = torch.float16
+                    logger.info(
+                        "Embedding model: %.1f GB VRAM free — loading on GPU (float16)",
+                        free_gb,
+                    )
+                else:
+                    logger.info(
+                        "Embedding model: only %.1f GB VRAM free (need %.1f GB) "
+                        "— loading on CPU to avoid OOM",
+                        free_gb,
+                        self._MIN_VRAM_FOR_EMBED_GB,
+                    )
+            except Exception as exc:
+                logger.warning("VRAM check failed (%s); defaulting to CPU", exc)
+
+        self._embed_model = SentenceTransformer(
+            self.embedding_model_id,
+            trust_remote_code=True,
+            device=device,
+            model_kwargs=model_kwargs or None,
+        )
+        logger.info("Embedding model '%s' loaded on %s", self.embedding_model_id, device)
         return self._embed_model
 
     def refine(
@@ -273,13 +314,6 @@ class LLMSegmentationRefiner:
         )
 
         response_text, _ = self.client.request(prompt)
-
-        if self.plog:
-            self.plog.log_llm_call(
-                "boundary_review",
-                prompt,
-                response_text or '(empty)',
-            )
 
         if not response_text:
             return ['split'] * len(boundary_indices)
@@ -434,14 +468,14 @@ class LLMSegmentationRefiner:
                 colon_pos = raw_text.find(']: ')
                 if colon_pos > 0:
                     raw_text = raw_text[colon_pos + 3:]
-            seg_emb = embed_model.encode([raw_text], normalize_embeddings=True)[0]
+            seg_emb = embed_model.encode([raw_text], normalize_embeddings=True, batch_size=1)[0]
 
             for direction, context_sents in (('before', before_sents), ('after', after_sents)):
                 if not context_sents:
                     continue
 
                 context_text = " ".join(s.get('text', '') for s in context_sents)
-                context_emb = embed_model.encode([context_text], normalize_embeddings=True)[0]
+                context_emb = embed_model.encode([context_text], normalize_embeddings=True, batch_size=1)[0]
                 sim = float(np.dot(seg_emb, context_emb))
 
                 if sim >= self.context_attach_threshold:
@@ -584,11 +618,6 @@ class LLMSegmentationRefiner:
 
         response_text, _ = self.client.request(prompt)
 
-        if self.plog:
-            self.plog.log_llm_call(
-                f"ctx_needed ({direction})", prompt, response_text or '(empty)'
-            )
-
         if not response_text:
             return False
         try:
@@ -626,11 +655,6 @@ class LLMSegmentationRefiner:
             )
 
             response_text, _ = self.client.request(prompt)
-
-            if self.plog:
-                self.plog.log_llm_call(
-                    f"ctx_add ({direction})", prompt, response_text or '(empty)'
-                )
 
             if not response_text:
                 break
@@ -748,7 +772,7 @@ class LLMSegmentationRefiner:
         # Embedding-based detection using cached model
         try:
             model = self._get_embed_model()
-            embs = model.encode(text_sentences, normalize_embeddings=True)
+            embs = model.encode(text_sentences, normalize_embeddings=True, batch_size=4)
 
             sims = [float(np.dot(embs[i], embs[i + 1])) for i in range(len(embs) - 1)]
             if not sims:
@@ -784,13 +808,6 @@ class LLMSegmentationRefiner:
         )
 
         response_text, _ = self.client.request(prompt)
-
-        if self.plog:
-            self.plog.log_llm_call(
-                f"coherence_check ({seg.segment_id})",
-                prompt,
-                response_text or '(empty)',
-            )
 
         if not response_text:
             return None
