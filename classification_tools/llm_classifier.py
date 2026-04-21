@@ -18,7 +18,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from .data_structures import Segment
 from .llm_client import LLMClient, LLMClientConfig, extract_json
-from .classification_loop import filter_participant_segments, classify_segments
+from .classification_loop import filter_participant_segments, classify_segments, _stage_name
 from .majority_vote import single_label_majority_vote, multi_label_majority_vote
 from constructs.theme_schema import ThemeFramework
 from constructs.config import ThemeClassificationConfig
@@ -483,6 +483,7 @@ def classify_segments_zero_shot(
     framework: ThemeFramework,
     config: ThemeClassificationConfig,
     resume_from: Optional[str] = None,
+    process_logger=None,
 ) -> Tuple[Dict, Dict]:
     """
     Zero-shot classification of transcript segments using a ThemeFramework.
@@ -509,6 +510,7 @@ def classify_segments_zero_shot(
         ollama_host=getattr(config, 'ollama_host', '0.0.0.0'),
         ollama_port=getattr(config, 'ollama_port', 11434),
         lmstudio_base_url=getattr(config, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+        process_logger=process_logger,
     )
     client = LLMClient(llm_config)
 
@@ -730,18 +732,18 @@ def _write_multi_model_status_entry(
             parsed_runs = model_data.get('parsed_runs', [])
             for r, run in enumerate(parsed_runs):
                 if isinstance(run, dict):
-                    stage = run.get('primary_stage', '?')
+                    stage = _stage_name(run.get('primary_stage', '?'))
                     conf = run.get('primary_confidence', '?')
                     sec = run.get('secondary_stage')
                     just = run.get('justification', '')
-                    sec_str = f"  secondary={sec}" if sec else ""
+                    sec_str = f"  secondary={_stage_name(sec)}" if sec is not None else ""
                     sf.write(f"  Run {r + 1}: stage={stage}  conf={conf}{sec_str}\n")
                     if just:
                         for line in textwrap.wrap(just, width=72, initial_indent="    → ", subsequent_indent="      "):
                             sf.write(line + "\n")
             consistency = model_data.get('consistency', {})
             if isinstance(consistency, dict):
-                sf.write(f"  → Model consensus: stage={consistency.get('primary_stage', '?')} "
+                sf.write(f"  → Model consensus: stage={_stage_name(consistency.get('primary_stage', '?'))} "
                          f"conf={consistency.get('confidence', '?')} "
                          f"consistency={consistency.get('consistency', '?')}\n")
             sf.write("\n")
@@ -750,7 +752,7 @@ def _write_multi_model_status_entry(
         consensus = segment_results.get('cross_model_consensus', segment_results.get('consistency', {}))
         if isinstance(consensus, dict):
             sf.write("FINAL RESULT (cross-model):\n")
-            sf.write(f"  Primary stage: {consensus.get('primary_stage', '?')}\n")
+            sf.write(f"  Primary stage: {_stage_name(consensus.get('primary_stage', '?'))}\n")
             sf.write(f"  Confidence:    {consensus.get('confidence', '?')}\n")
             sf.write(f"  Agreement:     {consensus.get('model_agreement', '?')}\n")
             just = consensus.get('justification', '')

@@ -51,7 +51,19 @@ def single_label_majority_vote(
         }
 
     primary_counts = Counter(r[label_key] for r in valid_runs)
-    majority_stage, majority_count = primary_counts.most_common(1)[0]
+    max_count = primary_counts.most_common(1)[0][1]
+    tied_stages = [s for s, c in primary_counts.items() if c == max_count]
+
+    tie_broken_by_confidence = False
+    if len(tied_stages) > 1:
+        majority_stage = max(
+            tied_stages,
+            key=lambda s: sum(r[confidence_key] for r in valid_runs if r[label_key] == s) / max_count,
+        )
+        tie_broken_by_confidence = True
+    else:
+        majority_stage = tied_stages[0]
+    majority_count = max_count
 
     agreeing_runs = [r for r in valid_runs if r[label_key] == majority_stage]
     avg_confidence = sum(r[confidence_key] for r in agreeing_runs) / len(agreeing_runs)
@@ -82,6 +94,7 @@ def single_label_majority_vote(
         'secondary_stage': secondary_stage,
         'secondary_confidence': secondary_confidence,
         'justification': justification,
+        'tie_broken_by_confidence': tie_broken_by_confidence,
     }
 
 
