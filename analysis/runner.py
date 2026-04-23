@@ -33,7 +33,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     from .loader import load_segments, load_framework, sort_session_ids
     from .participant import generate_all_participant_reports
     from .session import generate_all_session_analyses
-    from .construct import generate_all_construct_reports
+    from .construct import generate_all_construct_reports, generate_codebook_text_report
     from .graphing import export_all_graphing_datasets, build_session_adjacency_index
     from .longitudinal import generate_longitudinal_summary
     from .stage_progression import compute_session_stage_progression
@@ -133,15 +133,25 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     stage_reports = []
     try:
         stage_reports = generate_all_construct_reports(df, framework, output_dir) or []
-        # Collect written files
-        constructs_dir = os.path.join(base_analysis, 'constructs')
-        if os.path.isdir(constructs_dir):
-            for fname in os.listdir(constructs_dir):
+        # Collect written files (now in constructs/json/ subfolder)
+        constructs_json_dir = os.path.join(base_analysis, 'constructs', 'json')
+        if os.path.isdir(constructs_json_dir):
+            for fname in os.listdir(constructs_json_dir):
                 if fname.endswith('.json'):
-                    files_generated.append(os.path.join(constructs_dir, fname))
-        log(f"    Construct reports written to reports/analysis/constructs/.")
+                    files_generated.append(os.path.join(constructs_json_dir, fname))
+        log(f"    Construct reports written to reports/analysis/constructs/json/.")
     except Exception as e:
         print(f"  Warning: construct reports failed: {e}")
+        if verbose:
+            traceback.print_exc()
+
+    try:
+        ref_path = generate_codebook_text_report(df, framework, output_dir)
+        if ref_path:
+            files_generated.append(ref_path)
+            log("    Codebook exemplars: reports/analysis/constructs/codebook_exemplars.txt")
+    except Exception as e:
+        print(f"  Warning: codebook exemplars report failed: {e}")
         if verbose:
             traceback.print_exc()
 

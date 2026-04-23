@@ -11,7 +11,7 @@ from .data_structures import Segment, SpeakerRun
 from .validation import create_balanced_evaluation_set
 from .llm_client import LLMClient, LLMClientConfig, extract_json
 from .classification_loop import filter_participant_segments, classify_segments
-from .majority_vote import single_label_majority_vote, multi_label_majority_vote
+from .majority_vote import vote_single_label, vote_multi_label, ABSTAIN
 from .llm_classifier import (
     classify_segments_zero_shot,
     create_content_validity_test_set,

@@ -1,49 +1,45 @@
 """
 response_parser.py
 ------------------
-Multi-pass parsing and error classification for LLM theme classification
-responses.
+Translate raw LLM classification results into updated ``Segment`` objects.
 
-Generalized from vamr_labeling/response_parser.py. Key changes:
-- Uses extract_json from classification_tools.llm_client
-- Accepts a name_to_id map parameter instead of importing a global constant
-- _parse_single_run imported from this package's llm_classifier
+Input shape (``results_all``): ``segment_id -> merge_result`` where each
+``merge_result`` is the unified dict produced by
+``llm_classifier.classify_segments_zero_shot``::
+
+    {
+      'rater_ids':   ['model_a', 'model_b', 'model_c'],
+      'rater_votes': [ {rater, vote, stage, confidence, ...}, ... ],
+      'consensus': {
+        'primary_stage':      int | None,
+        'primary_confidence': float,
+        'secondary_stage':    int | None,
+        'secondary_confidence': float | None,
+        'justification':      str,
+        'consensus_vote':     int | 'ABSTAIN' | None,
+        'agreement_level':    'unanimous' | 'majority' | 'split' | 'none',
+        'n_agree':            int,
+        'n_ballots':          int,
+        'n_raters':           int,
+        'tie_broken_by_confidence': bool,
+        'needs_review':       bool,
+        'rater_votes':        [... same list as above ...],
+      },
+    }
 """
 
-import json
 from typing import List, Dict, Any, Tuple
 
 from .data_structures import Segment
-from .llm_classifier import _parse_single_run
 
 
 class ErrorCategory:
-    """Expanded error taxonomy for LLM response classification."""
+    """Error taxonomy for LLM response classification."""
     API_ERROR = 'api_error'
-    TIMEOUT = 'timeout'
-    SAFETY_FILTER = 'safety_filter'
     MALFORMED_JSON = 'malformed_json'
-    MISSING_FIELDS = 'missing_fields'
-    INVALID_STAGE = 'invalid_stage'
-    QUOTA_EXCEEDED = 'quota_exceeded'
-    NULL_RESPONSE = 'null_response'
-
-
-def _classify_error(run_str: str) -> str:
-    """Classify an error run into a specific error category."""
-    run_lower = run_str.lower()
-
-    if 'timeout' in run_lower or 'timed out' in run_lower:
-        return ErrorCategory.TIMEOUT
-    if 'rate_limit' in run_lower or 'rate limit' in run_lower or '429' in run_str:
-        return ErrorCategory.QUOTA_EXCEEDED
-    if 'quota' in run_lower or 'billing' in run_lower or 'insufficient' in run_lower:
-        return ErrorCategory.QUOTA_EXCEEDED
-    if 'safety' in run_lower or 'content_filter' in run_lower or 'blocked' in run_lower:
-        return ErrorCategory.SAFETY_FILTER
-    if 'error' in run_lower:
-        return ErrorCategory.API_ERROR
-    return ErrorCategory.MALFORMED_JSON
+    ALL_RATERS_FAILED = 'all_raters_failed'
+    ABSTAIN = 'abstain'
+    SPLIT = 'split'
 
 
 def parse_all_results(
@@ -52,178 +48,125 @@ def parse_all_results(
     name_to_id: Dict[str, int],
 ) -> Tuple[List[Segment], Dict[str, Any]]:
     """
-    Parse and clean all LLM results, handling errors gracefully.
-
-    Returns the updated segments list and a stats dictionary with
-    expanded error taxonomy.
+    Copy consensus + per-rater ballots onto the corresponding Segment objects.
 
     Parameters
     ----------
     results_all : dict
-        Raw LLM results keyed by segment_id.
+        Raw LLM merge results keyed by ``segment_id``.
     segments : list[Segment]
-        Segment objects to update with parsed labels.
+        Segment objects to update in place.
     name_to_id : dict
-        Mapping from lowercase theme names/keys/aliases to integer IDs.
-        Built from ThemeFramework.build_name_to_id_map().
+        Unused; retained for API compatibility with the previous parser
+        (the new consensus already has integer stage IDs).
     """
-    parsed_segments: Dict[str, Dict] = {}
-    could_not_parse: Dict[str, Any] = {}
-    error_categories: Dict[str, List[str]] = {
-        ErrorCategory.API_ERROR: [],
-        ErrorCategory.TIMEOUT: [],
-        ErrorCategory.SAFETY_FILTER: [],
-        ErrorCategory.MALFORMED_JSON: [],
-        ErrorCategory.MISSING_FIELDS: [],
-        ErrorCategory.INVALID_STAGE: [],
-        ErrorCategory.QUOTA_EXCEEDED: [],
-        ErrorCategory.NULL_RESPONSE: [],
-    }
-
-    # First pass: use already-parsed consistency results
-    for segment_id, result in results_all.items():
-        # Handle multi-model results
-        if 'cross_model_consensus' in result:
-            consistency = result.get('cross_model_consensus', {})
-        else:
-            consistency = result.get('consistency', {})
-
-        if consistency.get('primary_stage') is not None:
-            parsed_segments[segment_id] = consistency
-        else:
-            could_not_parse[segment_id] = result
-
-    # Second pass: attempt recovery on failures with granular error classification
-    for segment_id, result in could_not_parse.items():
-        raw_runs = result.get('runs', [])
-        classified_error = None
-
-        # Check for null responses (all runs returned None)
-        non_null_runs = [r for r in raw_runs if r is not None]
-        if not non_null_runs:
-            error_categories[ErrorCategory.NULL_RESPONSE].append(segment_id)
-            continue
-
-        # Classify error type from run content
-        for run in raw_runs:
-            if run is None:
-                continue
-            run_str = str(run)
-            error_type = _classify_error(run_str)
-
-            if error_type in (ErrorCategory.SAFETY_FILTER, ErrorCategory.TIMEOUT,
-                              ErrorCategory.QUOTA_EXCEEDED, ErrorCategory.API_ERROR):
-                run_lower = run_str.lower()
-                if any(indicator in run_lower for indicator in
-                       ['error', 'safety', 'content_filter', 'timeout',
-                        'rate_limit', '429', 'blocked']):
-                    classified_error = error_type
-                    break
-
-        if classified_error:
-            error_categories[classified_error].append(segment_id)
-            continue
-
-        # Aggressive JSON extraction
-        recovered = False
-        for run in raw_runs:
-            if run is None:
-                continue
-            try:
-                run_str = str(run)
-                start = run_str.find('{')
-                end = run_str.rfind('}') + 1
-                if start != -1 and end > start:
-                    json_part = run_str[start:end]
-                    parsed = json.loads(json_part)
-                    parsed_result = _parse_single_run(parsed, name_to_id)
-                    if parsed_result and parsed_result['primary_stage'] is not None:
-                        parsed_segments[segment_id] = {
-                            **parsed_result,
-                            'consistency': 1,
-                        }
-                        recovered = True
-                        break
-                    elif parsed_result and parsed_result['primary_stage'] is None:
-                        error_categories[ErrorCategory.INVALID_STAGE].append(segment_id)
-                        recovered = True
-                        break
-                    else:
-                        error_categories[ErrorCategory.MISSING_FIELDS].append(segment_id)
-                        recovered = True
-                        break
-            except json.JSONDecodeError:
-                continue
-            except Exception:
-                continue
-
-        if not recovered:
-            error_categories[ErrorCategory.MALFORMED_JSON].append(segment_id)
-
-    # Apply parsed results to segment objects
     segment_lookup = {s.segment_id: s for s in segments}
 
-    for segment_id, parsed in parsed_segments.items():
-        seg = segment_lookup.get(segment_id)
-        if seg is None:
-            continue
-        seg.primary_stage = parsed.get('primary_stage')
-        seg.secondary_stage = parsed.get('secondary_stage')
-        seg.llm_confidence_primary = parsed.get('confidence', 0.0)
-        seg.llm_confidence_secondary = parsed.get('secondary_confidence')
-        seg.llm_justification = parsed.get('justification', '')
-        seg.llm_run_consistency = parsed.get('consistency', 0)
-
-        # Store multi-model metadata if available
-        if 'model_agreement' in parsed:
-            seg.model_agreement = parsed.get('model_agreement')
-        if 'model_predictions' in parsed:
-            seg.model_predictions = parsed.get('model_predictions')
-        if 'total_models' in parsed:
-            seg.total_models = parsed.get('total_models')
-
-    # Stats with expanded error taxonomy
-    total = len(results_all)
-    parsed_count = len(parsed_segments)
-    total_errors = sum(len(ids) for ids in error_categories.values())
-
-    stats = {
-        'parsed': parsed_count,
-        'total_errors': total_errors,
-        'error_breakdown': {
-            category: {
-                'count': len(ids),
-                'segment_ids': ids,
-            }
-            for category, ids in error_categories.items()
-            if len(ids) > 0
-        },
-        # Backward-compatible keys
-        'errors': (
-            len(error_categories[ErrorCategory.API_ERROR])
-            + len(error_categories[ErrorCategory.TIMEOUT])
-            + len(error_categories[ErrorCategory.QUOTA_EXCEEDED])
-        ),
-        'safety_filtered': len(error_categories[ErrorCategory.SAFETY_FILTER]),
-        'unrecoverable': (
-            len(error_categories[ErrorCategory.MALFORMED_JSON])
-            + len(error_categories[ErrorCategory.MISSING_FIELDS])
-            + len(error_categories[ErrorCategory.INVALID_STAGE])
-            + len(error_categories[ErrorCategory.NULL_RESPONSE])
-        ),
-        'error_ids': (
-            error_categories[ErrorCategory.API_ERROR]
-            + error_categories[ErrorCategory.TIMEOUT]
-            + error_categories[ErrorCategory.QUOTA_EXCEEDED]
-        ),
-        'safety_ids': error_categories[ErrorCategory.SAFETY_FILTER],
+    counts = {
+        'classified': 0,
+        'abstained': 0,
+        'split': 0,
+        'all_raters_failed': 0,
+        'legacy_or_malformed': 0,
+    }
+    error_ids: Dict[str, List[str]] = {
+        ErrorCategory.ABSTAIN: [],
+        ErrorCategory.SPLIT: [],
+        ErrorCategory.ALL_RATERS_FAILED: [],
+        ErrorCategory.MALFORMED_JSON: [],
     }
 
-    print(f"Parsing results: {parsed_count}/{total} parsed successfully")
-    if total_errors > 0:
-        print(f"  Total errors: {total_errors}")
-        for category, ids in error_categories.items():
-            if ids:
-                print(f"    {category}: {len(ids)}")
+    for seg_id, result in results_all.items():
+        seg = segment_lookup.get(seg_id)
+        if seg is None:
+            continue
+
+        if not isinstance(result, dict):
+            error_ids[ErrorCategory.MALFORMED_JSON].append(seg_id)
+            counts['legacy_or_malformed'] += 1
+            continue
+
+        consensus = result.get('consensus')
+        if not isinstance(consensus, dict):
+            error_ids[ErrorCategory.MALFORMED_JSON].append(seg_id)
+            counts['legacy_or_malformed'] += 1
+            continue
+
+        rater_ids = result.get('rater_ids') or []
+        rater_votes = result.get('rater_votes') or consensus.get('rater_votes') or []
+
+        seg.rater_ids = list(rater_ids)
+        seg.rater_votes = list(rater_votes)
+
+        agreement_level = consensus.get('agreement_level')
+        n_agree = consensus.get('n_agree', 0)
+        n_raters = consensus.get('n_raters', len(rater_ids) or 1) or 1
+        seg.agreement_level = agreement_level
+        seg.agreement_fraction = (n_agree / n_raters) if n_raters else 0.0
+        seg.needs_review = bool(consensus.get('needs_review', False))
+        seg.consensus_vote = consensus.get('consensus_vote')
+        seg.tie_broken_by_confidence = bool(
+            consensus.get('tie_broken_by_confidence', False)
+        )
+
+        # llm_run_consistency is kept as an integer count of agreeing raters
+        # for backwards-compat with downstream analysis code.
+        seg.llm_run_consistency = n_agree
+
+        primary_stage = consensus.get('primary_stage')
+        consensus_vote = consensus.get('consensus_vote')
+
+        if primary_stage is not None:
+            seg.primary_stage = primary_stage
+            seg.secondary_stage = consensus.get('secondary_stage')
+            seg.llm_confidence_primary = consensus.get('primary_confidence', 0.0)
+            seg.llm_confidence_secondary = consensus.get('secondary_confidence')
+            seg.llm_justification = consensus.get('justification', '')
+            counts['classified'] += 1
+            continue
+
+        # Unclassified — explain why.
+        seg.primary_stage = None
+        seg.secondary_stage = None
+        seg.llm_confidence_primary = consensus.get('primary_confidence', 0.0)
+        seg.llm_confidence_secondary = None
+        seg.llm_justification = consensus.get('justification', '')
+
+        if consensus_vote == 'ABSTAIN':
+            error_ids[ErrorCategory.ABSTAIN].append(seg_id)
+            counts['abstained'] += 1
+        elif agreement_level == 'split':
+            error_ids[ErrorCategory.SPLIT].append(seg_id)
+            counts['split'] += 1
+        elif agreement_level == 'none':
+            error_ids[ErrorCategory.ALL_RATERS_FAILED].append(seg_id)
+            counts['all_raters_failed'] += 1
+        else:
+            error_ids[ErrorCategory.MALFORMED_JSON].append(seg_id)
+            counts['legacy_or_malformed'] += 1
+
+    total = len(results_all)
+    stats = {
+        'total': total,
+        'parsed': counts['classified'],
+        'abstained': counts['abstained'],
+        'split': counts['split'],
+        'all_raters_failed': counts['all_raters_failed'],
+        'malformed': counts['legacy_or_malformed'],
+        'error_breakdown': {
+            category: {'count': len(ids), 'segment_ids': ids}
+            for category, ids in error_ids.items() if ids
+        },
+    }
+
+    print(f"Parsing results: {counts['classified']}/{total} classified")
+    if counts['abstained']:
+        print(f"  Abstained (consensus=null): {counts['abstained']}")
+    if counts['split']:
+        print(f"  Split vote (needs review):  {counts['split']}")
+    if counts['all_raters_failed']:
+        print(f"  All raters failed:          {counts['all_raters_failed']}")
+    if counts['legacy_or_malformed']:
+        print(f"  Malformed / legacy format:  {counts['legacy_or_malformed']}")
 
     return segments, stats

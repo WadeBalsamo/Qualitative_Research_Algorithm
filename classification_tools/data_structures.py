@@ -52,10 +52,22 @@ class Segment:
     llm_justification: Optional[str] = None
     llm_run_consistency: Optional[int] = None
 
-    # Multi-model cross-referencing fields (populated when using multiple models)
-    model_agreement: Optional[str] = None  # 'unanimous', 'majority', 'split', or 'none'
-    model_predictions: Optional[Dict] = None  # Per-model predictions
-    total_models: Optional[int] = None  # Number of models used
+    # Interrater-reliability fields (populated by unified vote_single_label)
+    # rater_ids     : list of rater identifiers, one per slot
+    # rater_votes   : list of per-rater ballot dicts (see majority_vote.py)
+    #                 {rater, vote, stage, confidence, secondary_stage,
+    #                  secondary_confidence, justification}
+    # agreement_level    : 'unanimous' | 'majority' | 'split' | 'none'
+    # agreement_fraction : n_agree / n_raters
+    # needs_review       : True when split or all raters errored
+    # consensus_vote     : int stage | 'ABSTAIN' | None
+    rater_ids: Optional[List[str]] = None
+    rater_votes: Optional[List[Dict]] = None
+    agreement_level: Optional[str] = None
+    agreement_fraction: Optional[float] = None
+    needs_review: bool = False
+    consensus_vote: Optional[object] = None
+    tie_broken_by_confidence: bool = False
 
     # Codebook label fields (populated by codebook_classifier)
     codebook_labels_embedding: Optional[List[str]] = None
