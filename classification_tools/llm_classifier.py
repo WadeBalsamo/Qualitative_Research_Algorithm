@@ -12,14 +12,12 @@ Contains both:
 import json
 import os
 import datetime
-import textwrap
-from collections import Counter
 from typing import List, Dict, Any, Optional, Tuple
 
 from .data_structures import Segment
 from .llm_client import LLMClient, LLMClientConfig, extract_json
-from .classification_loop import filter_participant_segments, classify_segments, _stage_name
-from .majority_vote import single_label_majority_vote, multi_label_majority_vote
+from .classification_loop import filter_participant_segments, classify_segments
+from .majority_vote import vote_single_label, vote_multi_label
 from constructs.theme_schema import ThemeFramework
 from constructs.config import ThemeClassificationConfig
 from codebook.codebook_schema import Codebook, CodeAssignment
@@ -252,12 +250,17 @@ def _parse_single_run(
     result: Any,
     name_to_id: Dict[str, int],
 ) -> Optional[Dict]:
-    """Parse a single LLM response into structured fields.
+    """Parse a single LLM response into a ballot.
 
-    Returns:
-    - None if parsing failed (malformed response)
-    - Dict with primary_stage=None if content is irrelevant to study
-    - Dict with primary_stage=<id> for valid classifications
+    Returns one of:
+    - ``None`` — hard parse failure (no JSON, malformed JSON, or a
+      ``primary_stage`` that names something not in the framework).
+      These ballots are excluded from the denominator of the vote.
+    - ``{'vote': 'ABSTAIN', ...}`` — the rater judged the utterance
+      irrelevant to the framework (JSON ``primary_stage``: null).
+      ABSTAIN is a *real* ballot and is counted by ``vote_single_label``.
+    - ``{'vote': 'CODED', 'primary_stage': <int>, ...}`` — a concrete
+      theme ID assignment.
     """
     if result is None:
         return None
@@ -270,208 +273,81 @@ def _parse_single_run(
         else:
             return None
 
-        # Handle primary_stage: check if explicitly null vs. missing/invalid
         if 'primary_stage' not in parsed:
-            # Required field missing → parse failure
             return None
 
         primary_stage_raw = parsed['primary_stage']
-        primary_id = None
 
-        if primary_stage_raw is None:
-            # JSON had "primary_stage": null → irrelevant content
-            primary_id = None
-        else:
-            primary_name = str(primary_stage_raw).lower().strip()
-            if not primary_name or primary_name in ('null', 'none'):
-                # String "null" or "none" → irrelevant content
-                primary_id = None
-            else:
-                # Try to map to theme ID
-                primary_id = name_to_id.get(primary_name)
-                if primary_id is None:
-                    # LLM produced invalid theme name → parse failure
-                    return None
+        def _coerce_conf(raw) -> float:
+            try:
+                return float(raw) if raw is not None else 0.0
+            except (TypeError, ValueError):
+                return 0.0
 
-        secondary_name = parsed.get('secondary_stage')
-        secondary_id = None
-        if secondary_name and str(secondary_name).lower().strip() not in ('null', 'none', ''):
-            secondary_id = name_to_id.get(str(secondary_name).lower().strip())
+        confidence = _coerce_conf(parsed.get('primary_confidence'))
 
-        secondary_conf = parsed.get('secondary_confidence')
-        if secondary_conf is not None and str(secondary_conf).lower() not in ('null', 'none'):
-            secondary_conf = float(secondary_conf)
+        secondary_raw = parsed.get('secondary_stage')
+        secondary_id: Optional[int] = None
+        if secondary_raw is not None:
+            secondary_name = str(secondary_raw).lower().strip()
+            if secondary_name and secondary_name not in ('null', 'none', ''):
+                secondary_id = name_to_id.get(secondary_name)  # may be None (invalid)
+
+        secondary_conf_raw = parsed.get('secondary_confidence')
+        if secondary_conf_raw is not None and str(secondary_conf_raw).lower() not in ('null', 'none'):
+            try:
+                secondary_conf: Optional[float] = float(secondary_conf_raw)
+            except (TypeError, ValueError):
+                secondary_conf = None
         else:
             secondary_conf = None
 
+        justification = parsed.get('justification', '') or ''
+        evidence = parsed.get('evidence_phrase', '') or ''
+
+        # ABSTAIN: explicit null (or the string "null"/"none")
+        if primary_stage_raw is None:
+            return {
+                'vote': 'ABSTAIN',
+                'primary_stage': None,
+                'primary_confidence': confidence,
+                'secondary_stage': None,
+                'secondary_confidence': None,
+                'justification': justification,
+                'evidence_phrase': evidence,
+            }
+
+        primary_name = str(primary_stage_raw).lower().strip()
+        if not primary_name or primary_name in ('null', 'none'):
+            return {
+                'vote': 'ABSTAIN',
+                'primary_stage': None,
+                'primary_confidence': confidence,
+                'secondary_stage': None,
+                'secondary_confidence': None,
+                'justification': justification,
+                'evidence_phrase': evidence,
+            }
+
+        primary_id = name_to_id.get(primary_name)
+        if primary_id is None:
+            # Named a theme we don't recognize — treat as parse failure
+            # so it doesn't corrupt the vote.
+            return None
+
         return {
+            'vote': 'CODED',
             'primary_stage': primary_id,
-            'primary_confidence': float(parsed.get('primary_confidence') or 0),
+            'primary_confidence': confidence,
             'secondary_stage': secondary_id,
             'secondary_confidence': secondary_conf,
-            'justification': parsed.get('justification', ''),
+            'justification': justification,
+            'evidence_phrase': evidence,
         }
     except Exception as e:
         raw_snippet = str(result)[:120] if result else '<empty>'
         print(f"  Parse error: {e} | Response: {raw_snippet}")
         return None
-
-
-# ---------------------------------------------------------------------------
-# Multi-model cross-referencing
-# ---------------------------------------------------------------------------
-
-def _classify_multi_model(
-    segment: Segment,
-    framework: ThemeFramework,
-    client: LLMClient,
-    config: ThemeClassificationConfig,
-    name_to_id: Dict[str, int],
-    all_segments: List[Segment] = None,
-    seg_index: int = 0,
-) -> Dict:
-    """
-    Classify a segment using multiple models and cross-reference results.
-
-    Returns a dictionary with per-model results and cross-model consensus.
-    """
-    from .model_loader import get_model_display_name
-
-    models = client.config.models
-    model_results = {}
-
-    # Classify with each model
-    for model_id in models:
-        model_runs = []
-        for run in range(config.n_runs):
-            codebook_string = framework.to_prompt_string(
-                randomize=config.randomize_codebook,
-            )
-            context_window = getattr(config, 'context_window_segments', 2)
-            context_block = ''
-            if all_segments and context_window > 0:
-                context_block = _build_context_block(all_segments, seg_index, context_window)
-            prompt = THEME_PROMPT_TEMPLATE.format(
-                framework_name=framework.name,
-                framework_description=framework.description,
-                codebook_string=codebook_string,
-                num_themes=framework.num_themes,
-                text=segment.text,
-                context_block=context_block,
-            )
-            try:
-                # Override model for this request
-                original_model = client.config.model
-                client.config.model = model_id
-                result_text, meta = client.request(prompt)
-                client.config.model = original_model
-
-                model_runs.append(result_text)
-            except Exception as e:
-                print(f"  Error on {segment.segment_id}, model {model_id}, run {run}: {e}")
-                model_runs.append(None)
-
-        # Parse and compute consistency for this model
-        parsed_runs = [
-            _parse_single_run(r, name_to_id)
-            for r in model_runs if r is not None
-        ]
-        consistency_result = single_label_majority_vote(parsed_runs)
-
-        model_results[model_id] = {
-            'runs': model_runs,
-            'parsed_runs': [r for r in parsed_runs if r is not None],
-            'consistency': consistency_result,
-        }
-
-    # Cross-reference models
-    cross_model_consensus = _compute_cross_model_consensus(model_results)
-
-    return {
-        'model_results': model_results,
-        'cross_model_consensus': cross_model_consensus,
-        'consistency': cross_model_consensus,
-    }
-
-
-def _compute_cross_model_consensus(model_results: Dict[str, Dict]) -> Dict:
-    """
-    Compute consensus across multiple models.
-
-    Flags segments where models disagree.
-    """
-    from .model_loader import get_model_display_name
-
-    # Extract primary stage predictions from each model
-    model_predictions = {}
-    for model_id, result in model_results.items():
-        consistency = result.get('consistency', {})
-        primary_stage = consistency.get('primary_stage')
-        confidence = consistency.get('confidence', 0.0)
-        model_predictions[model_id] = {
-            'primary_stage': primary_stage,
-            'confidence': confidence,
-            'display_name': get_model_display_name(model_id),
-        }
-
-    # Count agreements
-    valid_predictions = [
-        p for p in model_predictions.values()
-        if p['primary_stage'] is not None
-    ]
-
-    if not valid_predictions:
-        return {
-            'primary_stage': None,
-            'consistency': 0,
-            'confidence': 0.0,
-            'secondary_stage': None,
-            'secondary_confidence': None,
-            'justification': 'All models failed to classify',
-            'model_agreement': 'none',
-            'model_predictions': model_predictions,
-        }
-
-    # Find most common prediction
-    stage_counts = Counter(p['primary_stage'] for p in valid_predictions)
-    majority_stage, majority_count = stage_counts.most_common(1)[0]
-
-    # Compute agreement level
-    total_models = len(valid_predictions)
-    if majority_count == total_models:
-        agreement = 'unanimous'
-    elif majority_count >= (total_models / 2 + 1):
-        agreement = 'majority'
-    else:
-        agreement = 'split'
-
-    # Average confidence among agreeing models
-    agreeing_models = [
-        p for p in valid_predictions
-        if p['primary_stage'] == majority_stage
-    ]
-    avg_confidence = sum(p['confidence'] for p in agreeing_models) / len(agreeing_models)
-
-    # Generate justification
-    model_names = ', '.join([p['display_name'] for p in agreeing_models])
-    if agreement == 'unanimous':
-        justification = f"All models agree ({model_names})"
-    elif agreement == 'majority':
-        justification = f"Majority agree: {model_names} ({majority_count}/{total_models})"
-    else:
-        justification = f"Models disagree: {majority_count}/{total_models} for this label"
-
-    return {
-        'primary_stage': majority_stage,
-        'consistency': majority_count,  # Number of models agreeing
-        'confidence': avg_confidence,
-        'secondary_stage': None,
-        'secondary_confidence': None,
-        'justification': justification,
-        'model_agreement': agreement,
-        'model_predictions': model_predictions,
-        'total_models': total_models,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -488,23 +364,61 @@ def classify_segments_zero_shot(
     """
     Zero-shot classification of transcript segments using a ThemeFramework.
 
-    Supports multi-model cross-referencing when multiple models are configured.
-    Each segment is classified by all models, and results are cross-referenced
-    for consensus or disagreement flagging.
+    Interrater reliability design
+    -----------------------------
+    - If ``config.per_run_models`` is a list of length ``n_runs`` (≥ 2),
+      each run uses a *distinct* model: three independent raters, one
+      classification pass each. This is the canonical IRR mode.
+    - Otherwise if ``config.models`` has ≥ 2 entries, they are used as
+      ``per_run_models`` automatically (with ``n_runs`` set to match).
+    - Otherwise classification falls back to a single model with
+      ``n_runs`` stochastic passes (temperature jitter + randomized
+      theme order). ``temperature`` must be > 0 in this case or the
+      pipeline raises immediately — identical calls do not give IRR.
+
+    Returns
+    -------
+    (results_all, metadata_all)
+        ``results_all`` maps segment_id -> {'consensus': <vote dict>,
+        'rater_votes': [...], 'rater_ids': [...]} (see majority_vote).
     """
     name_to_id = framework.build_name_to_id_map()
 
-    # Support both single model and multi-model configuration
-    models = getattr(config, 'models', None)
-    if not models:
-        models = [config.model] if config.model else []
+    # ------------------------------------------------------------------
+    # Resolve rater roster. One of three modes:
+    #   per_run_models present  -> use it directly
+    #   models has 2+ entries   -> promote to per_run_models; set n_runs
+    #   else                    -> single model, n_runs temperature-jitter
+    # ------------------------------------------------------------------
+    per_run_models = list(getattr(config, 'per_run_models', None) or [])
+    multi_models = list(getattr(config, 'models', None) or [])
+
+    if not per_run_models and len(multi_models) >= 2:
+        per_run_models = list(multi_models)
+        config.n_runs = len(per_run_models)
+        print(f"  Promoting {len(per_run_models)} models to per-run raters "
+              f"(n_runs={config.n_runs})")
+
+    use_per_run_models = (
+        len(per_run_models) == config.n_runs and len(per_run_models) >= 2
+    )
+
+    # Hard guard: stochastic IRR on one model requires temperature > 0.
+    if (not use_per_run_models
+            and config.n_runs > 1
+            and config.temperature == 0.0):
+        raise ValueError(
+            "Interrater reliability requires either per_run_models or "
+            "temperature > 0 with n_runs > 1. Identical calls at temperature=0 "
+            "produce zero rater variance."
+        )
 
     llm_config = LLMClientConfig(
         backend=config.backend,
         api_key=config.api_key,
         replicate_api_token=config.replicate_api_token,
         model=config.model,
-        models=models,
+        models=multi_models or [config.model],
         temperature=config.temperature,
         max_new_tokens=config.max_new_tokens,
         ollama_host=getattr(config, 'ollama_host', '0.0.0.0'),
@@ -514,32 +428,18 @@ def classify_segments_zero_shot(
     )
     client = LLMClient(llm_config)
 
-    per_run_models = getattr(config, 'per_run_models', None) or []
-    use_per_run_models = len(per_run_models) == config.n_runs and len(per_run_models) >= 2
-
-    # Multi-model cross-referencing path is only active when no per-run model
-    # assignment is configured (per_run_models takes precedence).
-    use_multi_model = len(models) > 1 and not use_per_run_models
-
     if use_per_run_models:
-        print(f"  Per-run model assignment ({config.n_runs} runs, {config.n_runs} distinct raters)")
+        rater_ids = list(per_run_models)
+        print(f"  Per-run model assignment ({config.n_runs} distinct raters)")
         for i, model_id in enumerate(per_run_models):
             print(f"    Run {i + 1}: {model_id}")
-    elif use_multi_model:
-        print(f"  Using multi-model cross-referencing with {len(models)} models")
-        from .model_loader import get_model_display_name
-        for model_id in models:
-            print(f"    - {get_model_display_name(model_id)}")
+    else:
+        rater_ids = [f'{config.model}#run_{i + 1}' for i in range(config.n_runs)]
+        print(f"  Single-model IRR: {config.n_runs} stochastic runs of "
+              f"{config.model} (temperature={config.temperature})")
 
     os.makedirs(config.output_dir, exist_ok=True)
-    timestamp = datetime.datetime.utcnow().strftime('%y-%m-%dT%H-%M-%S')
     model_clean = config.model.replace('/', '_')
-
-    # Warn about wasteful configuration
-    if config.n_runs > 1 and config.temperature == 0.0 and not config.randomize_codebook:
-        print("  Warning: n_runs > 1 with temperature=0.0 and randomize_codebook=False "
-              "produces identical calls. Set temperature > 0, enable randomize_codebook, "
-              "or use --n-runs 1.")
 
     # Decide which segments to classify and which prompt template to use
     classify_all = getattr(config, 'classify_all_segments', False)
@@ -559,70 +459,6 @@ def classify_segments_zero_shot(
         print(f"  Merged {merged_count} short segments (<{MIN_CLASSIFIABLE_WORDS} words) "
               f"into neighbors: {before_count} -> {len(target_segments)} segments")
 
-    if use_multi_model:
-        # Multi-model path: manual loop (uses its own per-model N-run logic)
-        results_all: Dict[str, Any] = {}
-        metadata_all: Dict[str, Any] = {}
-        if resume_from and os.path.exists(resume_from):
-            with open(resume_from, 'r') as f:
-                results_all = json.load(f)
-            print(f"  Resumed from checkpoint: {len(results_all)} segments already classified")
-
-        total = len(target_segments)
-
-        # Prepare live status file for multi-model path
-        status_path = os.path.join(
-            config.output_dir,
-            f'llm_results_status_{model_clean}_{timestamp}.txt',
-        )
-        with open(status_path, 'w') as sf:
-            sf.write(f"LLM Classification Status Log (multi-model)\n")
-            sf.write(f"Started: {datetime.datetime.utcnow().isoformat()}Z\n")
-            sf.write(f"Models: {', '.join(models)}\n")
-            sf.write(f"Total segments: {total}\n")
-            sf.write("=" * 80 + "\n\n")
-        print(f"  Live status log: {os.path.basename(status_path)}")
-
-        for i, segment in enumerate(target_segments):
-            if segment.segment_id in results_all:
-                continue
-
-            snippet = segment.text[:80].replace('\n', ' ')
-            if len(segment.text) > 80:
-                snippet += "..."
-            print(f"  [{i + 1}/{total}] {segment.segment_id}")
-            print(f"           \"{snippet}\"")
-
-            segment_results = _classify_multi_model(
-                segment, framework, client, config, name_to_id,
-                all_segments=target_segments, seg_index=i,
-            )
-
-            results_all[segment.segment_id] = segment_results
-            metadata_all[segment.segment_id] = {
-                'segment_id': segment.segment_id,
-                'text': segment.text,
-                'runs_raw': segment_results.get('runs', []),
-            }
-
-            # Write live status entry for multi-model
-            _write_multi_model_status_entry(
-                status_path, segment, i, total, segment_results,
-            )
-
-            if i % config.save_interval == 0:
-                _save_intermediate(results_all, metadata_all, config.output_dir, model_clean, timestamp)
-
-        _save_intermediate(results_all, metadata_all, config.output_dir, model_clean, timestamp)
-
-        with open(status_path, 'a') as sf:
-            sf.write("\n" + "=" * 80 + "\n")
-            sf.write(f"COMPLETE: {total} segments classified\n")
-            sf.write(f"Finished: {datetime.datetime.utcnow().isoformat()}Z\n")
-
-        return results_all, metadata_all
-
-    # ----- Single-model path: delegate to shared loop -----
     context_window = getattr(config, 'context_window_segments', 2)
 
     def build_prompt(segment: Segment, run: int,
@@ -647,10 +483,15 @@ def classify_segments_zero_shot(
         return _parse_single_run(result_text, name_to_id)
 
     def merge_runs(parsed_runs: List[Optional[Dict]]) -> Dict:
-        consistency_result = single_label_majority_vote(parsed_runs)
+        # classify_segments pads/truncates parsed_runs to n_runs. Each
+        # slot lines up with rater_ids by index.
+        padded = list(parsed_runs) + [None] * (config.n_runs - len(parsed_runs))
+        padded = padded[:config.n_runs]
+        consensus = vote_single_label(padded, rater_ids=rater_ids)
         return {
-            'parsed_runs': [r for r in parsed_runs if r is not None],
-            'consistency': consistency_result,
+            'rater_ids': rater_ids,
+            'rater_votes': consensus['rater_votes'],
+            'consensus': consensus,
         }
 
     raw_results = classify_segments(
@@ -668,98 +509,16 @@ def classify_segments_zero_shot(
         per_run_models=per_run_models if use_per_run_models else None,
     )
 
-    # Build metadata_all for backward compatibility
     seg_by_id = {s.segment_id: s for s in target_segments}
     metadata_all: Dict[str, Any] = {}
-    for seg_id, result in raw_results.items():
+    for seg_id in raw_results:
         seg = seg_by_id.get(seg_id)
         metadata_all[seg_id] = {
             'segment_id': seg_id,
             'text': seg.text if seg else '',
-            'runs_raw': [],
         }
 
     return raw_results, metadata_all
-
-
-def _save_intermediate(
-    results: Dict, metadata: Dict,
-    output_dir: str, model_clean: str, timestamp: str,
-):
-    """Save intermediate results to JSON files (multi-model path only)."""
-    for name, data in [('results', results), ('metadata', metadata)]:
-        path = os.path.join(
-            output_dir, f'llm_{name}_{model_clean}_{timestamp}.json'
-        )
-        with open(path, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
-
-
-def _write_multi_model_status_entry(
-    status_path: str,
-    segment: Segment,
-    index: int,
-    total: int,
-    segment_results: Dict,
-):
-    """Append a human-readable status entry for one multi-model segment."""
-    with open(status_path, 'a') as sf:
-        sf.write(f"[{index + 1}/{total}] {segment.segment_id}\n")
-        sf.write("-" * 60 + "\n")
-
-        # Segment text
-        sf.write("SEGMENT TEXT:\n")
-        for line in textwrap.wrap(segment.text, width=76, initial_indent="  ", subsequent_indent="  "):
-            sf.write(line + "\n")
-        sf.write("\n")
-
-        # Segment key
-        speaker = segment.speaker or "unknown"
-        speakers_list = ""
-        if segment.speakers_in_segment:
-            short_ids = [sp.rsplit('_', 1)[-1] if '_' in sp else sp
-                         for sp in segment.speakers_in_segment]
-            speakers_list = f" (ids: {', '.join(short_ids)})"
-        sf.write(f"  Speaker: {speaker}{speakers_list}\n")
-        sf.write(f"  Words: {segment.word_count}  |  "
-                 f"Time: {segment.start_time_ms}ms - {segment.end_time_ms}ms\n")
-        sf.write(f"  Session: {segment.session_id}  |  Index: {segment.segment_index}\n\n")
-
-        # Per-model results
-        model_results = segment_results.get('model_results', {})
-        for model_id, model_data in model_results.items():
-            sf.write(f"MODEL: {model_id}\n")
-            parsed_runs = model_data.get('parsed_runs', [])
-            for r, run in enumerate(parsed_runs):
-                if isinstance(run, dict):
-                    stage = _stage_name(run.get('primary_stage', '?'))
-                    conf = run.get('primary_confidence', '?')
-                    sec = run.get('secondary_stage')
-                    just = run.get('justification', '')
-                    sec_str = f"  secondary={_stage_name(sec)}" if sec is not None else ""
-                    sf.write(f"  Run {r + 1}: stage={stage}  conf={conf}{sec_str}\n")
-                    if just:
-                        for line in textwrap.wrap(just, width=72, initial_indent="    → ", subsequent_indent="      "):
-                            sf.write(line + "\n")
-            consistency = model_data.get('consistency', {})
-            if isinstance(consistency, dict):
-                sf.write(f"  → Model consensus: stage={_stage_name(consistency.get('primary_stage', '?'))} "
-                         f"conf={consistency.get('confidence', '?')} "
-                         f"consistency={consistency.get('consistency', '?')}\n")
-            sf.write("\n")
-
-        # Cross-model consensus
-        consensus = segment_results.get('cross_model_consensus', segment_results.get('consistency', {}))
-        if isinstance(consensus, dict):
-            sf.write("FINAL RESULT (cross-model):\n")
-            sf.write(f"  Primary stage: {_stage_name(consensus.get('primary_stage', '?'))}\n")
-            sf.write(f"  Confidence:    {consensus.get('confidence', '?')}\n")
-            sf.write(f"  Agreement:     {consensus.get('model_agreement', '?')}\n")
-            just = consensus.get('justification', '')
-            if just:
-                sf.write(f"  Justification: {just}\n")
-
-        sf.write("\n" + "=" * 80 + "\n\n")
 
 
 # ===========================================================================
@@ -917,11 +676,11 @@ class LLMCodebookClassifier:
     def _merge_runs(
         self, all_assignments: List[List[CodeAssignment]]
     ) -> List[CodeAssignment]:
-        """Merge assignments across multiple runs via majority voting."""
+        """Merge assignments across multiple runs via strict-majority voting."""
         if not all_assignments:
             return []
 
-        voted = multi_label_majority_vote(all_assignments)
+        voted = vote_multi_label(all_assignments)
 
         return [
             CodeAssignment(
@@ -931,5 +690,5 @@ class LLMCodebookClassifier:
                 justification=exemplar.justification,
                 method='llm',
             )
-            for exemplar, avg_conf in voted
+            for exemplar, avg_conf in voted['assignments']
         ]
