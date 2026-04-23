@@ -6,12 +6,62 @@ Dataset assembly: produces output files from classified segments.
 
 import json
 import os
+import textwrap
+from collections import Counter, defaultdict
 from typing import List, Dict, Optional
 
 import pandas as pd
 
 from classification_tools.data_structures import Segment
 from constructs.theme_schema import ThemeFramework
+
+
+# ---------------------------------------------------------------------------
+# Shared formatting helpers (used by multiple export functions)
+# ---------------------------------------------------------------------------
+
+def _ms_to_hms(ms: int) -> str:
+    s = ms // 1000
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
+def _fmt_conf(c) -> str:
+    return f"{c:.2f}" if isinstance(c, (int, float)) else '?'
+
+
+def _theme_name_from(stage, id_to_name: dict) -> str:
+    if stage is None:
+        return '—'
+    return id_to_name.get(stage, str(stage))
+
+
+def _summarize_rationales(justifications: List[str], llm_client) -> str:
+    """Ask the primary LLM to produce a ≤50-word summary of multiple rater rationales."""
+    combined = ' | '.join(f'R{i+1}: {j}' for i, j in enumerate(justifications) if j)
+    prompt = (
+        "You are a qualitative research assistant. Given the following rationales "
+        "from multiple raters classifying the same therapeutic dialogue segment, "
+        "write a concise summary (50 words or fewer) that captures the key reasoning.\n\n"
+        f"{combined}\n\n"
+        "Summary (50 words max, plain text only, no bullet points):"
+    )
+    try:
+        text, _ = llm_client.request(prompt)
+        if text:
+            words = text.strip().split()
+            return ' '.join(words[:50])
+    except Exception:
+        pass
+    return justifications[0][:300] if justifications else ''
+
+try:
+    from classification_tools.reliability import compute_reliability as _compute_reliability
+    _RELIABILITY_AVAILABLE = True
+except ImportError:
+    _compute_reliability = None
+    _RELIABILITY_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +140,17 @@ def assemble_master_dataset(
             'llm_confidence_secondary': seg.llm_confidence_secondary,
             'llm_justification': seg.llm_justification,
             'llm_run_consistency': seg.llm_run_consistency,
+            # Interrater-reliability fields (getattr guards against older Segment schemas)
+            'rater_ids': (json.dumps(v) if (v := getattr(seg, 'rater_ids', None)) else None),
+            'rater_votes': (json.dumps(v) if (v := getattr(seg, 'rater_votes', None)) else None),
+            'agreement_level': getattr(seg, 'agreement_level', None),
+            'agreement_fraction': getattr(seg, 'agreement_fraction', None),
+            'needs_review': getattr(seg, 'needs_review', False),
+            'consensus_vote': (
+                json.dumps(cv) if isinstance(cv := getattr(seg, 'consensus_vote', None), str)
+                else cv
+            ),
+            'tie_broken_by_confidence': getattr(seg, 'tie_broken_by_confidence', False),
             # Codebook labels (if populated)
             'codebook_labels_embedding': seg.codebook_labels_embedding,
             'codebook_labels_llm': seg.codebook_labels_llm,
@@ -164,76 +225,259 @@ def export_coded_transcript(
     framework,
     codebook,
     output_path: str,
+    llm_client=None,
 ) -> None:
     """
     Write a human-readable coded transcript for one session.
 
-    Format per segment:
-        [SEGMENT 001] HH:MM:SS - HH:MM:SS | N words | Speakers: ...
-        Speaker A: text...
-        Speaker B: text...
-        ---
-        THEME: Name (id=N) | Confidence: 0.XX | Consistency: N/3
-        CODES: [code_a, code_b]
-        ---
+    Layout::
+
+        SESSION HEADER
+          - session id, duration, segment count
+          - raters used (rater roster)
+          - theme counts + mean confidence per theme
+          - code counts + mean confidence per code (if codebook active)
+          - IRR: percent agreement, Fleiss κ, Krippendorff α
+
+        For each segment:
+          segment metadata + text
+          RATER BALLOTS (one line per rater: vote, stage, conf, justification)
+          CONSENSUS: CLASSIFIED / UNCLASSIFIED / NEEDS REVIEW
+          CODES (if any)
     """
     id_to_name: dict = {}
     if framework is not None:
-        id_to_name = {t.theme_id: t.name for t in framework.themes}
+        id_to_name = {t.theme_id: t.short_name for t in framework.themes}
 
     code_id_to_desc: dict = {}
     if codebook is not None:
         code_id_to_desc = {c.code_id: c.description for c in codebook.codes}
 
-    def _ms_to_hms(ms: int) -> str:
-        s = ms // 1000
-        h, rem = divmod(s, 3600)
-        m, sec = divmod(rem, 60)
-        return f"{h:02d}:{m:02d}:{sec:02d}"
+    def _theme_name(stage) -> str:
+        return _theme_name_from(stage, id_to_name)
 
     sorted_segs = sorted(segments, key=lambda s: (s.session_id, s.segment_index))
+
+    # ---------------- Session header aggregates ----------------
+    theme_counts: Counter = Counter()
+    theme_confs: Dict[int, List[float]] = defaultdict(list)
+    code_counts: Counter = Counter()
+    code_confs: Dict[str, List[float]] = defaultdict(list)
+    unclassified = 0
+    needs_review = 0
+    abstentions = 0
+
+    for seg in sorted_segs:
+        if seg.primary_stage is not None:
+            theme_counts[seg.primary_stage] += 1
+            if seg.llm_confidence_primary is not None:
+                theme_confs[seg.primary_stage].append(seg.llm_confidence_primary)
+        else:
+            unclassified += 1
+            if getattr(seg, 'consensus_vote', None) == 'ABSTAIN':
+                abstentions += 1
+        if getattr(seg, 'needs_review', False):
+            needs_review += 1
+
+        codes = seg.codebook_labels_ensemble or seg.codebook_labels_llm or []
+        cb_conf = seg.codebook_confidence or {}
+        for c in codes:
+            code_counts[str(c)] += 1
+            conf_val = cb_conf.get(str(c)) if isinstance(cb_conf, dict) else None
+            if conf_val is not None:
+                code_confs[str(c)].append(conf_val)
+
+    rater_roster: List[str] = []
+    for seg in sorted_segs:
+        rids = getattr(seg, 'rater_ids', None)
+        if rids and len(rids) > len(rater_roster):
+            rater_roster = list(rids)
+
+    irr_stats = (
+        _compute_reliability(sorted_segs)
+        if sorted_segs and _RELIABILITY_AVAILABLE
+        else {}
+    )
 
     with open(output_path, 'w', encoding='utf-8') as fh:
         if sorted_segs:
             first = sorted_segs[0]
             last = sorted_segs[-1]
-            duration_s = (last.end_time_ms - first.start_time_ms) // 1000
+            duration_s = max(0, (last.end_time_ms - first.start_time_ms) // 1000)
             dur_h, dur_rem = divmod(duration_s, 3600)
             dur_m, dur_s = divmod(dur_rem, 60)
+            all_pids = sorted({s.participant_id for s in sorted_segs if s.participant_id})
+            participants_str = ", ".join(all_pids) if all_pids else first.participant_id
+            fh.write("=" * 78 + "\n")
             fh.write(f"SESSION: {first.session_id}\n")
-            fh.write(f"Duration: {dur_h}:{dur_m:02d}:{dur_s:02d} | Segments: {len(sorted_segs)}\n")
-            fh.write("=" * 72 + "\n\n")
+            fh.write(f"Participants: {participants_str}   "
+                     f"Trial: {first.trial_id}\n")
+            fh.write(f"Duration: {dur_h}:{dur_m:02d}:{dur_s:02d}   "
+                     f"Segments: {len(sorted_segs)}\n")
+            fh.write("=" * 78 + "\n\n")
 
+            # Rater roster
+            if rater_roster:
+                fh.write("RATERS\n")
+                fh.write("-" * 78 + "\n")
+                for i, rid in enumerate(rater_roster, 1):
+                    fh.write(f"  R{i}: {rid}\n")
+                fh.write("\n")
+
+            # Theme distribution
+            if theme_counts:
+                total_classified = sum(theme_counts.values())
+                fh.write(f"THEME DISTRIBUTION  ({total_classified} classified, "
+                         f"{unclassified} unclassified)\n")
+                fh.write("-" * 78 + "\n")
+                fh.write(f"  {'Theme':<28} {'Count':>6}  {'%':>5}  "
+                         f"{'Mean Conf':>9}\n")
+                for stage, cnt in sorted(theme_counts.items(),
+                                         key=lambda x: -x[1]):
+                    name = _theme_name(stage)
+                    pct = 100.0 * cnt / total_classified
+                    confs = theme_confs[stage]
+                    mean_c = sum(confs) / len(confs) if confs else 0.0
+                    fh.write(f"  {name:<28} {cnt:>6}  {pct:>4.1f}%  "
+                             f"{mean_c:>9.3f}\n")
+                fh.write("\n")
+
+            # Codebook distribution
+            if code_counts:
+                fh.write(f"CODEBOOK DISTRIBUTION  ({sum(code_counts.values())} "
+                         f"code applications across {len(code_counts)} codes)\n")
+                fh.write("-" * 78 + "\n")
+                fh.write(f"  {'Code':<40} {'Count':>6}  {'Mean Conf':>9}\n")
+                for code, cnt in sorted(code_counts.items(), key=lambda x: -x[1]):
+                    confs = code_confs[code]
+                    mean_c = sum(confs) / len(confs) if confs else 0.0
+                    fh.write(f"  {code:<40} {cnt:>6}  {mean_c:>9.3f}\n")
+                fh.write("\n")
+
+            # IRR
+            if irr_stats and irr_stats.get('n_segments'):
+                fh.write("INTERRATER RELIABILITY\n")
+                fh.write("-" * 78 + "\n")
+                fh.write(f"  Raters: {irr_stats.get('n_raters', 0)}   "
+                         f"Segments w/ ballots: {irr_stats['n_segments']}\n")
+                fh.write(f"  Unanimous agreement:  "
+                         f"{irr_stats['percent_agreement_unanimous']:.3f}\n")
+                fh.write(f"  Pairwise agreement:   "
+                         f"{irr_stats['percent_agreement_pairwise']:.3f}\n")
+                fk = irr_stats.get('fleiss_kappa')
+                ka = irr_stats.get('krippendorff_alpha_nominal')
+                fk_s = f"{fk:.3f}" if isinstance(fk, (int, float)) else "n/a"
+                ka_s = f"{ka:.3f}" if isinstance(ka, (int, float)) else "n/a"
+                fh.write(f"  Fleiss' kappa:        {fk_s}\n")
+                fh.write(f"  Krippendorff's alpha: {ka_s}\n")
+                fh.write(f"  Flagged for review:   {needs_review}\n")
+                if abstentions:
+                    fh.write(f"  Consensus abstentions: {abstentions}\n")
+                fh.write("\n")
+
+        # ---------------- Per-segment detail ----------------
         for seg in sorted_segs:
             speakers_str = ", ".join(seg.speakers_in_segment or [seg.speaker])
+            fh.write("=" * 78 + "\n")
             fh.write(
-                f"[SEGMENT {seg.segment_index + 1:03d}] "
-                f"{_ms_to_hms(seg.start_time_ms)} - {_ms_to_hms(seg.end_time_ms)} "
-                f"| {seg.word_count} words | Speakers: {speakers_str}\n"
+                f"[SEGMENT {seg.segment_index + 1:03d}]  "
+                f"{_ms_to_hms(seg.start_time_ms)}–{_ms_to_hms(seg.end_time_ms)}   "
+                f"{seg.word_count}w   Speakers: {speakers_str}\n"
             )
-            fh.write(seg.text + "\n")
-            fh.write("-" * 48 + "\n")
+            fh.write("-" * 78 + "\n")
+            for line in textwrap.wrap(seg.text, width=76,
+                                      initial_indent="  ",
+                                      subsequent_indent="  ") or ["  "]:
+                fh.write(line + "\n")
+            fh.write("\n")
 
-            # Theme label
+            # Rater ballots
+            rater_votes = getattr(seg, 'rater_votes', None) or []
+            if rater_votes:
+                fh.write("RATER BALLOTS\n")
+                for rv in rater_votes:
+                    rid = rv.get('rater', '?')
+                    vote = rv.get('vote', '?')
+                    stage = rv.get('stage')
+                    conf = rv.get('confidence')
+                    just = (rv.get('justification') or '').strip()
+                    if vote == 'CODED':
+                        sec = rv.get('secondary_stage')
+                        sec_conf = rv.get('secondary_confidence')
+                        if sec is not None:
+                            sec_conf_str = f", conf={_fmt_conf(sec_conf)}" if sec_conf is not None else ""
+                            sec_part = f"  (2nd: {_theme_name(sec)}{sec_conf_str})"
+                        else:
+                            sec_part = ""
+                        fh.write(f"  [{rid}]  {_theme_name(stage)}  "
+                                 f"conf={_fmt_conf(conf)}{sec_part}\n")
+                    elif vote == 'ABSTAIN':
+                        fh.write(f"  [{rid}]  ABSTAIN (irrelevant to framework)\n")
+                    else:
+                        fh.write(f"  [{rid}]  ERROR (no parseable response)\n")
+                    if just:
+                        for line in textwrap.wrap(just, width=70,
+                                                  initial_indent="      → ",
+                                                  subsequent_indent="        "):
+                            fh.write(line + "\n")
+                fh.write("\n")
+
+            # Consensus
+            fh.write("CONSENSUS: ")
+            agreement = getattr(seg, 'agreement_level', None) or '?'
+            _rids = getattr(seg, 'rater_ids', None) or []
+            n_agree = int(round((getattr(seg, 'agreement_fraction', None) or 0.0)
+                                * max(len(_rids), 1)))
+            n_raters = len(_rids)
             if seg.primary_stage is not None:
-                theme_name = id_to_name.get(seg.primary_stage, str(seg.primary_stage))
-                conf = seg.llm_confidence_primary or 0.0
-                cons = seg.llm_run_consistency or 0
-                fh.write(
-                    f"THEME: {theme_name} (id={seg.primary_stage}) | "
-                    f"Confidence: {conf:.2f} | Consistency: {cons}/3\n"
-                )
+                fh.write(f"CLASSIFIED as {_theme_name(seg.primary_stage)}  "
+                         f"({agreement}, {n_agree}/{n_raters})\n")
+                fh.write(f"  Mean confidence: "
+                         f"{_fmt_conf(seg.llm_confidence_primary)}\n")
                 if seg.secondary_stage is not None:
-                    sec_name = id_to_name.get(seg.secondary_stage, str(seg.secondary_stage))
-                    fh.write(f"SECONDARY: {sec_name} (id={seg.secondary_stage})\n")
-                if seg.llm_justification:
-                    fh.write(f"Justification: {seg.llm_justification}\n")
+                    fh.write(f"  Secondary: {_theme_name(seg.secondary_stage)} "
+                             f"(conf {_fmt_conf(seg.llm_confidence_secondary)})\n")
+                all_justs = [
+                    rv.get('justification', '') or ''
+                    for rv in (getattr(seg, 'rater_votes', None) or [])
+                    if rv.get('vote') == 'CODED'
+                ]
+                unique_justs = list(dict.fromkeys(j for j in all_justs if j.strip()))
+                if unique_justs:
+                    if llm_client is not None and len(unique_justs) > 1:
+                        rationale = _summarize_rationales(unique_justs, llm_client)
+                    else:
+                        rationale = unique_justs[0]
+                elif seg.llm_justification:
+                    rationale = seg.llm_justification
+                else:
+                    rationale = ''
+                if rationale:
+                    for line in textwrap.wrap(rationale, width=70,
+                                              initial_indent="  Rationale: ",
+                                              subsequent_indent="    "):
+                        fh.write(line + "\n")
+            else:
+                if getattr(seg, 'consensus_vote', None) == 'ABSTAIN':
+                    fh.write(f"UNCLASSIFIED — consensus ABSTAIN "
+                             f"({agreement}, {n_agree}/{n_raters})\n")
+                elif agreement == 'split':
+                    fh.write(f"UNCLASSIFIED — SPLIT VOTE (no majority); "
+                             f"flagged for review\n")
+                elif agreement == 'none':
+                    fh.write(f"UNCLASSIFIED — all raters failed to respond\n")
+                else:
+                    fh.write(f"UNCLASSIFIED ({agreement})\n")
+            if getattr(seg, 'tie_broken_by_confidence', False):
+                fh.write("  ↳ Tie broken by confidence\n")
+            if getattr(seg, 'needs_review', False):
+                fh.write("  ↳ FLAGGED FOR HUMAN REVIEW\n")
 
             # Codebook labels
-            if seg.codebook_labels_ensemble:
-                fh.write(f"CODES: [{', '.join(str(c) for c in seg.codebook_labels_ensemble)}]\n")
-            elif seg.codebook_labels_llm:
-                fh.write(f"CODES (LLM): [{', '.join(str(c) for c in seg.codebook_labels_llm)}]\n")
+            codes = seg.codebook_labels_ensemble or seg.codebook_labels_llm or []
+            if codes:
+                label = "CODES" if seg.codebook_labels_ensemble else "CODES (LLM)"
+                fh.write(f"{label}: [{', '.join(str(c) for c in codes)}]\n")
 
             fh.write("\n")
 
@@ -258,7 +502,7 @@ def export_per_transcript_stats(
 
     id_to_name: dict = {}
     if framework is not None:
-        id_to_name = {t.theme_id: t.name for t in framework.themes}
+        id_to_name = {t.theme_id: t.short_name for t in framework.themes}
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -440,3 +684,333 @@ def export_cumulative_report(
 
     with open(output_path, 'w', encoding='utf-8') as fh:
         json.dump(report, fh, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Output: Human classification forms (no results, for blind coding)
+# ---------------------------------------------------------------------------
+
+def export_human_classification_forms(
+    segments: List[Segment],
+    framework,
+    output_dir: str,
+) -> List[str]:
+    """
+    Write one blank-form .txt per session into <output_dir>/validation/.
+
+    Each file shows segments in order with empty rating fields so human
+    coders can classify blind, without any LLM results present.
+    Only participant segments are included (therapist segments omitted).
+    Returns list of written file paths.
+    """
+    import datetime as _dt
+
+    id_to_name: dict = {}
+    stage_labels: str = '?'
+    if framework is not None:
+        id_to_name = {t.theme_id: t.short_name for t in framework.themes}
+        stage_labels = ', '.join(
+            f"{t.theme_id}={t.short_name}" for t in framework.themes
+        )
+
+    def _theme_name(stage) -> str:
+        return _theme_name_from(stage, id_to_name)
+
+    validation_dir = os.path.join(output_dir, 'validation')
+    os.makedirs(validation_dir, exist_ok=True)
+
+    # Group by session
+    by_session: Dict[str, List[Segment]] = defaultdict(list)
+    for seg in segments:
+        by_session[seg.session_id].append(seg)
+
+    written: List[str] = []
+
+    for session_id, segs in sorted(by_session.items()):
+        sorted_segs = sorted(segs, key=lambda s: s.segment_index)
+
+        # Only participant segments (skip therapist-only context turns)
+        participant_segs = [
+            s for s in sorted_segs
+            if s.speaker and s.speaker.lower() not in ('therapist', 't', 'interviewer')
+        ]
+        if not participant_segs:
+            participant_segs = sorted_segs  # fallback: include all if no match
+
+        if not participant_segs:
+            continue
+
+        first = participant_segs[0]
+        last = participant_segs[-1]
+        duration_s = max(0, (last.end_time_ms - first.start_time_ms) // 1000)
+        dur_h, dur_rem = divmod(duration_s, 3600)
+        dur_m, dur_s = divmod(dur_rem, 60)
+
+        all_pids = sorted({s.participant_id for s in participant_segs if s.participant_id})
+        participants_str = ", ".join(all_pids) if all_pids else first.participant_id
+
+        out_path = os.path.join(validation_dir, f'human_classification_{session_id}.txt')
+        with open(out_path, 'w', encoding='utf-8') as fh:
+            fh.write("=" * 78 + "\n")
+            fh.write(f"SESSION: {session_id}\n")
+            fh.write(f"Participants: {participants_str}   Trial: {first.trial_id}\n")
+            fh.write(f"Duration: {dur_h}:{dur_m:02d}:{dur_s:02d}   "
+                     f"Segments: {len(participant_segs)}\n")
+            fh.write(f"Generated: {_dt.datetime.utcnow().strftime('%Y-%m-%d')}\n")
+            fh.write("=" * 78 + "\n\n")
+            fh.write("INSTRUCTIONS\n")
+            fh.write("-" * 78 + "\n")
+            fh.write(f"  Stage labels: {stage_labels}\n")
+            fh.write("  For each segment, record the primary stage, an optional\n")
+            fh.write("  secondary stage, and a brief rationale.\n\n")
+
+            for seg in participant_segs:
+                speakers_str = ", ".join(seg.speakers_in_segment or [seg.speaker or '?'])
+                fh.write("=" * 78 + "\n")
+                fh.write(
+                    f"[SEGMENT {seg.segment_index + 1:03d}]  "
+                    f"{_ms_to_hms(seg.start_time_ms)}–{_ms_to_hms(seg.end_time_ms)}   "
+                    f"{seg.word_count}w   Speaker(s): {speakers_str}\n"
+                )
+                fh.write("-" * 78 + "\n")
+                for line in textwrap.wrap(seg.text, width=76,
+                                          initial_indent="  ",
+                                          subsequent_indent="  ") or ["  "]:
+                    fh.write(line + "\n")
+                fh.write("\n")
+                fh.write("  Stage: ___   Secondary (optional): ___\n")
+                fh.write("  Rationale: " + "_" * 60 + "\n")
+                fh.write("  " + "_" * 72 + "\n")
+                fh.write("\n")
+
+        written.append(out_path)
+
+    return written
+
+
+# ---------------------------------------------------------------------------
+# Output: Dataset-wide flagged-for-review report
+# ---------------------------------------------------------------------------
+
+def export_flagged_for_review(
+    segments: List[Segment],
+    framework,
+    output_path: str,
+) -> None:
+    """
+    Write a single .txt listing every needs_review segment across all sessions.
+
+    Includes full rater ballot detail, combined justifications, coded result
+    and confidence (primary and secondary), and agreement metadata.
+    """
+    import datetime as _dt
+
+    id_to_name: dict = {}
+    if framework is not None:
+        id_to_name = {t.theme_id: t.short_name for t in framework.themes}
+
+    def _theme_name(stage) -> str:
+        return _theme_name_from(stage, id_to_name)
+
+    flagged = [s for s in segments if getattr(s, 'needs_review', False)]
+    flagged.sort(key=lambda s: (s.session_id, s.segment_index))
+
+    session_ids = sorted({s.session_id for s in flagged})
+
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+
+    with open(output_path, 'w', encoding='utf-8') as fh:
+        fh.write(
+            f"FLAGGED FOR REVIEW — {len(flagged)} segment(s) "
+            f"across {len(session_ids)} session(s)\n"
+        )
+        fh.write(f"Generated: {_dt.datetime.utcnow().strftime('%Y-%m-%d')}\n")
+        fh.write("=" * 78 + "\n\n")
+
+        for seg in flagged:
+            speakers_str = ", ".join(seg.speakers_in_segment or [seg.speaker or '?'])
+            fh.write(
+                f"[Session {seg.session_id}  Segment {seg.segment_index + 1:03d}]  "
+                f"{_ms_to_hms(seg.start_time_ms)}–{_ms_to_hms(seg.end_time_ms)}   "
+                f"{seg.word_count}w   Speaker(s): {speakers_str}\n"
+            )
+            fh.write("-" * 78 + "\n")
+            for line in textwrap.wrap(seg.text, width=76,
+                                      initial_indent="  ",
+                                      subsequent_indent="  ") or ["  "]:
+                fh.write(line + "\n")
+            fh.write("\n")
+
+            # Rater ballots
+            rater_votes = getattr(seg, 'rater_votes', None) or []
+            if rater_votes:
+                fh.write("  RATER BALLOTS\n")
+                for rv in rater_votes:
+                    rid = rv.get('rater', '?')
+                    vote = rv.get('vote', '?')
+                    stage = rv.get('stage')
+                    conf = rv.get('confidence')
+                    just = (rv.get('justification') or '').strip()
+                    sec = rv.get('secondary_stage')
+                    sec_conf = rv.get('secondary_confidence')
+                    if vote == 'CODED':
+                        if sec is not None:
+                            sec_conf_str = f", conf={_fmt_conf(sec_conf)}" if sec_conf is not None else ""
+                            sec_part = f"  (2nd: {_theme_name(sec)}{sec_conf_str})"
+                        else:
+                            sec_part = ""
+                        fh.write(f"    [{rid}]  {_theme_name(stage)}  "
+                                 f"conf={_fmt_conf(conf)}{sec_part}\n")
+                    elif vote == 'ABSTAIN':
+                        fh.write(f"    [{rid}]  ABSTAIN\n")
+                    else:
+                        fh.write(f"    [{rid}]  ERROR\n")
+                    if just:
+                        for line in textwrap.wrap(just, width=68,
+                                                  initial_indent="        → ",
+                                                  subsequent_indent="          "):
+                            fh.write(line + "\n")
+                fh.write("\n")
+
+            # Coded result summary
+            agreement = getattr(seg, 'agreement_level', None) or '?'
+            _rids = getattr(seg, 'rater_ids', None) or []
+            n_agree = int(round(
+                (getattr(seg, 'agreement_fraction', None) or 0.0) * max(len(_rids), 1)
+            ))
+            n_raters = len(_rids)
+
+            if seg.primary_stage is not None:
+                primary_str = (
+                    f"{_theme_name(seg.primary_stage)} (conf {_fmt_conf(seg.llm_confidence_primary)})"
+                )
+                if seg.secondary_stage is not None:
+                    sec_str = (
+                        f"  |  Secondary: {_theme_name(seg.secondary_stage)} "
+                        f"(conf {_fmt_conf(seg.llm_confidence_secondary)})"
+                    )
+                else:
+                    sec_str = ""
+                fh.write(f"  CODED RESULT: {primary_str}{sec_str}\n")
+            else:
+                if getattr(seg, 'consensus_vote', None) == 'ABSTAIN':
+                    fh.write("  CODED RESULT: UNCLASSIFIED — consensus ABSTAIN\n")
+                elif agreement == 'split':
+                    fh.write("  CODED RESULT: UNCLASSIFIED — split vote\n")
+                elif agreement == 'none':
+                    fh.write("  CODED RESULT: UNCLASSIFIED — all raters failed\n")
+                else:
+                    fh.write("  CODED RESULT: UNCLASSIFIED\n")
+
+            fh.write(f"  AGREEMENT: {agreement}  ({n_agree}/{n_raters})\n")
+            if getattr(seg, 'tie_broken_by_confidence', False):
+                fh.write("  Tie-broken by confidence: Yes\n")
+
+            fh.write("-" * 78 + "\n\n")
+
+
+# ---------------------------------------------------------------------------
+# Output: BERT training data
+# ---------------------------------------------------------------------------
+
+def export_training_data(
+    segments: List[Segment],
+    framework,
+    codebook,
+    output_dir: str,
+) -> List[str]:
+    """
+    Write BERT-ready JSONL files into <output_dir>/trainingdata/.
+
+    Produces:
+      theme_classification.jsonl  — one record per segment with a final theme label
+      codebook_multilabel.jsonl   — one record per segment with codebook labels
+      label_map.json              — label-ID ↔ name mappings for both tasks
+    """
+    import datetime as _dt
+
+    id_to_name: dict = {}
+    if framework is not None:
+        id_to_name = {t.theme_id: t.short_name.lower() for t in framework.themes}
+
+    # Build ordered codebook code index from codebook object; fall back to
+    # alphabetical order of codes seen in the data.
+    code_to_idx: dict = {}
+    if codebook is not None:
+        for idx, c in enumerate(codebook.codes):
+            code_to_idx[c.code_id] = idx
+    else:
+        seen: list = []
+        for seg in segments:
+            for cid in (seg.codebook_labels_ensemble or []):
+                if cid and cid not in code_to_idx:
+                    code_to_idx[cid] = len(seen)
+                    seen.append(cid)
+
+    training_dir = os.path.join(output_dir, 'trainingdata')
+    os.makedirs(training_dir, exist_ok=True)
+
+    theme_path = os.path.join(training_dir, 'theme_classification.jsonl')
+    codebook_path = os.path.join(training_dir, 'codebook_multilabel.jsonl')
+    map_path = os.path.join(training_dir, 'label_map.json')
+
+    theme_count = 0
+    code_count = 0
+
+    with open(theme_path, 'w', encoding='utf-8') as tf, \
+         open(codebook_path, 'w', encoding='utf-8') as cf:
+
+        for seg in segments:
+            # Theme training record
+            label_id = getattr(seg, 'final_label', None)
+            if label_id is None:
+                label_id = seg.primary_stage
+            if label_id is not None:
+                record = {
+                    'text': seg.text,
+                    'label': id_to_name.get(label_id, str(label_id)),
+                    'label_id': int(label_id),
+                    'label_confidence_tier': getattr(seg, 'label_confidence_tier', None),
+                    'confidence': seg.llm_confidence_primary,
+                    'consistency': seg.llm_run_consistency,
+                    'label_source': getattr(seg, 'final_label_source', None) or 'llm_zero_shot',
+                    'segment_id': seg.segment_id,
+                    'participant_id': seg.participant_id,
+                    'session_id': seg.session_id,
+                    'session_number': seg.session_number,
+                }
+                tf.write(json.dumps(record, ensure_ascii=False) + '\n')
+                theme_count += 1
+
+            # Codebook multi-label record
+            codes = seg.codebook_labels_ensemble or []
+            if codes:
+                cb_conf = seg.codebook_confidence or {}
+                record = {
+                    'text': seg.text,
+                    'labels': list(codes),
+                    'label_ids': [code_to_idx.get(c, -1) for c in codes],
+                    'confidences': {c: cb_conf.get(c) for c in codes
+                                   if isinstance(cb_conf, dict)},
+                    'theme_label': id_to_name.get(label_id, None) if label_id is not None else None,
+                    'theme_label_id': int(label_id) if label_id is not None else None,
+                    'segment_id': seg.segment_id,
+                    'participant_id': seg.participant_id,
+                    'session_id': seg.session_id,
+                    'session_number': seg.session_number,
+                }
+                cf.write(json.dumps(record, ensure_ascii=False) + '\n')
+                code_count += 1
+
+    # Label map
+    label_map = {
+        'generated': _dt.datetime.utcnow().strftime('%Y-%m-%d'),
+        'theme_labels': {str(k): v for k, v in id_to_name.items()},
+        'codebook_codes': list(code_to_idx.keys()),
+        'codebook_code_to_index': code_to_idx,
+    }
+    with open(map_path, 'w', encoding='utf-8') as f:
+        json.dump(label_map, f, indent=2, ensure_ascii=False)
+
+    print(f"Training data: {theme_count} theme records, {code_count} codebook records")
+    return [theme_path, codebook_path, map_path]

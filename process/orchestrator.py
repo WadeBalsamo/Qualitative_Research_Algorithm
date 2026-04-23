@@ -38,6 +38,7 @@ from .transcript_ingestion import (
     load_diarized_session,
     load_vtt_session,
     discover_session_files,
+    parse_session_id_metadata,
 )
 from .llm_segmentation import LLMSegmentationRefiner
 from .process_logger import ProcessLogger
@@ -48,6 +49,9 @@ from .dataset_assembly import (
     export_coded_transcript,
     export_per_transcript_stats,
     export_cumulative_report,
+    export_human_classification_forms,
+    export_flagged_for_review,
+    export_training_data,
 )
 from .cross_validation import (
     compute_theme_codebook_cooccurrence,
@@ -112,6 +116,39 @@ def run_full_pipeline(
     _plog_path = os.path.join(meta_dir, 'process_log.txt') if _verbose else None
     plog = ProcessLogger(_plog_path)
 
+    # Load speaker anonymization key, with priority: meta/ > imported config
+    speaker_key_path = os.path.join(meta_dir, 'speaker_anonymization_key.json')
+    _existing_speaker_map: dict = {}
+    _use_unknown_prefix: bool = False
+
+    if os.path.exists(speaker_key_path):
+        # Re-run: meta/ key always takes precedence for stability
+        try:
+            with open(speaker_key_path) as _f:
+                _raw_key = json.load(_f)
+            _existing_speaker_map = {
+                name: (entry['role'], entry['anonymized_id'])
+                for name, entry in _raw_key.items()
+            }
+        except Exception:
+            _existing_speaker_map = {}
+        # Mark that we should use unknown prefix if key was imported in config
+        _use_unknown_prefix = bool(getattr(config, 'speaker_anonymization_key_path', None))
+
+    elif getattr(config, 'speaker_anonymization_key_path', None):
+        # First run with imported key: seed from it
+        try:
+            with open(config.speaker_anonymization_key_path) as _f:
+                _raw_key = json.load(_f)
+            _existing_speaker_map = {
+                name: (entry['role'], entry['anonymized_id'])
+                for name, entry in _raw_key.items()
+            }
+            _use_unknown_prefix = True
+        except Exception as e:
+            print(f"  Warning: Could not load speaker_anonymization_key_path: {e}")
+            _existing_speaker_map = {}
+
     # ------------------------------------------------------------------
     # Stage 1: Transcript Ingestion and Segmentation
     # ------------------------------------------------------------------
@@ -148,6 +185,10 @@ def run_full_pipeline(
         'use_topic_clustering': getattr(config.segmentation, 'use_topic_clustering', False),
         # Process logger
         'process_logger': plog,
+        # Persistent speaker map — ensures stable participant_N IDs across runs
+        'existing_speaker_map': _existing_speaker_map,
+        # Use unknown prefix for new speakers when key is imported
+        'use_unknown_prefix': _use_unknown_prefix,
     }
     use_conv = getattr(config.segmentation, 'use_conversational_segmenter', True)
     use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', True)
@@ -212,49 +253,9 @@ def run_full_pipeline(
         metadata = session_data['metadata']
         metadata.setdefault('trial_id', config.trial_id)
 
-        # Ensure participant_id is an anonymized ID, not a raw speaker name.
-        # If it was set in the source JSON (raw name), normalize it now.
-        sentences = session_data.get('sentences', [])
-        existing_pid = metadata.get('participant_id', '')
-        if existing_pid and not (
-            existing_pid.startswith('participant_')
-            or existing_pid.startswith('therapist_')
-            or existing_pid in ('unknown', '')
-        ):
-            _, anon_id = segmenter.speaker_norm.normalize(existing_pid)
-            metadata['participant_id'] = anon_id
-
-        if not metadata.get('participant_id'):
-            # Find the most frequent participant speaker (not therapists/excluded speakers)
-            excluded_set = set(sf.speakers) if sf.mode == 'exclude' else set()
-            isolated_set = set(sf.speakers) if sf.mode == 'isolate' else None
-
-            speaker_counts = {}
-            for sent in sentences:
-                spk = sent.get('speaker', 'unknown')
-                # Determine if this speaker should be considered a participant
-                if sf.mode == 'exclude':
-                    is_participant = spk not in excluded_set
-                elif sf.mode == 'isolate':
-                    is_participant = spk in isolated_set
-                else:
-                    is_participant = True
-
-                if is_participant and spk != 'unknown':
-                    speaker_counts[spk] = speaker_counts.get(spk, 0) + 1
-
-            # Use most frequent participant speaker, anonymized to participant_N
-            if speaker_counts:
-                primary_speaker = max(speaker_counts, key=speaker_counts.get)
-                _, anon_id = segmenter.speaker_norm.normalize(primary_speaker)
-                metadata['participant_id'] = anon_id
-            else:
-                metadata['participant_id'] = 'unknown'
-
         # For VTT files, use the filename stem as session_id and parse cohort/session metadata
         if session_file.lower().endswith('.vtt'):
             stem = os.path.splitext(os.path.basename(session_file))[0]
-            from .transcript_ingestion import parse_session_id_metadata
             parsed = parse_session_id_metadata(stem)
             metadata.setdefault('session_id', stem)
             metadata.setdefault('session_number', parsed['session_number'])
@@ -262,8 +263,11 @@ def run_full_pipeline(
             metadata.setdefault('session_variant', parsed['session_variant'])
         else:
             default_session_id = os.path.basename(os.path.dirname(session_file))
+            parsed = parse_session_id_metadata(default_session_id)
             metadata.setdefault('session_id', default_session_id)
-            metadata.setdefault('session_number', 1)
+            metadata.setdefault('session_number', parsed['session_number'])
+            metadata.setdefault('cohort_id', parsed['cohort_id'])
+            metadata.setdefault('session_variant', parsed['session_variant'])
         metadata.setdefault('source_file', session_file)
 
         if llm_refiner and use_conv:
@@ -292,19 +296,9 @@ def run_full_pipeline(
 
     plog.close()
 
-    # Export speaker anonymization key (original name -> anonymized ID)
-    speaker_key = {
-        original: {'role': role, 'anonymized_id': anon_id}
-        for original, (role, anon_id) in segmenter.speaker_norm.speaker_map.items()
-    }
-    speaker_key_path = os.path.join(meta_dir, 'speaker_anonymization_key.json')
-    with open(speaker_key_path, 'w') as _f:
-        json.dump(speaker_key, _f, indent=2)
-
     observer.on_stage_complete(
         "Transcript Ingestion and Segmentation",
-        f"Produced {len(all_segments)} segments from {len(session_files)} sessions; "
-        f"speaker key written to speaker_anonymization_key.json",
+        f"Produced {len(all_segments)} segments from {len(session_files)} sessions",
     )
 
     # ------------------------------------------------------------------
@@ -398,6 +392,31 @@ def run_full_pipeline(
         if codebook is None:
             from codebook.phenomenology_codebook import get_phenomenology_codebook
             codebook = get_phenomenology_codebook()
+
+        # Persist codebook definitions so standalone `qra analyze` can build
+        # the human-readable codebook reference report without the in-memory object.
+        _cb_def_path = os.path.join(meta_dir, 'codebook_definitions.json')
+        if not os.path.exists(_cb_def_path):
+            _cb_defs = {
+                'name': codebook.name,
+                'version': codebook.version,
+                'description': codebook.description,
+                'codes': [
+                    {
+                        'code_id': c.code_id,
+                        'category': c.category,
+                        'domain': c.domain,
+                        'description': c.description,
+                        'subcodes': c.subcodes,
+                        'inclusive_criteria': c.inclusive_criteria,
+                        'exclusive_criteria': c.exclusive_criteria,
+                        'exemplar_utterances': c.exemplar_utterances,
+                    }
+                    for c in codebook.codes
+                ],
+            }
+            with open(_cb_def_path, 'w') as _f:
+                json.dump(_cb_defs, _f, indent=2)
 
         # Set up codebook output directory and exemplar export path
         codebook_output_dir = os.path.join(output_dir, 'codebook_raw')
@@ -584,15 +603,67 @@ def run_full_pipeline(
     reports_dir = os.path.join(output_dir, 'reports')
     os.makedirs(reports_dir, exist_ok=True)
 
+    # Write speaker anonymization key atomically with coded transcripts so both
+    # always reflect the same run.  Writing here (not at Stage 1) means a
+    # failed run between ingestion and report generation cannot leave a stale
+    # key that mismatches older coded transcripts.
+    speaker_key = {
+        original: {'role': role, 'anonymized_id': anon_id}
+        for original, (role, anon_id) in segmenter.speaker_norm.speaker_map.items()
+    }
+    with open(speaker_key_path, 'w') as _f:
+        json.dump(speaker_key, _f, indent=2)
+    observer.on_stage_progress(
+        "Report Generation",
+        f"  Speaker anonymization key: meta/speaker_anonymization_key.json",
+    )
+
+    # Build a lightweight LLM client for rationale summarization (reuses theme config)
+    _sum_client = None
+    if config.run_theme_labeler:
+        tc = config.theme_classification
+        try:
+            _sum_client = LLMClient(LLMClientConfig(
+                backend=tc.backend,
+                api_key=tc.api_key,
+                replicate_api_token=getattr(tc, 'replicate_api_token', ''),
+                model=tc.model,
+                temperature=0.0,
+                lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+                ollama_host=getattr(tc, 'ollama_host', '0.0.0.0'),
+                ollama_port=getattr(tc, 'ollama_port', 11434),
+            ))
+        except Exception:
+            _sum_client = None
+
     # Per-session coded transcripts
     for session_id, session_df in master_df.groupby('session_id'):
         segs_for_session = [s for s in all_segments if s.session_id == session_id]
         transcript_path = os.path.join(reports_dir, f"coded_transcript_{session_id}.txt")
-        export_coded_transcript(segs_for_session, framework, codebook, transcript_path)
+        export_coded_transcript(
+            segs_for_session, framework, codebook, transcript_path,
+            llm_client=_sum_client,
+        )
         observer.on_stage_progress(
             "Report Generation",
             f"  Coded transcript: reports/coded_transcript_{session_id}.txt",
         )
+
+    # Human classification forms (blind-coding, no results)
+    export_human_classification_forms(all_segments, framework, reports_dir)
+    observer.on_stage_progress(
+        "Report Generation",
+        "  Human classification forms: reports/validation/human_classification_<session>.txt",
+    )
+
+    # Dataset-wide flagged-for-review report
+    validation_dir = os.path.join(reports_dir, 'validation')
+    flagged_path = os.path.join(validation_dir, 'flagged_for_review.txt')
+    export_flagged_for_review(all_segments, framework, flagged_path)
+    observer.on_stage_progress(
+        "Report Generation",
+        "  Flagged for review: reports/validation/flagged_for_review.txt",
+    )
 
     # Per-transcript stats (one JSON per session)
     stats_dir = os.path.join(reports_dir, 'per_transcript')
@@ -608,6 +679,13 @@ def run_full_pipeline(
     observer.on_stage_progress(
         "Report Generation",
         f"  Cumulative report: reports/cumulative_report_{ts}.json",
+    )
+
+    # BERT training data export
+    export_training_data(all_segments, framework, codebook, output_dir)
+    observer.on_stage_progress(
+        "Report Generation",
+        "  Training data: trainingdata/theme_classification.jsonl + codebook_multilabel.jsonl",
     )
 
     observer.on_stage_complete(

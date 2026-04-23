@@ -31,7 +31,9 @@ class SpeakerNormalizer:
 
     def __init__(self, excluded_speakers: List[str] = None,
                  isolated_speakers: List[str] = None,
-                 filter_mode: str = 'none'):
+                 filter_mode: str = 'none',
+                 existing_map: Dict[str, Tuple[str, str]] = None,
+                 use_unknown_prefix: bool = False):
         """
         Initialize with speaker filter configuration.
 
@@ -43,19 +45,50 @@ class SpeakerNormalizer:
             Speaker names to isolate (treated as participants)
         filter_mode : str
             'none', 'exclude', or 'isolate'
+        existing_map : dict, optional
+            Persistent speaker-to-(role, anonymized_id) mapping loaded from a
+            prior run.  Pre-populating from it ensures the same real-world
+            speaker always gets the same participant_N ID across pipeline runs.
+        use_unknown_prefix : bool, optional
+            If True and an existing_map was provided, new participants not in
+            the map will be assigned unknownparticipant_{N} IDs instead of
+            participant_{N}. This flags new speakers for later review.
         """
         self.excluded_speakers = set(excluded_speakers or [])
         self.isolated_speakers = set(isolated_speakers or [])
         self.filter_mode = filter_mode
+        self.use_unknown_prefix = use_unknown_prefix
 
         # Track speaker -> (role, normalized_id) mappings
         self.speaker_map: Dict[str, Tuple[str, str]] = {}
         self.participant_counter = 0
         self.therapist_counter = 0
+        self.unknown_participant_counter = 0
+
+        # Seed counters and map from a prior run so IDs are stable across runs.
+        if existing_map:
+            self.speaker_map.update(existing_map)
+            for _role, _anon_id in existing_map.values():
+                try:
+                    n = int(_anon_id.rsplit('_', 1)[-1])
+                except (ValueError, IndexError):
+                    # If unable to parse numeric suffix, check if it's an unknownparticipant ID
+                    if _anon_id.startswith('unknownparticipant_'):
+                        try:
+                            n = int(_anon_id.split('_')[-1])
+                            self.unknown_participant_counter = max(self.unknown_participant_counter, n)
+                        except (ValueError, IndexError):
+                            pass
+                    continue
+                if _role == 'participant':
+                    self.participant_counter = max(self.participant_counter, n)
+                elif _role == 'therapist':
+                    self.therapist_counter = max(self.therapist_counter, n)
 
         # Pre-register known therapist/participant speakers so they appear
         # in the anonymization key even if their sentences are filtered
-        # before segmentation.
+        # before segmentation.  Speakers already in existing_map are skipped
+        # by normalize() via the early-return on speaker_map lookup.
         if filter_mode == 'exclude':
             for name in sorted(excluded_speakers or []):
                 self.normalize(name)  # registers as therapist
@@ -69,7 +102,8 @@ class SpeakerNormalizer:
         Assigns new ID on first encounter.
 
         Returns (role, normalized_id) where role is 'participant' or 'therapist'
-        and normalized_id is like 'participant_1', 'therapist_2', etc.
+        and normalized_id is like 'participant_1', 'therapist_2', or
+        'unknownparticipant_1' (if use_unknown_prefix and speaker not in existing_map).
         """
         if speaker_name in self.speaker_map:
             return self.speaker_map[speaker_name]
@@ -90,8 +124,13 @@ class SpeakerNormalizer:
             normalized_id = f'therapist_{self.therapist_counter}'
             role = 'therapist'
         else:
-            self.participant_counter += 1
-            normalized_id = f'participant_{self.participant_counter}'
+            # For participants: use unknownparticipant_ prefix if enabled
+            if self.use_unknown_prefix:
+                self.unknown_participant_counter += 1
+                normalized_id = f'unknownparticipant_{self.unknown_participant_counter}'
+            else:
+                self.participant_counter += 1
+                normalized_id = f'participant_{self.participant_counter}'
             role = 'participant'
 
         self.speaker_map[speaker_name] = (role, normalized_id)
@@ -132,7 +171,9 @@ class TranscriptSegmenter:
         excluded = config.get('excluded_speakers', [])
         isolated = config.get('isolated_speakers', [])
         filter_mode = config.get('speaker_filter_mode', 'none')
-        self.speaker_norm = SpeakerNormalizer(excluded, isolated, filter_mode)
+        existing_map = config.get('existing_speaker_map')
+        use_unknown_prefix = config.get('use_unknown_prefix', False)
+        self.speaker_norm = SpeakerNormalizer(excluded, isolated, filter_mode, existing_map, use_unknown_prefix)
 
     def segment_session(
         self, sentences: List[Dict], session_metadata: Dict
@@ -295,7 +336,7 @@ class TranscriptSegmenter:
             segment = Segment(
                 segment_id=(
                     f"{metadata['trial_id']}_{metadata['session_id']}_"
-                    f"p{normalized_id.split('_')[-1]}_seg{offset + len(segments):04d}"
+                    f"{normalized_id.split('_')[-1]}_seg{offset + len(segments):04d}"
                 ),
                 trial_id=metadata['trial_id'],
                 participant_id=normalized_id,
@@ -398,7 +439,9 @@ class ConversationalSegmenter:
         excluded = config.get('excluded_speakers', [])
         isolated = config.get('isolated_speakers', [])
         filter_mode = config.get('speaker_filter_mode', 'none')
-        self.speaker_norm = SpeakerNormalizer(excluded, isolated, filter_mode)
+        existing_map = config.get('existing_speaker_map')
+        use_unknown_prefix = config.get('use_unknown_prefix', False)
+        self.speaker_norm = SpeakerNormalizer(excluded, isolated, filter_mode, existing_map, use_unknown_prefix)
         # Advanced grouping parameters
         self.max_gap_seconds = config.get('max_gap_seconds', 30.0)
         self.min_words_per_sentence = config.get('min_words_per_sentence', 10)
@@ -833,7 +876,7 @@ class ConversationalSegmenter:
             seg = Segment(
                 segment_id=(
                     f"{metadata['trial_id']}_{metadata['session_id']}_"
-                    f"p{normalized_id.split('_')[-1]}_seg{offset + len(segments):04d}"
+                    f"{normalized_id.split('_')[-1]}_seg{offset + len(segments):04d}"
                 ),
                 trial_id=metadata['trial_id'],
                 participant_id=normalized_id,

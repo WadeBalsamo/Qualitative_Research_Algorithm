@@ -67,6 +67,43 @@ def _prompt_yes_no(label: str, default: bool = True) -> bool:
     return raw in ('y', 'yes')
 
 
+def _validate_speaker_anonymization_key(path: str) -> tuple[bool, Optional[str]]:
+    """Validate speaker anonymization key file format.
+
+    Returns (is_valid, error_message).
+    Valid format: {speaker_name: {role: str, anonymized_id: str}, ...}
+    """
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return False, f"File not found: {path}"
+    except json.JSONDecodeError as e:
+        return False, f"Invalid JSON: {e}"
+    except Exception as e:
+        return False, f"Error reading file: {e}"
+
+    if not isinstance(data, dict):
+        return False, "Root must be a JSON object"
+
+    for speaker_name, entry in data.items():
+        if not isinstance(entry, dict):
+            return False, f"Entry for '{speaker_name}' is not a dict"
+
+        if set(entry.keys()) != {'role', 'anonymized_id'}:
+            return False, f"Entry for '{speaker_name}' must have exactly 'role' and 'anonymized_id' keys"
+
+        role = entry.get('role')
+        if role not in ('therapist', 'participant'):
+            return False, f"Entry for '{speaker_name}': role must be 'therapist' or 'participant', got '{role}'"
+
+        anon_id = entry.get('anonymized_id')
+        if not isinstance(anon_id, str) or not anon_id.strip():
+            return False, f"Entry for '{speaker_name}': anonymized_id must be a non-empty string"
+
+    return True, None
+
+
 class SetupWizard:
     """Interactive configuration wizard for the QRA pipeline."""
 
@@ -83,6 +120,7 @@ class SetupWizard:
         print()
 
         self._step_1_paths()
+        self._step_1b_speaker_key()
         self._step_2_speaker_filter()
         self._step_3_segmentation()
         self._step_4_backend()
@@ -104,13 +142,65 @@ class SetupWizard:
     # Step 1: Input/Output paths
     # -----------------------------------------------------------------
     def _step_1_paths(self):
-        print("--- Step 1/11: Input/Output Paths ---")
+        print("--- Step 1/12: Input/Output Paths ---")
         self.config_data['pipeline'] = {
             'transcript_dir': _prompt("Transcript directory", './data/input/'),
             'output_dir': _prompt("Output directory", './data/output/'),
             'trial_id': _prompt("Trial ID", 'standard'),
         }
         print()
+
+    # -----------------------------------------------------------------
+    # Step 1b: Speaker anonymization key import
+    # -----------------------------------------------------------------
+    def _step_1b_speaker_key(self):
+        print("--- Step 1b/12: Speaker Anonymization Key ---")
+        print("    Optionally import a pre-existing speaker ID mapping to keep")
+        print("    participant IDs consistent across runs (e.g., Participant_MM001).")
+        print("    New speakers not in the key will be assigned unknownparticipant_{N}.")
+        print()
+
+        transcript_dir = self.config_data.get('pipeline', {}).get('transcript_dir', './data/input/')
+        default_key_path = os.path.join(transcript_dir, 'speaker_anonymization_key.json')
+
+        # Check for default location
+        key_path = None
+        if os.path.isfile(default_key_path):
+            print(f"    Found speaker key at: {default_key_path}")
+            if _prompt_yes_no("Use this key?", default=True):
+                is_valid, err = _validate_speaker_anonymization_key(default_key_path)
+                if is_valid:
+                    key_path = os.path.abspath(default_key_path)
+                    print(f"    ✓ Key loaded successfully")
+                else:
+                    print(f"    ✗ Key validation failed: {err}")
+                    print()
+
+        # Offer custom path if no valid key yet
+        if not key_path:
+            if _prompt_yes_no("Import a key from another path?", default=False):
+                while True:
+                    custom_path = _prompt("Enter path to speaker_anonymization_key.json", "")
+                    if not custom_path:
+                        print("    Skipping key import.")
+                        break
+                    custom_path = os.path.expanduser(custom_path)
+                    is_valid, err = _validate_speaker_anonymization_key(custom_path)
+                    if is_valid:
+                        key_path = os.path.abspath(custom_path)
+                        print(f"    ✓ Key loaded successfully")
+                        break
+                    else:
+                        print(f"    ✗ Validation failed: {err}")
+                        print()
+
+        # Store in config
+        if key_path:
+            self.config_data['pipeline']['speaker_anonymization_key_path'] = key_path
+            print()
+        else:
+            print("    Speaker IDs will be auto-generated as participant_N.")
+            print()
 
     # -----------------------------------------------------------------
     # Step 2: Speaker role identification
@@ -120,7 +210,7 @@ class SetupWizard:
     _DEFAULT_THERAPISTS = [ 'Move-MORE Study','Instructor', 'Anand', 'Lani', 'Wade (Study Coordinator)', 'Rebecca Heron', 'Wade Balsamo (Study Coordinator)', 'Michelle Berg']
 
     def _step_2_speaker_filter(self):
-        print("--- Step 2/11: Speaker Role Identification ---")
+        print("--- Step 2/12: Speaker Role Identification ---")
         print("    Identify which speakers are therapists/facilitators and which")
         print("    are participants. Therapist dialogue is preserved as read-only")
         print("    conversational context for adjacent participant segments.")
@@ -236,7 +326,7 @@ class SetupWizard:
     # Step 3: Advanced segmentation parameters
     # -----------------------------------------------------------------
     def _step_3_segmentation(self):
-        print("--- Step 3/11: Segmentation Parameters ---")
+        print("--- Step 3/12: Segmentation Parameters ---")
 
         if not _prompt_yes_no("Configure advanced segmentation options?", False):
             # Use defaults
@@ -324,7 +414,7 @@ class SetupWizard:
     # Step 4: Backend & model
     # -----------------------------------------------------------------
     def _step_4_backend(self):
-        print("--- Step 4/11: Backend & Model ---")
+        print("--- Step 4/12: Backend & Model ---")
         backend = _prompt_choice(
             "Backend",
             ['openrouter', 'replicate', 'huggingface', 'ollama', 'lmstudio'],
@@ -382,7 +472,7 @@ class SetupWizard:
     # Step 5: Framework selection
     # -----------------------------------------------------------------
     def _step_5_framework(self):
-        print("--- Step 5/11: Theme Framework ---")
+        print("--- Step 5/12: Theme Framework ---")
         choice = _prompt_choice("Framework", ['vamr', 'custom'], 'vamr')
 
         if choice == 'vamr':
@@ -426,7 +516,7 @@ class SetupWizard:
     # Step 6: Exemplar utterances
     # -----------------------------------------------------------------
     def _step_6_exemplars(self):
-        print("--- Step 6/11: Exemplar Utterances ---")
+        print("--- Step 6/12: Exemplar Utterances ---")
         if not self.framework:
             print("    No framework loaded; skipping exemplar customization.")
             print()
@@ -466,7 +556,7 @@ class SetupWizard:
     # Step 7: Codebook selection
     # -----------------------------------------------------------------
     def _step_7_codebook(self):
-        print("--- Step 7/11: Codebook Classification ---")
+        print("--- Step 7/12: Codebook Classification ---")
         enable = _prompt_yes_no("Enable codebook classification?", False)
         self.config_data['pipeline']['run_codebook_classifier'] = enable
 
@@ -517,7 +607,7 @@ class SetupWizard:
     # Step 8: Classification parameters
     # -----------------------------------------------------------------
     def _step_8_classification(self):
-        print("--- Step 8/11: Classification Parameters ---")
+        print("--- Step 8/12: Classification Parameters ---")
         n_runs = _prompt_int("Number of classification runs per segment", 3)
         temperature = _prompt_float("Temperature", 0.1)
 
@@ -578,7 +668,7 @@ class SetupWizard:
     # Step 9: Confidence thresholds
     # -----------------------------------------------------------------
     def _step_9_confidence(self):
-        print("--- Step 9/11: Confidence Thresholds ---")
+        print("--- Step 9/12: Confidence Thresholds ---")
         self.config_data['confidence_tiers'] = {
             'high_confidence': _prompt_float("High confidence threshold", 0.8),
             'medium_min_confidence': _prompt_float("Medium confidence threshold", 0.6),
@@ -667,6 +757,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         run_mode=pipeline.get('run_mode', 'auto'),
         run_theme_labeler=pipeline.get('run_theme_labeler', True),
         run_codebook_classifier=pipeline.get('run_codebook_classifier', False),
+        speaker_anonymization_key_path=pipeline.get('speaker_anonymization_key_path'),
         auto_analyze=pipeline.get('auto_analyze', True),
         segmentation=SegmentationConfig(
             use_conversational_segmenter=seg.get('use_conversational_segmenter', True),

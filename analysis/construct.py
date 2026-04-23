@@ -164,7 +164,7 @@ def generate_stage_report(
         'co_occurring_codes': co_occurring_codes,
     }
 
-    out_dir = os.path.join(output_dir, 'reports', 'analysis', 'constructs')
+    out_dir = os.path.join(output_dir, 'reports', 'analysis', 'constructs', 'json')
     os.makedirs(out_dir, exist_ok=True)
     fname = f'stage_{stage_id}_{stage_name_slug}.json'
     with open(os.path.join(out_dir, fname), 'w', encoding='utf-8') as f:
@@ -247,7 +247,7 @@ def generate_codebook_code_report(
         'top_exemplars': top_exemplars,
     }
 
-    out_dir = os.path.join(output_dir, 'reports', 'analysis', 'constructs')
+    out_dir = os.path.join(output_dir, 'reports', 'analysis', 'constructs', 'json')
     os.makedirs(out_dir, exist_ok=True)
     safe_code_id = re.sub(r'[^a-z0-9_\-]', '_', code_id.lower())
     fname = f'codebook_{safe_code_id}.json'
@@ -298,3 +298,213 @@ def generate_all_construct_reports(
             print(f"  Warning: codebook report failed for {code_id}: {e}")
 
     return stage_reports
+
+
+def generate_codebook_text_report(
+    df: pd.DataFrame,
+    framework: dict,
+    output_dir: str,
+):
+    """
+    Produce a human-readable codebook exemplar report at
+    reports/analysis/constructs/codebook_exemplars.txt.
+
+    Computes all statistics and exemplars directly from ``df`` (the master
+    segment DataFrame) — not from the pre-written per-code JSON files.
+    Code definitions (description, subcodes, criteria) are loaded from
+    meta/codebook_definitions.json when available.
+
+    Returns the output path, or None if no codebook labels are present.
+    """
+    import datetime as _dt
+    import textwrap
+
+    if 'codebook_labels_ensemble' not in df.columns:
+        return None
+
+    # Collect all code IDs that appear in the data
+    seen_codes: set = set()
+    for codes in df['codebook_labels_ensemble']:
+        if isinstance(codes, list):
+            seen_codes.update(c for c in codes if c)
+    if not seen_codes:
+        return None
+
+    n_total = len(df)
+
+    # Load codebook definitions from meta/
+    definitions: dict = {}   # code_id -> raw dict
+    cb_meta: dict = {}
+    for candidate in (
+        os.path.join(output_dir, 'meta', 'codebook_definitions.json'),
+        os.path.join(output_dir, 'codebook_definitions.json'),
+    ):
+        if os.path.exists(candidate):
+            with open(candidate, encoding='utf-8') as f:
+                cb_meta = json.load(f)
+            for c in cb_meta.get('codes', []):
+                definitions[c['code_id']] = c
+            break
+
+    # Determine domain ordering from definitions; fall back to alphabetical
+    domains_ordered: list = []
+    domain_to_codes: dict = {}
+    if definitions:
+        for c in cb_meta.get('codes', []):
+            cid = c['code_id']
+            if cid not in seen_codes:
+                continue   # skip codes not present in dataset
+            d = c.get('domain', 'Other')
+            if d not in domain_to_codes:
+                domains_ordered.append(d)
+                domain_to_codes[d] = []
+            domain_to_codes[d].append(cid)
+    else:
+        domain_to_codes['All Codes'] = sorted(seen_codes)
+        domains_ordered = ['All Codes']
+
+    # Pre-compute per-code DataFrames and lift against all stages
+    stage_ids = sorted(framework.keys())
+
+    constructs_dir = os.path.join(output_dir, 'reports', 'analysis', 'constructs')
+    os.makedirs(constructs_dir, exist_ok=True)
+    out_path = os.path.join(constructs_dir, 'codebook_exemplars.txt')
+
+    def _wrap(text, width=72, indent='  ', subsequent='  ') -> list:
+        return textwrap.wrap(str(text or ''), width=width,
+                             initial_indent=indent,
+                             subsequent_indent=subsequent) or [indent]
+
+    with open(out_path, 'w', encoding='utf-8') as fh:
+        cb_name = cb_meta.get('name', 'Codebook')
+        cb_ver  = cb_meta.get('version', '')
+        cb_desc = cb_meta.get('description', '')
+        n_codes_with_data = len(seen_codes)
+        n_total_defs = len(definitions) if definitions else n_codes_with_data
+
+        fh.write("=" * 78 + "\n")
+        fh.write("CODEBOOK EXEMPLARS\n")
+        fh.write(f"{cb_name}  v{cb_ver}\n" if cb_ver else f"{cb_name}\n")
+        if cb_desc:
+            for line in _wrap(cb_desc, width=76, indent='', subsequent=''):
+                fh.write(line + "\n")
+        fh.write(f"Generated: {_dt.datetime.utcnow().strftime('%Y-%m-%d')}\n")
+        fh.write(
+            f"Codebook codes: {n_total_defs}  |  "
+            f"Codes present in dataset: {n_codes_with_data}  |  "
+            f"Total segments: {n_total}\n"
+        )
+        fh.write("=" * 78 + "\n\n")
+
+        for domain in domains_ordered:
+            code_ids = domain_to_codes.get(domain, [])
+            if not code_ids:
+                continue
+            fh.write(f"DOMAIN: {domain}  ({len(code_ids)} codes)\n")
+            fh.write("=" * 78 + "\n\n")
+
+            for code_id in code_ids:
+                defn = definitions.get(code_id, {})
+                category = defn.get('category', code_id)
+
+                fh.write(f"[{code_id}]\n")
+                fh.write(f"  {category}\n")
+                fh.write("-" * 78 + "\n")
+
+                desc = defn.get('description', '')
+                if desc:
+                    for line in _wrap(desc, width=74, indent='  Description:   ',
+                                      subsequent='                 '):
+                        fh.write(line + "\n")
+
+                subcodes = defn.get('subcodes', [])
+                if subcodes:
+                    sc_str = ', '.join(subcodes)
+                    for line in _wrap(sc_str, width=74, indent='  Subcodes:      ',
+                                      subsequent='                 '):
+                        fh.write(line + "\n")
+
+                incl = defn.get('inclusive_criteria', '')
+                if incl:
+                    for line in _wrap(incl, width=74, indent='  Include when:  ',
+                                      subsequent='                 '):
+                        fh.write(line + "\n")
+
+                excl = defn.get('exclusive_criteria', '')
+                if excl:
+                    for line in _wrap(excl, width=74, indent='  Exclude when:  ',
+                                      subsequent='                 '):
+                        fh.write(line + "\n")
+
+                exemplar_utts = defn.get('exemplar_utterances', [])
+                if exemplar_utts:
+                    fh.write("  Canonical exemplars:\n")
+                    for utt in exemplar_utts:
+                        for line in _wrap(utt, width=72, indent='    • ',
+                                          subsequent='      '):
+                            fh.write(line + "\n")
+
+                # ---- Compute stats directly from df ----
+                code_mask = df['codebook_labels_ensemble'].apply(
+                    lambda codes: code_id in (codes or [])
+                )
+                code_df = df[code_mask].copy()
+                n_coded = len(code_df)
+                pct = round(100.0 * n_coded / n_total, 1) if n_total > 0 else 0.0
+
+                fh.write(f"\n  DATASET STATS  (N={n_coded} of {n_total} segments, {pct}%)\n")
+
+                # Stage co-occurrence by lift
+                if stage_ids and n_coded > 0:
+                    lift_rows = []
+                    for st in stage_ids:
+                        st_name = framework.get(st, {}).get('short_name', f'Stage {st}')
+                        n_st = int((df['final_label'] == st).sum())
+                        n_code_in_st = int(
+                            (code_df['final_label'] == st).sum()
+                        )
+                        lift = _compute_lift(n_code_in_st, n_st, n_coded, n_total)
+                        if n_code_in_st > 0:
+                            lift_rows.append((st_name, n_code_in_st, lift))
+                    lift_rows.sort(key=lambda x: x[2], reverse=True)
+                    if lift_rows:
+                        parts = [f"{name} ×{lift:.2f} (n={cnt})"
+                                 for name, cnt, lift in lift_rows]
+                        for line in _wrap(', '.join(parts), width=72,
+                                          indent='    Stage co-occurrence: ',
+                                          subsequent='                        '):
+                            fh.write(line + "\n")
+
+                # Exemplars directly from df using the same selector used elsewhere
+                ex_rows = select_prototypical_exemplars(code_df, n=5)
+                if not ex_rows.empty:
+                    fh.write("  Dataset exemplars:\n")
+                    for i in range(len(ex_rows)):
+                        ex = ex_rows.iloc[i]
+                        sid  = str(ex.get('session_id', '?'))
+                        pid  = str(ex.get('participant_id', '?'))
+                        conf = ex.get('llm_confidence_primary')
+                        cons = ex.get('llm_run_consistency')
+                        conf_str = f"conf={conf:.2f}" if isinstance(conf, (int, float)) else ''
+                        cons_str = f"consistency={int(cons)}" if pd.notna(cons) else ''
+                        meta = '  '.join(filter(None, [conf_str, cons_str]))
+                        fh.write(f"    [{i+1}]  {sid}  {pid}  {meta}\n")
+                        text = str(ex.get('text', ''))
+                        for tl in textwrap.wrap(text, width=70,
+                                                initial_indent='         ',
+                                                subsequent_indent='         '):
+                            fh.write(tl + "\n")
+                        just = str(ex.get('llm_justification') or '').strip()
+                        if just:
+                            for line in _wrap(just, width=70,
+                                              indent='         → ',
+                                              subsequent='           '):
+                                fh.write(line + "\n")
+                else:
+                    fh.write("  (No high-confidence exemplars found for this code)\n")
+
+                fh.write("\n")
+
+            fh.write("\n")
+
+    return out_path

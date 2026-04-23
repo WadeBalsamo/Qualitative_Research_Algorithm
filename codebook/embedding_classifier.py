@@ -182,7 +182,7 @@ class EmbeddingCodebookClassifier:
                     f"Failed to load embedding model '{model_id}': {e}"
                 ) from e
 
-        dim = self._model.get_sentence_embedding_dimension()
+        dim = self._model.get_embedding_dimension()
         self._embed_dim = dim or 1024
         print(f"  Embedding model ready  ({self._embed_dim}-dim embeddings).")
         return self._model

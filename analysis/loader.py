@@ -158,8 +158,11 @@ def load_framework(output_dir: str) -> dict:
     """
     path = os.path.join(output_dir, 'theme_definitions.json')
     if not os.path.isfile(path):
-        path = os.path.join(output_dir, '/meta/theme_definitions.json')
+        path = os.path.join(os.path.join(output_dir, 'meta'), 'theme_definitions.json')
         if not os.path.isfile(path):
+            
+            if not os.path.isfile(path):
+                                                                print("NOT FOUND:", path)
                                                                 raise FileNotFoundError(
                                                                     f"theme_definitions.json not found in {output_dir}\n"
                                                                     f"This file is created by the pipeline. Re-run to regenerate it."

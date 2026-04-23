@@ -115,6 +115,9 @@ class PipelineConfig:
     # Resume from checkpoint
     resume_from: Optional[str] = None
 
+    # Speaker anonymization key import (for seeding participant IDs)
+    speaker_anonymization_key_path: Optional[str] = None
+
     # Post-pipeline results analysis
     auto_analyze: bool = False
 

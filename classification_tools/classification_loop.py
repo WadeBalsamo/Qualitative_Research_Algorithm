@@ -184,26 +184,22 @@ def classify_segments(
         print(f"  [{i + 1}/{total}] {segment.segment_id}{pct}")
         print(f"           \"{snippet}\"")
 
-        run_results: List[Any] = []
+        # Preserve slot positions: run_results[k] is the ballot from rater k,
+        # or None when that run failed to produce a parseable response.
+        # All n_runs always execute — no early-exit — so every rater gets a
+        # chance to cast a ballot. Early-exit would bias IRR estimates.
+        run_results: List[Any] = [None] * n_runs
         for run in range(n_runs):
             prompt = build_prompt(segment, run, segments, i)
             try:
                 result_text, _ = client.request(prompt)
                 if result_text is not None:
                     parsed = parse_response(result_text)
-                    if parsed is not None:
-                        run_results.append(parsed)
+                    run_results[run] = parsed
             except Exception as e:
                 print(f"  Error on {segment.segment_id}, run {run}: {e}")
 
-            # Early exit: first 2 runs agree with high confidence — skip remaining.
-            if (len(run_results) >= 2 and run < n_runs - 1
-                    and isinstance(run_results[-1], dict) and isinstance(run_results[-2], dict)):
-                if (run_results[-1].get('primary_stage') == run_results[-2].get('primary_stage')
-                        and (run_results[-1].get('primary_confidence') or 0) >= 0.7):
-                    break
-
-        if run_results:
+        if any(r is not None for r in run_results):
             ok_count += 1
         else:
             error_count += 1
@@ -299,9 +295,13 @@ def _classify_segments_model_first(
 
             run_results.setdefault(seg_id, {})[str(run_idx)] = parsed
 
-            snippet = segment.text[:60].replace('\n', ' ')
+            snippet = segment.text#[:60].replace('\n', ' ')
             print(f"  [Run {run_idx + 1}/{n_runs} | Seg {i + 1}/{total}] {seg_id}: \"{snippet}...\"")
-
+            # print the result of this run for the current segment, if parseable
+            if parsed is not None:
+                print(f"    → Parsed result: {parsed}")
+            else:
+                print(f"    → No parseable result")
             if output_dir and i % save_interval == 0:
                 _save_runs_checkpoint(
                     run_results, completed_runs, n_runs, per_run_models,
@@ -318,25 +318,26 @@ def _classify_segments_model_first(
     client.config.model = original_model
 
     # -- Merge phase --
+    # Preserve per-rater slot alignment: slot k always corresponds to
+    # per_run_models[k], with None marking rater k's parse failure. The
+    # merge_runs callback in llm_classifier wraps vote_single_label with
+    # the pre-configured rater_ids, so ordering matters.
     results: Dict[str, Any] = {}
     ok_count = 0
     error_count = 0
     for i, segment in enumerate(segments):
         seg_id = segment.segment_id
         seg_run_data = run_results.get(seg_id, {})
-        items = [(seg_run_data.get(str(r)), per_run_models[r]) for r in range(n_runs)]
-        valid_items = [(p, m) for p, m in items if p is not None]
-        valid = [p for p, m in valid_items]
-        valid_model_names = [m for p, m in valid_items]
-        if valid:
+        slot_ballots = [seg_run_data.get(str(r)) for r in range(n_runs)]
+        if any(p is not None for p in slot_ballots):
             ok_count += 1
         else:
             error_count += 1
-        merged = merge_runs(valid)
+        merged = merge_runs(slot_ballots)
         results[seg_id] = merged
         if status_path:
-            _write_status_entry(status_path, segment, i, total, merged, valid,
-                                run_model_names=valid_model_names)
+            _write_status_entry(status_path, segment, i, total, merged,
+                                slot_ballots, run_model_names=per_run_models)
 
     print(f"  Classification complete: {ok_count} ok, {error_count} errors out of {total}")
     if status_path:
@@ -432,74 +433,85 @@ def _write_status_entry(
     run_results: List[Any],
     run_model_names: Optional[List[str]] = None,
 ):
-    """Append a human-readable status entry for one segment to the status file."""
+    """Append a human-readable status entry for one segment to the status file.
+
+    Reads the unified merge-result shape:
+        {'rater_ids': [...], 'rater_votes': [...], 'consensus': {...}}
+    """
     with open(status_path, 'a') as sf:
         start_tc = _ms_to_timecode(segment.start_time_ms)
         end_tc = _ms_to_timecode(segment.end_time_ms)
         sf.write(f" {segment.segment_id}\n\n")
-        
         sf.write(f"  Session: {segment.session_id}  |  [{index + 1}/{total}]  |  "
                  f"Time: {start_tc} --> {end_tc}\n")
         sf.write("-" * 60 + "\n")
 
-        # Segment text (wrapped for readability)
         sf.write("SEGMENT TEXT:\n")
         for line in textwrap.wrap(segment.text, width=76, initial_indent="  ", subsequent_indent="  "):
             sf.write(line + "\n")
         sf.write("\n")
 
-        # Segment key: speaker role and speaker IDs, word count, time range
-        speaker = segment.speaker or "unknown"
-        speakers_list = ""
-        if segment.speakers_in_segment:
-            short_ids = [sp.rsplit('_', 1)[-1] if '_' in sp else sp
-                         for sp in segment.speakers_in_segment]
-            speakers_list = f" (ids: {', '.join(short_ids)})"
-      #  sf.write(f"  Speaker: {speaker}{speakers_list}\n")
-      #  sf.write(f"  Words: {segment.word_count})"
-
-        # Per-run results
-        if len(run_results) >1:
-            sf.write(f"CLASSIFICATION RUNS ({len(run_results)} successful):\n")
-            for r, run in enumerate(run_results):
-                if isinstance(run, dict):
-                    stage = _stage_name(run.get('primary_stage', '?'))
-                    conf = run.get('primary_confidence', '?')
-                    sec = run.get('secondary_stage')
-                    just = run.get('justification', '')
-                    sec_str = f"  secondary={_stage_name(sec)}" if sec else ""
-                    model_label = f" ({run_model_names[r]})" if run_model_names and r < len(run_model_names) else ""
-                    sf.write(f"  Run {r + 1}{model_label}: stage={stage}  conf={conf}{sec_str}\n")
-                    if just:
-                        for line in textwrap.wrap(just, width=72, initial_indent="    → ", subsequent_indent="      "):
-                            sf.write(line + "\n")
-                else:
-                    sf.write(f"  Run {r + 1}: {run}\n")
-
-        # Merged / consistency result
-        sf.write("\nCLASSIFICATION:\n")
-        if isinstance(merged, dict):
-            consistency = merged.get('consistency', {})
-            if isinstance(consistency, dict):
-                sf.write(f"  Stage: {_stage_name(consistency.get('primary_stage', '?'))}\n")
-                sf.write(f"  Confidence:    {consistency.get('confidence', '?')}\n")
-          #      sf.write(f"  Consistency:   {consistency.get('consistency', '?')}/3\n")
-                sec = consistency.get('secondary_stage')
-                if sec:
-                    sf.write(f"  Secondary:     {_stage_name(sec)} ({consistency.get('secondary_confidence', '?')})\n")
-                just = consistency.get('justification', '')
-                if just:
-                    sf.write(f"  Justification: {just}\n")
-                n_total = len(run_results)
-                n_agreed = consistency.get('consistency', n_total)
-                if n_total > 1 and n_agreed < n_total:
-                    if consistency.get('tie_broken_by_confidence'):
-                        sf.write(f"  ↳ TIE BROKEN BY CONFIDENCE — equal votes; higher avg confidence decided\n")
-                    else:
-                        sf.write(f"  ↳ MAJORITY: {n_agreed}/{n_total} runs agreed on this stage\n")
-            else:
-                sf.write(f"  {json.dumps(merged, default=str)[:200]}\n")
-        else:
+        if not isinstance(merged, dict):
             sf.write(f"  {str(merged)[:200]}\n")
+            sf.write("\n" + "=" * 80 + "\n\n")
+            return
+
+        rater_votes = merged.get('rater_votes') or []
+        rater_ids = merged.get('rater_ids') or run_model_names or []
+        consensus = merged.get('consensus') or {}
+
+        if rater_votes:
+            sf.write(f"RATER BALLOTS ({len(rater_votes)}):\n")
+            for r, rv in enumerate(rater_votes):
+                rid = rv.get('rater') or (rater_ids[r] if r < len(rater_ids) else f'run_{r + 1}')
+                vote_kind = rv.get('vote', '?')
+                stage = rv.get('stage')
+                conf = rv.get('confidence')
+                sec = rv.get('secondary_stage')
+                just = rv.get('justification') or ''
+                if vote_kind == 'CODED':
+                    conf_s = f"{conf:.2f}" if isinstance(conf, (int, float)) else str(conf)
+                    sec_s = f"  secondary={_stage_name(sec)}" if sec is not None else ""
+                    sf.write(f"  [{rid}] CODED stage={_stage_name(stage)}  conf={conf_s}{sec_s}\n")
+                elif vote_kind == 'ABSTAIN':
+                    sf.write(f"  [{rid}] ABSTAIN (irrelevant to framework)\n")
+                else:
+                    sf.write(f"  [{rid}] ERROR (no parseable response)\n")
+                if just:
+                    for line in textwrap.wrap(just, width=72, initial_indent="    → ", subsequent_indent="      "):
+                        sf.write(line + "\n")
+
+        sf.write("\nCONSENSUS:\n")
+        agreement = consensus.get('agreement_level', '?')
+        n_agree = consensus.get('n_agree', 0)
+        n_raters = consensus.get('n_raters', len(rater_votes))
+        consensus_vote = consensus.get('consensus_vote')
+        needs_review = consensus.get('needs_review', False)
+
+        if consensus_vote == 'ABSTAIN':
+            sf.write(f"  Result: UNCLASSIFIED (consensus ABSTAIN)\n")
+        elif consensus.get('primary_stage') is None:
+            sf.write(f"  Result: UNCLASSIFIED ({agreement})\n")
+        else:
+            conf = consensus.get('primary_confidence', 0.0)
+            sf.write(f"  Result: CLASSIFIED as {_stage_name(consensus['primary_stage'])}\n")
+            sf.write(f"  Mean confidence: {conf:.3f}\n")
+            sec = consensus.get('secondary_stage')
+            if sec is not None:
+                sec_conf = consensus.get('secondary_confidence')
+                sec_conf_s = f" ({sec_conf:.2f})" if isinstance(sec_conf, (int, float)) else ""
+                sf.write(f"  Secondary: {_stage_name(sec)}{sec_conf_s}\n")
+            just = consensus.get('justification') or ''
+            if just:
+                for line in textwrap.wrap(just, width=72,
+                                          initial_indent="  Justification: ",
+                                          subsequent_indent="    "):
+                    sf.write(line + "\n")
+
+        sf.write(f"  Agreement: {agreement}  ({n_agree}/{n_raters} raters)\n")
+        if consensus.get('tie_broken_by_confidence'):
+            sf.write(f"  ↳ TIE BROKEN BY CONFIDENCE\n")
+        if needs_review:
+            sf.write(f"  ↳ FLAGGED FOR HUMAN REVIEW\n")
 
         sf.write("\n" + "=" * 80 + "\n\n")
