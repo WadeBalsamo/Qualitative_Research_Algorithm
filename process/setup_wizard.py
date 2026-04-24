@@ -19,7 +19,9 @@ from .config import (
     PipelineConfig,
     SegmentationConfig,
     ValidationConfig,
+    TestSetConfig,
     ConfidenceTierConfig,
+    TherapistCueConfig,
 )
 from .transcript_ingestion import scan_speakers
 
@@ -129,8 +131,9 @@ class SetupWizard:
         self._step_7_codebook()
         self._step_8_classification()
         self._step_9_confidence()
-        self._step_10_analysis()
-        self._step_11_run_mode()
+        self._step_10_testsets()
+        self._step_11_analysis()
+        self._step_11b_therapist_cues()
         config_path = self._step_12_save()
 
         return {
@@ -331,7 +334,6 @@ class SetupWizard:
         if not _prompt_yes_no("Configure advanced segmentation options?", False):
             # Use defaults
             self.config_data['segmentation'] = {
-                'use_conversational_segmenter': True,
                 'max_gap_seconds': 15.0,
                 'min_words_per_sentence': 20,
                 'max_segment_duration_seconds': 60.0,
@@ -350,20 +352,11 @@ class SetupWizard:
             print()
             return
 
-        use_conv = _prompt_yes_no(
-            "Use conversational segmenter (groups by topic across speakers)?", True
-        )
-
         max_gap = _prompt_float("Max time gap (seconds) between utterances to group", 15.0)
         min_words_sent = _prompt_int("Min words per sentence (shorter are folded into neighbors)", 20)
         max_duration = _prompt_float("Max segment duration (seconds)", 60.0)
-
-        if use_conv:
-            min_words = _prompt_int("Min words per segment (conversational)", 60)
-            max_words = _prompt_int("Max words per segment (conversational)", 500)
-        else:
-            min_words = _prompt_int("Min words per segment", 60)
-            max_words = _prompt_int("Max words per segment", 500)
+        min_words = _prompt_int("Min words per segment", 60)
+        max_words = _prompt_int("Max words per segment", 500)
 
         # Adaptive threshold
         use_adaptive = _prompt_yes_no(
@@ -396,12 +389,11 @@ class SetupWizard:
             )
 
         self.config_data['segmentation'] = {
-            'use_conversational_segmenter': use_conv,
             'max_gap_seconds': max_gap,
             'min_words_per_sentence': min_words_sent,
             'max_segment_duration_seconds': max_duration,
-            'min_segment_words_conversational' if use_conv else 'min_segment_words': min_words,
-            'max_segment_words_conversational' if use_conv else 'max_segment_words': max_words,
+            'min_segment_words_conversational': min_words,
+            'max_segment_words_conversational': max_words,
             'use_adaptive_threshold': use_adaptive,
             'min_prominence': min_prominence,
             'use_topic_clustering': use_clustering,
@@ -677,10 +669,37 @@ class SetupWizard:
 
 
     # -----------------------------------------------------------------
-    # Step 10: Post-pipeline Analysis
+    # Step 10: Validation Test Sets
     # -----------------------------------------------------------------
-    def _step_10_analysis(self):
-        print("--- Step 10/12: Post-Pipeline Analysis ---")
+    def _step_10_testsets(self):
+        print("--- Step 10/12: Validation Test Sets ---")
+        print("    Cross-session test sets let human raters independently code a random")
+        print("    sample of participant segments drawn proportionally from all cohorts,")
+        print("    for inter-rater reliability comparison against AI classifications.")
+        print()
+        enable = _prompt_yes_no("Generate validation test sets?", True)
+        self.config_data['test_sets'] = {'enabled': enable}
+        if not enable:
+            print()
+            return
+        n_sets = _prompt_int("Number of test sets", 2)
+        fraction = _prompt_float("Fraction of segments per set (e.g. 0.10 = 10%)", 0.10)
+        if n_sets * fraction > 1.0:
+            fraction = round(1.0 / n_sets, 2)
+            print(f"    Adjusted fraction to {fraction} so sets don't overlap.")
+        self.config_data['test_sets'].update({
+            'n_sets': n_sets,
+            'fraction_per_set': fraction,
+            'random_seed': 42,
+        })
+        print(f"    Will produce {n_sets} test sets × ~{fraction:.0%} of participant segments, stratified by cohort.")
+        print()
+
+    # -----------------------------------------------------------------
+    # Step 11: Post-pipeline Analysis
+    # -----------------------------------------------------------------
+    def _step_11_analysis(self):
+        print("--- Step 11/12: Post-Pipeline Analysis ---")
         print("    After the pipeline completes, the analysis module can generate:")
         print("    - Per-participant longitudinal reports (VA-MR progression)")
         print("    - Per-session summaries with prototypical exemplars")
@@ -698,25 +717,44 @@ class SetupWizard:
             print("    Analysis can be run manually: python qra.py analyze --output-dir ./data/output/")
         print()
 
-    # -----------------------------------------------------------------
-    # Step 11: Run mode
-    # -----------------------------------------------------------------
-    def _step_11_run_mode(self):
-        print("--- Step 11/12: Run Mode ---")
-        print("    auto        : Fully automated (no human intervention)")
-        print("    interactive : Prompt for validation of uncertain results")
-        print("    review      : Batch validation at end")
-        mode = _prompt_choice("Run mode", ['auto', 'interactive', 'review'], 'auto')
-        self.config_data['pipeline']['run_mode'] = mode
         print()
-        
+
+    # -----------------------------------------------------------------
+    # Step 11b: Therapist cue summarization
+    # -----------------------------------------------------------------
+    def _step_11b_therapist_cues(self):
+        print("--- Step 11b/12: Therapist Cue Summarization ---")
+        print("    When enabled, therapist dialogue between two participant segments")
+        print("    is surfaced as a CUE in state_transition_explanation.txt, and")
+        print("    cue_response.txt is generated with averaged cues by transition type.")
+        print()
+        enable = _prompt_yes_no("Enable therapist cue summarization in transition analysis?", True)
+        if not enable:
+            self.config_data['therapist_cues'] = {'enabled': False}
+            print()
+            return
+
+        max_per_cue = _prompt_int(
+            "Max words per inline cue (longer cues will be LLM-summarized)", 250
+        )
+        max_agg = _prompt_int(
+            "Max words per averaged block in cue_response.txt", 1000
+        )
+        self.config_data['therapist_cues'] = {
+            'enabled': True,
+            'max_length_per_cue': max_per_cue,
+            'max_length_of_average_cue_responses': max_agg,
+        }
+        print()
+
     # -----------------------------------------------------------------
     # Step 12: Save & run
     # -----------------------------------------------------------------
     def _step_12_save(self) -> str:
         print("--- Step 12/12: Save Configuration ---")
+        from . import output_paths as _paths
         default_path = os.path.join(
-            self.config_data['pipeline'].get('output_dir', './data/output/meta/'),
+            _paths.meta_dir(self.config_data['pipeline'].get('output_dir', './data/output/')),
             'qra_config.json',
         )
         save_path = _prompt("Save config to", default_path)
@@ -754,15 +792,11 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         transcript_dir=pipeline.get('transcript_dir', './data/input/diarized_sessions/'),
         trial_id=pipeline.get('trial_id', 'standard'),
         output_dir=pipeline.get('output_dir', './data/output/'),
-        run_mode=pipeline.get('run_mode', 'auto'),
         run_theme_labeler=pipeline.get('run_theme_labeler', True),
         run_codebook_classifier=pipeline.get('run_codebook_classifier', False),
         speaker_anonymization_key_path=pipeline.get('speaker_anonymization_key_path'),
         auto_analyze=pipeline.get('auto_analyze', True),
         segmentation=SegmentationConfig(
-            use_conversational_segmenter=seg.get('use_conversational_segmenter', True),
-            min_segment_words=seg.get('min_segment_words', 30),
-            max_segment_words=seg.get('max_segment_words', 200),
             min_segment_words_conversational=seg.get('min_segment_words_conversational', 60),
             max_segment_words_conversational=seg.get('max_segment_words_conversational', 300),
             max_gap_seconds=seg.get('max_gap_seconds', 15.0),
@@ -798,9 +832,19 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             exemplar_import_path=cb_emb.get('exemplar_import_path'),
         ),
         validation=ValidationConfig(),
+        test_sets=TestSetConfig(
+            enabled=data.get('test_sets', {}).get('enabled', True),
+            n_sets=data.get('test_sets', {}).get('n_sets', 2),
+            fraction_per_set=data.get('test_sets', {}).get('fraction_per_set', 0.10),
+            random_seed=data.get('test_sets', {}).get('random_seed', 42),
+        ),
         confidence_tiers=ConfidenceTierConfig(
             high_confidence=ct.get('high_confidence', 0.8),
             medium_min_confidence=ct.get('medium_min_confidence', 0.6),
+        ),
+        therapist_cues=TherapistCueConfig(
+            **{k: v for k, v in data.get('therapist_cues', {}).items()
+               if k in ('enabled', 'max_length_per_cue', 'max_length_of_average_cue_responses')}
         ),
     )
 

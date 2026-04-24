@@ -7,7 +7,7 @@ and classification logic used across the pipeline.
 
 __version__ = "0.2.0"
 
-from .data_structures import Segment, SpeakerRun
+from .data_structures import Segment
 from .validation import create_balanced_evaluation_set
 from .llm_client import LLMClient, LLMClientConfig, extract_json
 from .classification_loop import filter_participant_segments, classify_segments

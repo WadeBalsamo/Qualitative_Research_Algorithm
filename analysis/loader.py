@@ -14,23 +14,21 @@ import re
 from typing import Optional
 
 import pandas as pd
+from process import output_paths as _paths
 
 
 def find_master_csv(output_dir: str) -> str:
-    """Return path to master_segment_dataset.csv in output_dir.
-
-    Raises FileNotFoundError if not present.
-    """
-    path = os.path.join(output_dir, 'master_segment_dataset.csv')
-    if os.path.isfile(path):
-        return path
-    else:
-        #find the file with 'master_segment' and '.csv' in the name
-        for filename in os.listdir(output_dir):
-            if 'master_segment' in filename and filename.endswith('.csv'):
-                return os.path.join(output_dir, filename)
+    """Return path to master_segments.csv, searching new then legacy locations."""
+    # New layout: 06_training_data/master_segments.csv
+    new_path = os.path.join(_paths.master_segments_dir(output_dir), 'master_segments.csv')
+    if os.path.isfile(new_path):
+        return new_path
+    # Legacy: any master_segment*.csv in output_dir root
+    for filename in os.listdir(output_dir):
+        if 'master_segment' in filename and filename.endswith('.csv'):
+            return os.path.join(output_dir, filename)
     raise FileNotFoundError(
-        f"master_segment_dataset.csv not found in {output_dir}\n"
+        f"master_segments.csv not found in {output_dir}\n"
         f"Run the pipeline first: python qra.py run --output-dir {output_dir}"
     )
 
@@ -151,22 +149,24 @@ def load_segments(
 
 
 def load_framework(output_dir: str) -> dict:
-    """Load theme_definitions.json from output_dir.
+    """Load theme_definitions.json, searching new then legacy locations.
 
     Returns dict mapping int stage_id → {id, key, name, short_name, definition}.
     Raises FileNotFoundError if theme_definitions.json is absent.
     """
-    path = os.path.join(output_dir, 'theme_definitions.json')
-    if not os.path.isfile(path):
-        path = os.path.join(os.path.join(output_dir, 'meta'), 'theme_definitions.json')
-        if not os.path.isfile(path):
-            
-            if not os.path.isfile(path):
-                                                                print("NOT FOUND:", path)
-                                                                raise FileNotFoundError(
-                                                                    f"theme_definitions.json not found in {output_dir}\n"
-                                                                    f"This file is created by the pipeline. Re-run to regenerate it."
-                                                                )
+    for candidate in (
+        os.path.join(_paths.meta_dir(output_dir), 'theme_definitions.json'),
+        os.path.join(output_dir, 'meta', 'theme_definitions.json'),
+        os.path.join(output_dir, 'theme_definitions.json'),
+    ):
+        if os.path.isfile(candidate):
+            path = candidate
+            break
+    else:
+        raise FileNotFoundError(
+            f"theme_definitions.json not found in {output_dir}\n"
+            f"This file is created by the pipeline. Re-run to regenerate it."
+        )
     with open(path) as f:
         data = json.load(f)
 

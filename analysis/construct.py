@@ -164,7 +164,8 @@ def generate_stage_report(
         'co_occurring_codes': co_occurring_codes,
     }
 
-    out_dir = os.path.join(output_dir, 'reports', 'analysis', 'constructs', 'json')
+    from process import output_paths as _paths
+    out_dir = _paths.constructs_json_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     fname = f'stage_{stage_id}_{stage_name_slug}.json'
     with open(os.path.join(out_dir, fname), 'w', encoding='utf-8') as f:
@@ -247,7 +248,8 @@ def generate_codebook_code_report(
         'top_exemplars': top_exemplars,
     }
 
-    out_dir = os.path.join(output_dir, 'reports', 'analysis', 'constructs', 'json')
+    from process import output_paths as _paths
+    out_dir = _paths.constructs_json_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     safe_code_id = re.sub(r'[^a-z0-9_\-]', '_', code_id.lower())
     fname = f'codebook_{safe_code_id}.json'
@@ -333,9 +335,11 @@ def generate_codebook_text_report(
     n_total = len(df)
 
     # Load codebook definitions from meta/
+    from process import output_paths as _paths
     definitions: dict = {}   # code_id -> raw dict
     cb_meta: dict = {}
     for candidate in (
+        os.path.join(_paths.meta_dir(output_dir), 'codebook_definitions.json'),
         os.path.join(output_dir, 'meta', 'codebook_definitions.json'),
         os.path.join(output_dir, 'codebook_definitions.json'),
     ):
@@ -366,7 +370,7 @@ def generate_codebook_text_report(
     # Pre-compute per-code DataFrames and lift against all stages
     stage_ids = sorted(framework.keys())
 
-    constructs_dir = os.path.join(output_dir, 'reports', 'analysis', 'constructs')
+    constructs_dir = _paths.constructs_dir(output_dir)
     os.makedirs(constructs_dir, exist_ok=True)
     out_path = os.path.join(constructs_dir, 'codebook_exemplars.txt')
 

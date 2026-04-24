@@ -1,23 +1,21 @@
 """
-analysis/graphing.py
---------------------
+analysis/figure_data.py
+-----------------------
 Export graph-ready CSV datasets for visualization in R/Python.
 
-Graph-ready CSVs land in {output_dir}/reports/analysis/graphing/.
-The session adjacency index (CFiCS graph construction data) lands in
-{output_dir}/reports/longitudinal/.
+Graph-ready CSVs land in {output_dir}/04_analysis_data/graphing/.
 """
 
-import json
 import os
 
 import pandas as pd
 
 from .loader import sort_session_ids
+from process import output_paths as _paths
 
 
 def _ensure_graphing_dir(output_dir: str) -> str:
-    out = os.path.join(output_dir, 'reports', 'analysis', 'graphing')
+    out = _paths.graphing_dir(output_dir)
     os.makedirs(out, exist_ok=True)
     return out
 
@@ -287,80 +285,6 @@ def export_combined_cohort_group_trajectories(
     path = os.path.join(out, 'combined_cohort_group_trajectories.csv')
     agg.to_csv(path, index=False)
     return agg
-
-
-def build_session_adjacency_index(
-    df: pd.DataFrame,
-    output_dir: str,
-) -> list:
-    """Build the session adjacency index for CFiCS graph construction.
-
-    Groups segments by session_id and records the ordered sequence of
-    segment IDs, separated by speaker role, plus adjacency pairs:
-    - therapist_to_participant_pairs: [(therapist_seg_id, participant_seg_id), ...]
-      for each turn where a therapist utterance is immediately followed by a
-      participant utterance.
-    - participant_sequential_pairs: consecutive participant segment pairs in order.
-
-    Output saved to reports/longitudinal/session_adjacency.jsonl (one JSON
-    object per line, one session per line).
-
-    Parameters
-    ----------
-    df : DataFrame
-        Master segment DataFrame (from loader.load_segments()).
-    output_dir : str
-        Root pipeline output directory.
-
-    Returns
-    -------
-    List of session dicts written to the JSONL file.
-    """
-    out_dir = os.path.join(output_dir, 'reports', 'longitudinal')
-    os.makedirs(out_dir, exist_ok=True)
-    output_path = os.path.join(out_dir, 'session_adjacency.jsonl')
-
-    sessions = []
-    for session_id, session_df in df.groupby('session_id'):
-        session_df = session_df.sort_values('segment_index')
-
-        all_ids = session_df['segment_id'].tolist()
-        participant_ids = session_df[
-            session_df['speaker'] == 'participant'
-        ]['segment_id'].tolist()
-        therapist_ids = session_df[
-            session_df['speaker'] == 'therapist'
-        ]['segment_id'].tolist()
-
-        t_to_p_pairs = []
-        for i in range(1, len(session_df)):
-            current = session_df.iloc[i]
-            previous = session_df.iloc[i - 1]
-            if (
-                current['speaker'] == 'participant'
-                and previous['speaker'] == 'therapist'
-            ):
-                t_to_p_pairs.append([previous['segment_id'], current['segment_id']])
-
-        p_sequential = [
-            [participant_ids[i - 1], participant_ids[i]]
-            for i in range(1, len(participant_ids))
-        ]
-
-        sessions.append({
-            'session_id': session_id,
-            'segment_sequence': all_ids,
-            'participant_segments': participant_ids,
-            'therapist_segments': therapist_ids,
-            'therapist_to_participant_pairs': t_to_p_pairs,
-            'participant_sequential_pairs': p_sequential,
-        })
-
-    with open(output_path, 'w') as f:
-        for session in sessions:
-            f.write(json.dumps(session) + '\n')
-
-    return sessions
 
 
 def export_all_graphing_datasets(

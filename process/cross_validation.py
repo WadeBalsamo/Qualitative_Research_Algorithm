@@ -3,12 +3,11 @@ cross_validation.py
 -------------------
 Cross-validation between theme labels and codebook labels.
 
-Computes co-occurrence statistics to empirically validate (or refute)
-the hypothesized mapping between themes and codebook codes stored in
-ThemeFramework.codebook_hypothesis.
+Summarizes observed theme-to-code co-occurrence patterns to characterize
+empirical associations between VA-MR stages and phenomenology codes.
 """
 
-from typing import Dict
+from typing import Dict, List
 
 import pandas as pd
 
@@ -34,7 +33,7 @@ def compute_theme_codebook_cooccurrence(
         Must contain ``theme_label_column`` (int) and
         ``codebook_label_column`` (list of str or None).
     framework : ThemeFramework
-        Used to map theme IDs to keys and retrieve codebook_hypothesis.
+        Used to map theme IDs to keys.
     codebook_label_column : str
         Column containing list of codebook code IDs per segment.
     theme_label_column : str
@@ -97,68 +96,61 @@ def compute_theme_codebook_cooccurrence(
     return cooccurrence
 
 
-def validate_codebook_hypothesis(
-    cooccurrence: Dict[str, Dict],
-    framework: ThemeFramework,
+def summarize_theme_code_associations(
+    cooccurrence: Dict,
     min_lift: float = 1.5,
+    min_count: int = 3,
+    top_n: int = 10,
 ) -> Dict:
     """
-    Check the hypothesized theme-to-codebook mapping against observed data.
+    Summarize observed theme-to-code associations from co-occurrence data.
 
-    For each theme, checks whether the hypothesized codes have lift >= min_lift
-    in the observed co-occurrence data.
+    For each theme key, identifies codes with meaningful lift above the
+    corpus base rate, filtered to suppress sparse codes.
 
     Parameters
     ----------
     cooccurrence : dict
         Output of compute_theme_codebook_cooccurrence().
-    framework : ThemeFramework
-        Must have codebook_hypothesis populated.
     min_lift : float
-        Minimum lift to consider a hypothesized association confirmed.
+        Minimum lift to include a code in top_associations.
+    min_count : int
+        Minimum raw count to include a code (suppresses sparse codes).
+    top_n : int
+        Maximum number of associations to return per theme.
 
     Returns
     -------
     dict
-        Per-theme summary with confirmed/unconfirmed/unexpected associations.
+        Per-theme summary with keys:
+        - top_associations: list of {code, count, rate, base_rate, lift}
+          sorted by lift descending
+        - n_segments_in_theme: total labeled segments under that theme
+        - n_codes_observed: distinct codes appearing at any frequency
     """
-    if not framework.codebook_hypothesis:
-        return {}
-
     results = {}
 
-    for theme_key, hypothesized_codes in framework.codebook_hypothesis.items():
-        theme_cooc = cooccurrence.get(theme_key, {})
+    for theme_key, code_stats in cooccurrence.items():
+        n_codes_observed = len(code_stats)
 
-        confirmed = []
-        unconfirmed = []
-        for code in hypothesized_codes:
-            stats = theme_cooc.get(code)
-            if stats and stats['lift'] >= min_lift:
-                confirmed.append({'code': code, **stats})
-            else:
-                unconfirmed.append({
-                    'code': code,
-                    'lift': stats['lift'] if stats else 0,
-                    'count': stats['count'] if stats else 0,
-                })
+        # Derive n_segments_in_theme from count/rate of any entry
+        n_segments_in_theme = 0
+        for stats in code_stats.values():
+            if stats['rate'] > 0:
+                n_segments_in_theme = round(stats['count'] / stats['rate'])
+                break
 
-        # Find unexpected strong associations (not in hypothesis)
-        unexpected = []
-        for code, stats in theme_cooc.items():
-            if code not in hypothesized_codes and stats['lift'] >= min_lift:
-                unexpected.append({'code': code, **stats})
+        associations: List[Dict] = []
+        for code, stats in code_stats.items():
+            if stats['lift'] >= min_lift and stats['count'] >= min_count:
+                associations.append({'code': code, **stats})
 
-        unexpected.sort(key=lambda x: -x['lift'])
+        associations.sort(key=lambda x: -x['lift'])
 
         results[theme_key] = {
-            'confirmed': confirmed,
-            'unconfirmed': unconfirmed,
-            'unexpected': unexpected[:10],
-            'confirmation_rate': (
-                len(confirmed) / len(hypothesized_codes)
-                if hypothesized_codes else 0
-            ),
+            'top_associations': associations[:top_n],
+            'n_segments_in_theme': n_segments_in_theme,
+            'n_codes_observed': n_codes_observed,
         }
 
     return results

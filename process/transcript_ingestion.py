@@ -5,8 +5,6 @@ Transcript ingestion and segmentation.
 
 Consumes diarized transcripts from the whisper-diarization-batchprocess
 pipeline and produces coherent segments for classification.
-
-- Imports Segment/SpeakerRun from classification_tools.data_structures
 """
 
 import json
@@ -17,7 +15,7 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from classification_tools.data_structures import Segment, SpeakerRun
+from classification_tools.data_structures import Segment
 
 
 class SpeakerNormalizer:
@@ -30,7 +28,6 @@ class SpeakerNormalizer:
     """
 
     def __init__(self, excluded_speakers: List[str] = None,
-                 isolated_speakers: List[str] = None,
                  filter_mode: str = 'none',
                  existing_map: Dict[str, Tuple[str, str]] = None,
                  use_unknown_prefix: bool = False):
@@ -41,10 +38,8 @@ class SpeakerNormalizer:
         ----------
         excluded_speakers : list, optional
             Speaker names to exclude (treated as therapists/staff)
-        isolated_speakers : list, optional
-            Speaker names to isolate (treated as participants)
         filter_mode : str
-            'none', 'exclude', or 'isolate'
+            'none' or 'exclude'
         existing_map : dict, optional
             Persistent speaker-to-(role, anonymized_id) mapping loaded from a
             prior run.  Pre-populating from it ensures the same real-world
@@ -55,7 +50,6 @@ class SpeakerNormalizer:
             participant_{N}. This flags new speakers for later review.
         """
         self.excluded_speakers = set(excluded_speakers or [])
-        self.isolated_speakers = set(isolated_speakers or [])
         self.filter_mode = filter_mode
         self.use_unknown_prefix = use_unknown_prefix
 
@@ -85,16 +79,13 @@ class SpeakerNormalizer:
                 elif _role == 'therapist':
                     self.therapist_counter = max(self.therapist_counter, n)
 
-        # Pre-register known therapist/participant speakers so they appear
-        # in the anonymization key even if their sentences are filtered
-        # before segmentation.  Speakers already in existing_map are skipped
-        # by normalize() via the early-return on speaker_map lookup.
+        # Pre-register known therapist speakers so they appear in the
+        # anonymization key even if their sentences are filtered before
+        # segmentation.  Speakers already in existing_map are skipped by
+        # normalize() via the early-return on speaker_map lookup.
         if filter_mode == 'exclude':
             for name in sorted(excluded_speakers or []):
                 self.normalize(name)  # registers as therapist
-        elif filter_mode == 'isolate':
-            for name in sorted(isolated_speakers or []):
-                self.normalize(name)  # registers as participant
 
     def normalize(self, speaker_name: str) -> Tuple[str, str]:
         """
@@ -110,13 +101,8 @@ class SpeakerNormalizer:
 
         # Determine role based on filter config
         if self.filter_mode == 'exclude':
-            # Excluded speakers are therapists; others are participants
             is_therapist = speaker_name in self.excluded_speakers
-        elif self.filter_mode == 'isolate':
-            # Isolated speakers are participants; others are therapists
-            is_therapist = speaker_name not in self.isolated_speakers
         else:  # 'none'
-            # No filter; treat all as participants
             is_therapist = False
 
         if is_therapist:
@@ -145,267 +131,6 @@ class SpeakerNormalizer:
         """Get the role for a speaker ('participant' or 'therapist')."""
         role, _ = self.normalize(speaker_name)
         return role
-
-
-class TranscriptSegmenter:
-    """
-    Groups diarized sentences into coherent segments for classification.
-
-    Uses embedding-based similarity curves and pause signals with length
-    constraints tuned for therapeutic dialogue.
-
-    Normalizes speaker names to anonymous IDs (participant_1, therapist_2, etc.)
-    based on speaker filter configuration.
-    """
-
-    def __init__(self, config: dict):
-        self.embedding_model = SentenceTransformer(
-            config.get('embedding_model', 'Qwen/Qwen3-Embedding-8B')
-        )
-        self.min_words = config.get('min_segment_words', 30)
-        self.max_words = config.get('max_segment_words', 200)
-        self.silence_threshold_ms = config.get('silence_threshold_ms', 1500)
-        self.semantic_shift_percentile = config.get('semantic_shift_percentile', 25)
-
-        # Initialize speaker normalizer
-        excluded = config.get('excluded_speakers', [])
-        isolated = config.get('isolated_speakers', [])
-        filter_mode = config.get('speaker_filter_mode', 'none')
-        existing_map = config.get('existing_speaker_map')
-        use_unknown_prefix = config.get('use_unknown_prefix', False)
-        self.speaker_norm = SpeakerNormalizer(excluded, isolated, filter_mode, existing_map, use_unknown_prefix)
-
-    def segment_session(
-        self, sentences: List[Dict], session_metadata: Dict
-    ) -> List[Segment]:
-        """
-        Takes a list of sentence dicts from the diarization pipeline
-        and returns Segment objects suitable for classification.
-
-        Parameters
-        ----------
-        sentences : list of dict
-            Each dict has keys: text, speaker, start, end (seconds).
-        session_metadata : dict
-            Keys: trial_id, participant_id, session_id, session_number.
-        """
-        if not sentences:
-            return []
-
-        participant_runs, therapist_runs = self._separate_speaker_runs(
-            sentences, session_metadata
-        )
-
-        all_segments: List[Segment] = []
-        seg_counter = 0
-
-        for run in participant_runs + therapist_runs:
-            if not run.sentences:
-                continue
-
-            texts = [s['text'] for s in run.sentences]
-            embeddings = self.embedding_model.encode(
-                texts, normalize_embeddings=True
-            )
-
-            sim_curve = self._compute_similarity_curve(embeddings, window=3)
-            pause_curve = self._compute_pause_curve(run.sentences)
-
-            boundaries = self._find_boundaries(
-                sim_curve, pause_curve, run.sentences
-            )
-
-            segments = self._build_segments(
-                run.sentences, boundaries, run.speaker,
-                session_metadata, seg_counter
-            )
-            seg_counter += len(segments)
-            all_segments.extend(segments)
-
-        all_segments.sort(key=lambda s: s.start_time_ms)
-        for i, seg in enumerate(all_segments):
-            seg.segment_index = i
-
-        return all_segments
-
-    # ------------------------------------------------------------------
-    # Similarity and pause curves
-    # ------------------------------------------------------------------
-
-    def _compute_similarity_curve(
-        self, embeddings: np.ndarray, window: int = 3
-    ) -> np.ndarray:
-        n = len(embeddings)
-        if n <= 1:
-            return np.array([])
-        sims = np.zeros(n - 1)
-        for i in range(n - 1):
-            left_start = max(0, i - window + 1)
-            left_emb = embeddings[left_start:i + 1].mean(axis=0)
-            right_end = min(n, i + 1 + window)
-            right_emb = embeddings[i + 1:right_end].mean(axis=0)
-            sims[i] = float(np.dot(left_emb, right_emb))
-        return sims
-
-    def _compute_pause_curve(self, sentences: List[Dict]) -> np.ndarray:
-        n = len(sentences)
-        if n <= 1:
-            return np.array([])
-        pauses = np.zeros(n - 1)
-        for i in range(n - 1):
-            gap_ms = max(
-                0,
-                (sentences[i + 1].get('start', 0) - sentences[i].get('end', 0)) * 1000
-            )
-            pauses[i] = gap_ms
-        return pauses
-
-    # ------------------------------------------------------------------
-    # Boundary detection
-    # ------------------------------------------------------------------
-
-    def _find_boundaries(
-        self, sim_curve: np.ndarray, pause_curve: np.ndarray,
-        sentences: List[Dict]
-    ) -> List[int]:
-        if len(sim_curve) == 0:
-            return []
-
-        threshold = np.percentile(sim_curve, self.semantic_shift_percentile)
-        boundaries: List[int] = []
-
-        for i in range(len(sim_curve)):
-            is_sim_dip = sim_curve[i] < threshold
-            is_long_pause = (
-                i < len(pause_curve) and
-                pause_curve[i] > self.silence_threshold_ms
-            )
-            if is_sim_dip or is_long_pause:
-                if self._boundary_valid(i, boundaries, sentences):
-                    boundaries.append(i)
-
-        return boundaries
-
-    def _boundary_valid(
-        self, idx: int, existing: List[int], sentences: List[Dict]
-    ) -> bool:
-        if existing:
-            prev_boundary = existing[-1]
-            words_since = sum(
-                len(s['text'].split())
-                for s in sentences[prev_boundary + 1:idx + 1]
-            )
-            if words_since < self.min_words:
-                return False
-        return True
-
-    # ------------------------------------------------------------------
-    # Segment construction
-    # ------------------------------------------------------------------
-
-    def _build_segments(
-        self, sentences: List[Dict], boundaries: List[int],
-        speaker: str, metadata: Dict, offset: int
-    ) -> List[Segment]:
-        segments: List[Segment] = []
-        starts = [0] + [b + 1 for b in boundaries]
-        ends = [b + 1 for b in boundaries] + [len(sentences)]
-
-        # Normalize the speaker (single-speaker mode, so same speaker for whole run)
-        normalized_id = self.speaker_norm.get_normalized_id(speaker)
-        normalized_role = self.speaker_norm.get_role(speaker)
-
-        for start, end in zip(starts, ends):
-            seg_sentences = sentences[start:end]
-            if not seg_sentences:
-                continue
-
-            text = " ".join(s['text'] for s in seg_sentences)
-            word_count = len(text.split())
-
-            if word_count > self.max_words:
-                mid = len(seg_sentences) // 2
-                segments.extend(self._build_segments(
-                    seg_sentences[:mid], [], speaker, metadata, offset + len(segments)
-                ))
-                segments.extend(self._build_segments(
-                    seg_sentences[mid:], [], speaker, metadata, offset + len(segments)
-                ))
-                continue
-
-            segment = Segment(
-                segment_id=(
-                    f"{metadata['trial_id']}_{metadata['session_id']}_"
-                    f"{normalized_id.split('_')[-1]}_seg{offset + len(segments):04d}"
-                ),
-                trial_id=metadata['trial_id'],
-                participant_id=normalized_id,
-                session_id=metadata['session_id'],
-                session_number=metadata['session_number'],
-                cohort_id=metadata.get('cohort_id'),
-                session_variant=metadata.get('session_variant', ''),
-                start_time_ms=int(seg_sentences[0].get('start', 0) * 1000),
-                end_time_ms=int(seg_sentences[-1].get('end', 0) * 1000),
-                speaker=normalized_role,
-                text=text,
-                word_count=word_count,
-                speakers_in_segment=[normalized_id],
-            )
-            segments.append(segment)
-
-        segments = self._merge_undersized(segments)
-        return segments
-
-    def _merge_undersized(self, segments: List[Segment]) -> List[Segment]:
-        if len(segments) <= 1:
-            return segments
-        merged = [segments[0]]
-        for seg in segments[1:]:
-            if seg.word_count < self.min_words and merged:
-                prev = merged[-1]
-                prev.text = prev.text + " " + seg.text
-                prev.word_count = len(prev.text.split())
-                prev.end_time_ms = seg.end_time_ms
-            else:
-                merged.append(seg)
-        return merged
-
-    # ------------------------------------------------------------------
-    # Speaker separation
-    # ------------------------------------------------------------------
-
-    def _separate_speaker_runs(
-        self, sentences: List[Dict], metadata: Dict
-    ) -> Tuple[List[SpeakerRun], List[SpeakerRun]]:
-        participant_runs: List[SpeakerRun] = []
-        therapist_runs: List[SpeakerRun] = []
-        current_speaker = None
-        current_run: List[Dict] = []
-
-        for sent in sentences:
-            spk = sent.get('speaker', 'unknown')
-            if spk != current_speaker:
-                if current_run and current_speaker is not None:
-                    run = SpeakerRun(current_speaker, current_run)
-                    role = self.speaker_norm.get_role(current_speaker)
-                    if role == 'participant':
-                        participant_runs.append(run)
-                    else:
-                        therapist_runs.append(run)
-                current_speaker = spk
-                current_run = [sent]
-            else:
-                current_run.append(sent)
-
-        if current_run and current_speaker is not None:
-            run = SpeakerRun(current_speaker, current_run)
-            role = self.speaker_norm.get_role(current_speaker)
-            if role == 'participant':
-                participant_runs.append(run)
-            else:
-                therapist_runs.append(run)
-
-        return participant_runs, therapist_runs
 
 
 class ConversationalSegmenter:
@@ -437,18 +162,16 @@ class ConversationalSegmenter:
 
         # Initialize speaker normalizer
         excluded = config.get('excluded_speakers', [])
-        isolated = config.get('isolated_speakers', [])
         filter_mode = config.get('speaker_filter_mode', 'none')
         existing_map = config.get('existing_speaker_map')
         use_unknown_prefix = config.get('use_unknown_prefix', False)
-        self.speaker_norm = SpeakerNormalizer(excluded, isolated, filter_mode, existing_map, use_unknown_prefix)
+        self.speaker_norm = SpeakerNormalizer(excluded, filter_mode, existing_map, use_unknown_prefix)
         # Advanced grouping parameters
         self.max_gap_seconds = config.get('max_gap_seconds', 30.0)
         self.min_words_per_sentence = config.get('min_words_per_sentence', 10)
         self.max_segment_duration_seconds = config.get('max_segment_duration_seconds', 300.0)
         # Speaker filtering (applied before segmentation)
         self.excluded_speakers: List[str] = config.get('excluded_speakers', [])
-        self.isolated_speakers: List[str] = config.get('isolated_speakers', [])
         # Adaptive threshold / dual-window settings
         self.use_adaptive_threshold: bool = config.get('use_adaptive_threshold', True)
         self.min_prominence: float = config.get('min_prominence', 0.05)
@@ -566,10 +289,73 @@ class ConversationalSegmenter:
         if self.excluded_speakers:
             excluded_set = set(self.excluded_speakers)
             sentences = [s for s in sentences if s.get('speaker', '') not in excluded_set]
-        elif self.isolated_speakers:
-            isolated_set = set(self.isolated_speakers)
-            sentences = [s for s in sentences if s.get('speaker', '') in isolated_set]
         return sentences
+
+    def extract_therapist_segments(
+        self, sentences: List[Dict], metadata: Dict
+    ) -> List['Segment']:
+        """Build Segment objects for excluded (therapist) speakers from raw sentences.
+
+        Groups consecutive therapist sentences into contiguous blocks, splitting
+        on speaker change or a temporal gap exceeding max_gap_seconds.  The
+        resulting segments are intended to be interleaved with participant
+        segments (by start_time_ms) and re-indexed so that
+        _collect_therapist_cue() can locate them between participant indices.
+
+        Returns an empty list when no excluded speakers are configured or when
+        no therapist sentences appear in this session.
+        """
+        if not self.excluded_speakers:
+            return []
+
+        excluded_set = set(self.excluded_speakers)
+        therapist_sents = [
+            s for s in sentences if s.get('speaker', '') in excluded_set
+        ]
+        if not therapist_sents:
+            return []
+
+        segments: List['Segment'] = []
+        block: List[Dict] = [therapist_sents[0]]
+
+        for sent in therapist_sents[1:]:
+            prev = block[-1]
+            speaker_changed = sent.get('speaker', '') != prev.get('speaker', '')
+            gap = sent.get('start', 0) - prev.get('end', 0)
+            if speaker_changed or gap > self.max_gap_seconds:
+                segments.append(self._therapist_block_to_segment(block, metadata, len(segments)))
+                block = [sent]
+            else:
+                block.append(sent)
+
+        segments.append(self._therapist_block_to_segment(block, metadata, len(segments)))
+        return segments
+
+    def _therapist_block_to_segment(
+        self, block: List[Dict], metadata: Dict, idx: int
+    ) -> 'Segment':
+        original_speaker = block[0]['speaker']
+        normalized_id = self.speaker_norm.get_normalized_id(original_speaker)
+        text = ' '.join(s['text'] for s in block)
+        return Segment(
+            segment_id=(
+                f"{metadata['trial_id']}_{metadata['session_id']}_"
+                f"{normalized_id.split('_')[-1]}_thseg{idx:04d}"
+            ),
+            trial_id=metadata['trial_id'],
+            participant_id=normalized_id,
+            session_id=metadata['session_id'],
+            session_number=metadata['session_number'],
+            cohort_id=metadata.get('cohort_id'),
+            session_variant=metadata.get('session_variant', ''),
+            start_time_ms=int(block[0].get('start', 0) * 1000),
+            end_time_ms=int(block[-1].get('end', 0) * 1000),
+            speaker='therapist',
+            text=text,
+            word_count=len(text.split()),
+            speakers_in_segment=[normalized_id],
+            session_file=metadata.get('source_file', ''),
+        )
 
     # ------------------------------------------------------------------
 

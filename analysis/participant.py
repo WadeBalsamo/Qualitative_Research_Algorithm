@@ -249,7 +249,8 @@ def generate_participant_report(
     }
 
     # Write report
-    out_dir = os.path.join(output_dir, 'reports', 'analysis', 'participants')
+    from process import output_paths as _paths
+    out_dir = _paths.participants_json_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f'participant_{participant_id}.json')
     with open(out_path, 'w', encoding='utf-8') as f:

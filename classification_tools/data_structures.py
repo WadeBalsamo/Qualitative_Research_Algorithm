@@ -91,10 +91,3 @@ class Segment:
     # Conversational segmenter fields
     speakers_in_segment: Optional[List[str]] = None  # All speakers who contributed
     session_file: str = ""  # Source file path (for per-transcript reporting)
-
-
-@dataclass
-class SpeakerRun:
-    """Contiguous block of speech by one speaker."""
-    speaker: str
-    sentences: list

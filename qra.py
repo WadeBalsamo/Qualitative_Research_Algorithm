@@ -5,9 +5,10 @@ qra.py
 Unified CLI entry point for the QRA classification pipeline.
 
 Subcommands:
-    setup    Interactive wizard that saves a config JSON
-    run      Execute pipeline (auto/interactive/review modes)
-    guided   Execute with step-by-step educational narration
+    setup     Interactive wizard that saves a config JSON
+    run       Execute pipeline (always auto mode)
+    analyze   Post-hoc analysis on an existing output directory
+    testsets  Generate validation test set worksheets from existing output
 """
 
 import argparse
@@ -25,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # =========================================================================
 
 def _add_common_args(parser: argparse.ArgumentParser):
-    """Add arguments shared by `run` and `guided` subcommands."""
+    """Add arguments shared by `run` subcommand."""
     # Config file
     parser.add_argument(
         '--config', '-c',
@@ -99,16 +100,12 @@ def _add_common_args(parser: argparse.ArgumentParser):
     # Speaker filtering
     parser.add_argument(
         '--speaker-filter-mode', default=None,
-        choices=['none', 'exclude', 'isolate'],
-        help='none: classify all | exclude: drop listed speakers | isolate: keep only listed',
+        choices=['none', 'exclude'],
+        help='none: classify all | exclude: drop listed speakers',
     )
     parser.add_argument(
         '--exclude-speakers', nargs='+', default=None, metavar='SPEAKER',
         help='Speaker labels to exclude (use with --speaker-filter-mode exclude)',
-    )
-    parser.add_argument(
-        '--isolate-speakers', nargs='+', default=None, metavar='SPEAKER',
-        help='Speaker labels to isolate (use with --speaker-filter-mode isolate)',
     )
 
     # Checkpoint
@@ -188,11 +185,7 @@ def _load_codebook(codebook_arg):
 
 def _build_config(args):
     """Build PipelineConfig from CLI args, optionally merging a config file."""
-    from process.config import (
-        PipelineConfig, SegmentationConfig, ValidationConfig, ConfidenceTierConfig,
-    )
-    from constructs.config import ThemeClassificationConfig
-    from codebook.config import EmbeddingClassifierConfig
+    from process.config import PipelineConfig
 
     # Start from config file if provided
     if args.config:
@@ -210,23 +203,17 @@ def _build_config(args):
         config.output_dir = args.output_dir
     if args.trial_id is not None:
         config.trial_id = args.trial_id
-    if hasattr(args, 'mode') and args.mode is not None:
-        config.run_mode = args.mode
     if args.resume_from is not None:
         config.resume_from = args.resume_from
 
     # Speaker filter
     sf_mode = getattr(args, 'speaker_filter_mode', None)
     exclude_spk = getattr(args, 'exclude_speakers', None)
-    isolate_spk = getattr(args, 'isolate_speakers', None)
     if sf_mode is not None:
         config.speaker_filter.mode = sf_mode
     if exclude_spk is not None:
         config.speaker_filter.mode = 'exclude'
         config.speaker_filter.speakers = exclude_spk
-    if isolate_spk is not None:
-        config.speaker_filter.mode = 'isolate'
-        config.speaker_filter.speakers = isolate_spk
 
     # Feature flags
     if args.no_theme_labeler:
@@ -301,14 +288,15 @@ def _flatten_wizard_config(data: dict) -> dict:
 
     # Lift pipeline-level keys to top level
     pipeline = data.get('pipeline', {})
-    for key in ('transcript_dir', 'output_dir', 'trial_id', 'run_mode',
+    for key in ('transcript_dir', 'output_dir', 'trial_id',
                 'run_theme_labeler', 'run_codebook_classifier'):
         if key in pipeline:
             result[key] = pipeline[key]
 
     # Pass through sub-config dicts directly
     for key in ('segmentation', 'speaker_filter', 'theme_classification', 'codebook_embedding',
-                'codebook_llm', 'codebook_ensemble', 'validation', 'confidence_tiers'):
+                'codebook_llm', 'codebook_ensemble', 'validation', 'confidence_tiers',
+                'test_sets'):
         if key in data:
             result[key] = data[key]
 
@@ -346,7 +334,7 @@ def cmd_setup(args):
 
 
 def cmd_run(args):
-    """Execute pipeline (autonomous or with human validation)."""
+    """Execute pipeline."""
     config = _build_config(args)
 
     # Load framework
@@ -397,44 +385,160 @@ def cmd_analyze(args):
     print(f"  {result['n_segments']} segments | "
           f"{result['n_participants']} participants | "
           f"{result['n_sessions']} sessions")
-    print(f"  Reports: {output_dir}/reports/analysis/")
+    print(f"  Reports: {output_dir}/02_human_reports/ and {output_dir}/04_analysis_data/")
     print(f"  Files generated: {len(result['files_generated'])}")
 
 
-def cmd_guided(args):
-    """Execute pipeline with step-by-step educational narration."""
-    config = _build_config(args)
-    config.run_mode = 'interactive'  # guided always allows validation
+def cmd_testsets(args):
+    """Generate validation test set worksheets from existing pipeline output."""
+    import glob
+    from process.dataset_assembly import export_validation_testsets
+    from process import output_paths as _paths
+
+    output_dir = args.output_dir
+    if not os.path.isdir(output_dir):
+        print(f"Error: output directory not found: {output_dir}")
+        sys.exit(1)
+
+    # Find master JSONL in new layout, then fall back to legacy root location
+    _ms_dir = _paths.master_segments_dir(output_dir)
+    jsonl_files = sorted(glob.glob(os.path.join(_ms_dir, 'master_segments*.jsonl')))
+    if not jsonl_files:
+        jsonl_files = sorted(glob.glob(os.path.join(output_dir, 'master_segments_*.jsonl')))
+    if not jsonl_files:
+        print(f"Error: no master_segments*.jsonl found in {output_dir}")
+        print("Run the pipeline first: python qra.py run --config <config>")
+        sys.exit(1)
+
+    jsonl_path = jsonl_files[-1]
+    print(f"\nLoading segments from: {os.path.relpath(jsonl_path)}")
+
+    segments = _load_segments_from_jsonl(jsonl_path)
+    participant_segs = [s for s in segments if s.speaker == 'participant']
+    print(f"Loaded {len(segments)} segments ({len(participant_segs)} participant)")
 
     # Load framework
     framework_arg = args.framework
     if framework_arg is None and args.config:
         with open(args.config) as f:
-            file_data = json.load(f)
-        fw = file_data.get('framework', {})
+            fw_data = json.load(f)
+        fw = fw_data.get('framework', {})
         framework_arg = fw.get('custom_path') or fw.get('preset', 'vamr')
     framework = _load_framework(framework_arg)
 
-    # Load codebook
-    codebook = None
-    if config.run_codebook_classifier:
-        codebook_arg = args.codebook
-        if codebook_arg is None and args.config:
-            with open(args.config) as f:
-                file_data = json.load(f)
-            cb = file_data.get('codebook', {})
-            codebook_arg = cb.get('custom_path') or cb.get('preset', 'phenomenology')
-        codebook = _load_codebook(codebook_arg)
+    # Determine codebook status
+    codebook_enabled = args.codebook_enabled
+    if not codebook_enabled and args.config:
+        with open(args.config) as f:
+            cfg_data = json.load(f)
+        codebook_enabled = cfg_data.get('pipeline', {}).get('run_codebook_classifier', False)
 
-    # Use GuidedModeObserver
-    from process.pipeline_hooks import GuidedModeObserver
-    observer = GuidedModeObserver(config=config, framework=framework)
+    # Generate
+    written = export_validation_testsets(
+        segments,
+        framework,
+        output_dir,
+        n_sets=args.n_sets,
+        fraction_per_set=args.fraction,
+        random_seed=args.seed,
+        codebook_enabled=codebook_enabled,
+    )
 
-    # Always create validator for guided mode
-    from process.human_validator import HumanValidator
-    validator = HumanValidator(framework, codebook, skip_confirmation=False)
+    print(f"\nGenerated {len(written)} worksheet files:")
+    for p in written:
+        print(f"  {os.path.relpath(p, output_dir)}")
 
-    _execute_pipeline(config, framework, codebook, observer=observer, validator=validator)
+
+def _load_segments_from_jsonl(jsonl_path: str):
+    """Reconstruct Segment objects from a master_segments JSONL file."""
+    import pandas as pd
+    from classification_tools.data_structures import Segment
+
+    df = pd.read_json(jsonl_path, lines=True)
+    segments = []
+
+    def _int_or_none(val):
+        try:
+            return int(val) if val is not None and str(val) != 'nan' else None
+        except (ValueError, TypeError):
+            return None
+
+    def _float_or_none(val):
+        try:
+            return float(val) if val is not None and str(val) != 'nan' else None
+        except (ValueError, TypeError):
+            return None
+
+    def _list_or_none(val):
+        if val is None:
+            return None
+        if isinstance(val, list):
+            return val if val else None
+        return None
+
+    for _, row in df.iterrows():
+        # rater_ids and rater_votes are stored as JSON strings
+        rater_ids = None
+        if isinstance(row.get('rater_ids'), str):
+            try:
+                rater_ids = json.loads(row['rater_ids'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        rater_votes = None
+        if isinstance(row.get('rater_votes'), str):
+            try:
+                rater_votes = json.loads(row['rater_votes'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        seg = Segment(
+            segment_id=str(row['segment_id']),
+            trial_id=str(row.get('trial_id', '')),
+            participant_id=str(row.get('participant_id', '')),
+            session_id=str(row['session_id']),
+            session_number=_int_or_none(row.get('session_number')) or 1,
+            cohort_id=_int_or_none(row.get('cohort_id')),
+            session_variant=str(row.get('session_variant', '') or ''),
+            segment_index=_int_or_none(row.get('segment_index')) or 0,
+            start_time_ms=_int_or_none(row.get('start_time_ms')) or 0,
+            end_time_ms=_int_or_none(row.get('end_time_ms')) or 0,
+            total_segments_in_session=_int_or_none(row.get('total_segments_in_session')) or 1,
+            speaker=str(row.get('speaker', '')),
+            text=str(row.get('text', '')),
+            word_count=_int_or_none(row.get('word_count')) or 0,
+            primary_stage=_int_or_none(row.get('primary_stage')),
+            secondary_stage=_int_or_none(row.get('secondary_stage')),
+            llm_confidence_primary=_float_or_none(row.get('llm_confidence_primary')),
+            llm_confidence_secondary=_float_or_none(row.get('llm_confidence_secondary')),
+            llm_justification=row.get('llm_justification'),
+            llm_run_consistency=_int_or_none(row.get('llm_run_consistency')),
+            rater_ids=rater_ids,
+            rater_votes=rater_votes,
+            agreement_level=str(row.get('agreement_level') or ''),
+            agreement_fraction=_float_or_none(row.get('agreement_fraction')),
+            needs_review=bool(row.get('needs_review', False)),
+            consensus_vote=row.get('consensus_vote'),
+            tie_broken_by_confidence=bool(row.get('tie_broken_by_confidence', False)),
+            codebook_labels_embedding=_list_or_none(row.get('codebook_labels_embedding')),
+            codebook_labels_llm=_list_or_none(row.get('codebook_labels_llm')),
+            codebook_labels_ensemble=_list_or_none(row.get('codebook_labels_ensemble')),
+            codebook_disagreements=_list_or_none(row.get('codebook_disagreements')),
+            codebook_confidence=None,
+            human_label=_int_or_none(row.get('human_label')),
+            human_secondary_label=_int_or_none(row.get('human_secondary_label')),
+            adjudicated_label=_int_or_none(row.get('adjudicated_label')),
+            in_human_coded_subset=bool(row.get('in_human_coded_subset', False)),
+            label_status=str(row.get('label_status', 'llm_only')),
+            final_label=_int_or_none(row.get('final_label')),
+            final_label_source=row.get('final_label_source'),
+            label_confidence_tier=row.get('label_confidence_tier'),
+            speakers_in_segment=None,
+            session_file=str(row.get('session_file', '')),
+        )
+        segments.append(seg)
+
+    return segments
 
 
 # =========================================================================
@@ -444,11 +548,6 @@ def cmd_guided(args):
 def _wait_for_lmstudio(base_url: str, timeout_s: int = 32000, poll_s: int = 5) -> None:
     """
     Block until the LM Studio server responds to GET /v1/models, or timeout.
-
-    Prints a one-time notice on first failure, then a dot for each retry,
-    and a success message when the server comes up.  If the server does not
-    respond within ``timeout_s`` seconds the user is warned but execution
-    continues (the individual retries in the LLM client will handle it).
     """
     import time
     import requests
@@ -483,21 +582,9 @@ def _wait_for_lmstudio(base_url: str, timeout_s: int = 32000, poll_s: int = 5) -
     print(f"\n  Warning: LM Studio did not respond within {timeout_s}s — proceeding anyway.")
 
 
-def _execute_pipeline(config, framework, codebook=None, observer=None, validator=None):
-    """Run the pipeline with the given config, framework, and optional hooks."""
+def _execute_pipeline(config, framework, codebook=None):
+    """Run the pipeline with the given config and framework."""
     from process.orchestrator import run_full_pipeline
-    from process.pipeline_hooks import SilentObserver
-
-    if observer is None:
-        observer = SilentObserver()
-
-    # Create validator based on run mode if not provided
-    if validator is None and config.run_mode in ('interactive', 'review'):
-        from process.human_validator import HumanValidator
-        validator = HumanValidator(
-            framework, codebook,
-            skip_confirmation=(config.run_mode == 'auto'),
-        )
 
     # LM Studio: wait until the server is reachable before starting
     if config.theme_classification.backend == 'lmstudio':
@@ -510,7 +597,6 @@ def _execute_pipeline(config, framework, codebook=None, observer=None, validator
     print("QRA CLASSIFICATION PIPELINE")
     print("=" * 70)
     tc = config.theme_classification
-    print(f"  Mode:      {config.run_mode}")
     print(f"  Framework: {framework.name} ({framework.num_themes} themes)")
     per_run = getattr(tc, 'per_run_models', []) or []
     use_per_run = len(per_run) >= 2 and len(per_run) == tc.n_runs
@@ -527,12 +613,7 @@ def _execute_pipeline(config, framework, codebook=None, observer=None, validator
         print(f"  Codebook:  enabled")
     print()
 
-    master_df = run_full_pipeline(
-        config, framework,
-        codebook=codebook,
-        observer=observer,
-        validator=validator,
-    )
+    master_df = run_full_pipeline(config, framework, codebook=codebook)
 
     # Summary
     print(f"\nTotal segments: {len(master_df)}")
@@ -592,12 +673,6 @@ Examples:
   # Run with saved config
   python qra.py run --config ./qra_config.json
 
-  # Run with human validation
-  python qra.py run --mode interactive
-
-  # Guided mode with educational narration
-  python qra.py guided
-
   # HuggingFace multi-model pipeline
   python qra.py run --backend huggingface
 
@@ -606,6 +681,10 @@ Examples:
 
   # Analyze existing pipeline output (standalone post-hoc)
   python qra.py analyze --output-dir ./data/output/
+
+  # Generate validation test set worksheets from existing output
+  python qra.py testsets --output-dir ./data/output/
+  python qra.py testsets --output-dir ./data/output/ --n-sets 3 --fraction 0.15
         """,
     )
 
@@ -619,19 +698,7 @@ Examples:
         'run', help='Execute the classification pipeline',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    run_parser.add_argument(
-        '--mode', default='auto',
-        choices=['auto', 'interactive', 'review'],
-        help='Run mode (default: auto)',
-    )
     _add_common_args(run_parser)
-
-    # ---- guided ----
-    guided_parser = subparsers.add_parser(
-        'guided', help='Execute with step-by-step educational narration',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    _add_common_args(guided_parser)
 
     # ---- analyze ----
     analyze_parser = subparsers.add_parser(
@@ -650,6 +717,47 @@ Examples:
         help='Path to pipeline output directory containing master_segment_dataset.csv',
     )
 
+    # ---- testsets ----
+    testsets_parser = subparsers.add_parser(
+        'testsets',
+        help='Generate validation test set worksheets from existing pipeline output',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Loads master_segments_*.jsonl from OUTPUT_DIR and generates cross-session\n'
+            'human coding and AI classification worksheets for inter-rater reliability.'
+        ),
+    )
+    testsets_parser.add_argument(
+        '--output-dir', '-o',
+        required=True,
+        help='Path to pipeline output directory (must contain master_segments_*.jsonl)',
+    )
+    testsets_parser.add_argument(
+        '--config', '-c',
+        default=None,
+        help='Path to config JSON (used to load framework and codebook settings)',
+    )
+    testsets_parser.add_argument(
+        '--framework', default=None,
+        help='Theme framework: "vamr" (default) or path to custom JSON',
+    )
+    testsets_parser.add_argument(
+        '--n-sets', type=int, default=2,
+        help='Number of test sets to generate (default: 2)',
+    )
+    testsets_parser.add_argument(
+        '--fraction', type=float, default=0.10,
+        help='Fraction of participant segments per set (default: 0.10)',
+    )
+    testsets_parser.add_argument(
+        '--seed', type=int, default=42,
+        help='Random seed for reproducibility (default: 42)',
+    )
+    testsets_parser.add_argument(
+        '--codebook-enabled', action='store_true',
+        help='Include codebook classification labels in AI worksheet',
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -661,10 +769,10 @@ Examples:
             cmd_setup(args)
         elif args.command == 'run':
             cmd_run(args)
-        elif args.command == 'guided':
-            cmd_guided(args)
         elif args.command == 'analyze':
             cmd_analyze(args)
+        elif args.command == 'testsets':
+            cmd_testsets(args)
     except KeyboardInterrupt:
         print("\n\nPipeline interrupted by user.")
         sys.exit(1)
