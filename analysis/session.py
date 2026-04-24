@@ -188,7 +188,8 @@ def generate_session_analysis(
         'narrative_summary': narrative,
     }
 
-    out_dir = os.path.join(output_dir, 'reports', 'analysis', 'sessions')
+    from process import output_paths as _paths
+    out_dir = _paths.sessions_json_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f'session_{session_id}.json')
     with open(out_path, 'w', encoding='utf-8') as f:

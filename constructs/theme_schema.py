@@ -40,7 +40,6 @@ class ThemeFramework:
     description: str
     themes: List[ThemeDefinition] = field(default_factory=list)
     categories: Optional[Dict[str, List[str]]] = None
-    codebook_hypothesis: Optional[Dict[str, List[str]]] = None
 
     @property
     def num_themes(self) -> int:

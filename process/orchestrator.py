@@ -33,7 +33,6 @@ from constructs.theme_schema import ThemeFramework
 
 from .config import PipelineConfig
 from .transcript_ingestion import (
-    TranscriptSegmenter,
     ConversationalSegmenter,
     load_diarized_session,
     load_vtt_session,
@@ -52,12 +51,52 @@ from .dataset_assembly import (
     export_human_classification_forms,
     export_flagged_for_review,
     export_training_data,
+    export_validation_testsets,
 )
 from .cross_validation import (
     compute_theme_codebook_cooccurrence,
-    validate_codebook_hypothesis,
+    summarize_theme_code_associations,
 )
-from .pipeline_hooks import PipelineObserver, SilentObserver
+from . import output_paths as _paths
+from .speaker_filter import apply_speaker_filter as _apply_speaker_filter
+from .validation_exports import collect_top_associations as _collect_top_associations
+
+
+class PipelineObserver:
+    """Base observer with no-op methods for all pipeline events."""
+
+    def on_stage_start(self, stage_name: str, stage_number: str, **kwargs):
+        pass
+
+    def on_stage_progress(self, stage_name: str, message: str, **kwargs):
+        pass
+
+    def on_stage_complete(self, stage_name: str, summary: str, **kwargs):
+        pass
+
+    def on_pipeline_complete(self, output_dir: str, **kwargs):
+        pass
+
+
+class SilentObserver(PipelineObserver):
+    """Minimal output: stage headers and summaries."""
+
+    def on_stage_start(self, stage_name: str, stage_number: str, **kwargs):
+        print(f"\n{'=' * 60}")
+        print(f"STAGE {stage_number}: {stage_name}")
+        print(f"{'=' * 60}")
+
+    def on_stage_progress(self, stage_name: str, message: str, **kwargs):
+        print(f"  {message}")
+
+    def on_stage_complete(self, stage_name: str, summary: str, **kwargs):
+        print(f"  {summary}")
+
+    def on_pipeline_complete(self, output_dir: str, **kwargs):
+        print(f"\n{'=' * 60}")
+        print("PIPELINE COMPLETE")
+        print(f"{'=' * 60}")
+        print(f"All outputs in: {output_dir}")
 
 from codebook.embedding_classifier import EmbeddingCodebookClassifier, ensure_embedding_model_ready
 from codebook.ensemble import CodebookEnsemble
@@ -68,7 +107,6 @@ def run_full_pipeline(
     framework: ThemeFramework,
     codebook=None,
     observer: Optional[PipelineObserver] = None,
-    validator=None,
 ) -> pd.DataFrame:
     """
     Execute the complete classification pipeline.
@@ -83,8 +121,6 @@ def run_full_pipeline(
         Codebook instance for codebook classification.
     observer : PipelineObserver, optional
         Observer for pipeline events (UI feedback). Defaults to SilentObserver.
-    validator : HumanValidator, optional
-        Validator for interactive human-in-the-loop validation.
 
     Returns
     -------
@@ -98,8 +134,6 @@ def run_full_pipeline(
     output_dir = config.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
-    run_mode = getattr(config, 'run_mode', 'auto')
-
     # ------------------------------------------------------------------
     # Pre-flight: ensure embedding model is downloaded before the pipeline
     # starts.  Both segmentation and codebook classification use the same
@@ -111,7 +145,7 @@ def run_full_pipeline(
 
     # Process logger (verbose segmentation mode)
     _verbose = getattr(config.segmentation, 'verbose_segmentation', False)
-    meta_dir = os.path.join(output_dir, 'meta')
+    meta_dir = _paths.meta_dir(output_dir)
     os.makedirs(meta_dir, exist_ok=True)
     _plog_path = os.path.join(meta_dir, 'process_log.txt') if _verbose else None
     plog = ProcessLogger(_plog_path)
@@ -157,15 +191,12 @@ def run_full_pipeline(
         explanation_key='ingestion',
     )
 
-    # Build speaker exclusion/isolation lists from SpeakerFilterConfig
+    # Build speaker exclusion list from SpeakerFilterConfig
     sf = config.speaker_filter
     excluded_speakers = sf.speakers if sf.mode == 'exclude' else []
-    isolated_speakers = sf.speakers if sf.mode == 'isolate' else []
 
     seg_config = {
         'embedding_model': config.segmentation.embedding_model,
-        'min_segment_words': config.segmentation.min_segment_words,
-        'max_segment_words': config.segmentation.max_segment_words,
         'silence_threshold_ms': config.segmentation.silence_threshold_ms,
         'semantic_shift_percentile': config.segmentation.semantic_shift_percentile,
         'min_segment_words_conversational': config.segmentation.min_segment_words_conversational,
@@ -176,7 +207,6 @@ def run_full_pipeline(
         'max_segment_duration_seconds': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
         # Speaker filtering applied at sentence level before segmentation
         'excluded_speakers': excluded_speakers,
-        'isolated_speakers': isolated_speakers,
         'speaker_filter_mode': config.speaker_filter.mode,
         # Adaptive threshold / dual-window / clustering
         'use_adaptive_threshold': getattr(config.segmentation, 'use_adaptive_threshold', True),
@@ -190,13 +220,12 @@ def run_full_pipeline(
         # Use unknown prefix for new speakers when key is imported
         'use_unknown_prefix': _use_unknown_prefix,
     }
-    use_conv = getattr(config.segmentation, 'use_conversational_segmenter', True)
     use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', True)
-    segmenter = ConversationalSegmenter(seg_config) if use_conv else TranscriptSegmenter(seg_config)
+    segmenter = ConversationalSegmenter(seg_config)
 
     # Lazily create LLM refiner if enabled (reuses theme classification backend)
     llm_refiner = None
-    if use_llm_refine and use_conv:
+    if use_llm_refine:
         theme_cfg = config.theme_classification
         refiner_llm_cfg = LLMClientConfig(
             backend=theme_cfg.backend,
@@ -222,11 +251,6 @@ def run_full_pipeline(
             },
             speaker_normalizer=segmenter.speaker_norm,
         )
-
-    # When using conversational segmenter, default to participant-only classification
-    # (therapist segments are filtered out early; set classify_all_segments=True to override)
-    if use_conv and not hasattr(config.theme_classification, 'classify_all_segments'):
-        config.theme_classification.classify_all_segments = False
 
     session_files = discover_session_files(config.transcript_dir)
     if not session_files:
@@ -270,7 +294,7 @@ def run_full_pipeline(
             metadata.setdefault('session_variant', parsed['session_variant'])
         metadata.setdefault('source_file', session_file)
 
-        if llm_refiner and use_conv:
+        if llm_refiner:
             result = segmenter.segment_session(
                 session_data['sentences'], metadata,
                 return_intermediates=True,
@@ -288,6 +312,21 @@ def run_full_pipeline(
             segments = segmenter.segment_session(
                 session_data['sentences'], metadata
             )
+
+        # Interleave therapist segments so _collect_therapist_cue() can find
+        # them between participant segment indices in the master dataset.
+        therapist_segs = segmenter.extract_therapist_segments(
+            session_data['sentences'], metadata
+        )
+        if therapist_segs:
+            combined = sorted(segments + therapist_segs, key=lambda s: s.start_time_ms)
+            for i, seg in enumerate(combined):
+                seg.segment_index = i
+            segments = combined
+        else:
+            for i, seg in enumerate(segments):
+                seg.segment_index = i
+
         all_segments.extend(segments)
 
     session_counts = Counter(s.session_id for s in all_segments)
@@ -314,9 +353,11 @@ def run_full_pipeline(
         framework,
         os.path.join(meta_dir, 'theme_definitions.json'),
     )
+    _cv_dir = _paths.content_validity_dir(output_dir)
+    os.makedirs(_cv_dir, exist_ok=True)
     export_content_validity_test_set(
         content_validity_items,
-        os.path.join(meta_dir, 'content_validity_test_set.jsonl'),
+        os.path.join(_cv_dir, 'content_validity_test_set.jsonl'),
     )
 
     observer.on_stage_complete(
@@ -371,9 +412,6 @@ def run_full_pipeline(
             "Theme classification and response parsing complete",
         )
 
-        # Human validation of uncertain theme classifications
-        if validator and run_mode in ('interactive', 'review'):
-            _validate_theme_classifications(all_segments, validator)
     else:
         observer.on_stage_progress(
             "Zero-Shot LLM Theme Classification",
@@ -482,11 +520,6 @@ def run_full_pipeline(
                     a.code_id: a.confidence for a in ens.final_assignments
                 }
 
-                # Human validation of disagreements
-                if validator and run_mode in ('interactive', 'review') and ens.needs_human_review:
-                    final_codes = validator.validate_codebook_disagreement(seg, ens)
-                    if final_codes is not None:
-                        seg.codebook_labels_ensemble = final_codes
 
         n_coded = sum(
             1 for s in all_segments
@@ -513,29 +546,40 @@ def run_full_pipeline(
             codebook_label_column='codebook_labels_ensemble',
             theme_label_column='primary_stage',
         )
-        validation_results = validate_codebook_hypothesis(
-            cooccurrence, framework, min_lift=1.5
+        _cv_params = {'min_lift': 1.5, 'min_count': 3, 'top_n': 10}
+        associations_by_theme = summarize_theme_code_associations(
+            cooccurrence, **_cv_params
         )
 
         # Export results
-        cv_output = os.path.join(output_dir, f'cross_validation_results_{ts}.json')
+        _cvdir = _paths.cross_validation_dir(output_dir)
+        os.makedirs(_cvdir, exist_ok=True)
+        cv_output = os.path.join(_cvdir, 'cross_validation_results.json')
         with open(cv_output, 'w') as f:
-            json.dump(validation_results, f, indent=2)
+            json.dump(
+                {
+                    'raw_cooccurrence': cooccurrence,
+                    'associations_by_theme': associations_by_theme,
+                    'parameters': _cv_params,
+                },
+                f,
+                indent=2,
+            )
         observer.on_stage_progress(
             "Cross-Validation (Theme <-> Codebook)",
-            f"Exported cross-validation results to {os.path.basename(cv_output)}",
+            f"Exported cross-validation results to {os.path.relpath(cv_output, output_dir)}",
         )
 
-        # Report anomalies
-        anomalies = _collect_cooccurrence_anomalies(validation_results)
-        if anomalies:
+        # Report top associations
+        top_assoc = _collect_top_associations(associations_by_theme)
+        if top_assoc:
             observer.on_stage_progress(
                 "Cross-Validation (Theme <-> Codebook)",
-                f"Found {len(anomalies)} co-occurrence anomalies",
+                f"Identified {len(top_assoc)} theme-code associations above lift >= 1.5",
             )
-            anomaly_output = os.path.join(output_dir, f'cooccurrence_anomalies_{ts}.json')
-            with open(anomaly_output, 'w') as f:
-                json.dump(anomalies, f, indent=2)
+            assoc_output = os.path.join(_cvdir, 'top_theme_code_associations.json')
+            with open(assoc_output, 'w') as f:
+                json.dump(top_assoc, f, indent=2)
 
         observer.on_stage_complete(
             "Cross-Validation (Theme <-> Codebook)",
@@ -561,8 +605,10 @@ def run_full_pipeline(
             participant_labeled,
             n_per_class=config.validation.n_per_class,
         )
+        _hedir = _paths.human_eval_dir(output_dir)
+        os.makedirs(_hedir, exist_ok=True)
         eval_set.to_csv(
-            os.path.join(output_dir, 'human_coding_evaluation_set.csv'),
+            os.path.join(_hedir, 'human_coding_evaluation_set.csv'),
             index=False,
         )
         observer.on_stage_complete(
@@ -584,9 +630,11 @@ def run_full_pipeline(
     )
 
     confidence_tier_config = asdict(config.confidence_tiers)
+    _msdir = _paths.master_segments_dir(output_dir)
+    os.makedirs(_msdir, exist_ok=True)
     master_df = assemble_master_dataset(
         all_segments,
-        os.path.join(output_dir, f'master_segments_{ts}.jsonl'),
+        os.path.join(_msdir, 'master_segments.jsonl'),
         confidence_tiers=confidence_tier_config,
     )
 
@@ -600,9 +648,6 @@ def run_full_pipeline(
     # ------------------------------------------------------------------
     observer.on_stage_start("Report Generation", "7", explanation_key='report_generation')
 
-    reports_dir = os.path.join(output_dir, 'reports')
-    os.makedirs(reports_dir, exist_ok=True)
-
     # Write speaker anonymization key atomically with coded transcripts so both
     # always reflect the same run.  Writing here (not at Stage 1) means a
     # failed run between ingestion and report generation cannot leave a stale
@@ -615,7 +660,7 @@ def run_full_pipeline(
         json.dump(speaker_key, _f, indent=2)
     observer.on_stage_progress(
         "Report Generation",
-        f"  Speaker anonymization key: meta/speaker_anonymization_key.json",
+        "  Speaker anonymization key: 07_meta/speaker_anonymization_key.json",
     )
 
     # Build a lightweight LLM client for rationale summarization (reuses theme config)
@@ -639,58 +684,70 @@ def run_full_pipeline(
     # Per-session coded transcripts
     for session_id, session_df in master_df.groupby('session_id'):
         segs_for_session = [s for s in all_segments if s.session_id == session_id]
-        transcript_path = os.path.join(reports_dir, f"coded_transcript_{session_id}.txt")
         export_coded_transcript(
-            segs_for_session, framework, codebook, transcript_path,
+            segs_for_session, framework, codebook, output_dir, session_id,
             llm_client=_sum_client,
         )
         observer.on_stage_progress(
             "Report Generation",
-            f"  Coded transcript: reports/coded_transcript_{session_id}.txt",
+            f"  Coded transcript: 01_transcripts/coded/coded_transcript_{session_id}.txt",
         )
 
     # Human classification forms (blind-coding, no results)
-    export_human_classification_forms(all_segments, framework, reports_dir)
+    export_human_classification_forms(all_segments, framework, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        "  Human classification forms: reports/validation/human_classification_<session>.txt",
+        "  Human classification forms: 05_validation/human_classification_<session>.txt",
     )
 
     # Dataset-wide flagged-for-review report
-    validation_dir = os.path.join(reports_dir, 'validation')
-    flagged_path = os.path.join(validation_dir, 'flagged_for_review.txt')
-    export_flagged_for_review(all_segments, framework, flagged_path)
+    export_flagged_for_review(all_segments, framework, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        "  Flagged for review: reports/validation/flagged_for_review.txt",
+        "  Flagged for review: 05_validation/flagged_for_review.txt",
     )
 
+    # Cross-session validation test sets
+    ts_cfg = getattr(config, 'test_sets', None)
+    if ts_cfg is not None and ts_cfg.enabled:
+        export_validation_testsets(
+            all_segments,
+            framework,
+            output_dir,
+            n_sets=ts_cfg.n_sets,
+            fraction_per_set=ts_cfg.fraction_per_set,
+            random_seed=ts_cfg.random_seed,
+            codebook_enabled=config.run_codebook_classifier,
+        )
+        observer.on_stage_progress(
+            "Report Generation",
+            "  Validation test sets: 05_validation/testsets/[human|AI]_classification_testset_worksheet_#.txt",
+        )
+
     # Per-transcript stats (one JSON per session)
-    stats_dir = os.path.join(reports_dir, 'per_transcript')
-    export_per_transcript_stats(master_df, framework, codebook, stats_dir)
+    export_per_transcript_stats(master_df, framework, codebook, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        f"  Per-transcript stats: reports/per_transcript/stats_<session>.json",
+        "  Per-transcript stats: 04_analysis_data/session_stats/stats_<session>.json",
     )
 
     # Cumulative report across all transcripts
-    cumulative_path = os.path.join(reports_dir, f'cumulative_report_{ts}.json')
-    export_cumulative_report(master_df, framework, codebook, cumulative_path)
+    export_cumulative_report(master_df, framework, codebook, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        f"  Cumulative report: reports/cumulative_report_{ts}.json",
+        "  Cumulative report: 04_analysis_data/cumulative_report.json",
     )
 
     # BERT training data export
     export_training_data(all_segments, framework, codebook, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        "  Training data: trainingdata/theme_classification.jsonl + codebook_multilabel.jsonl",
+        "  Training data: 06_training_data/theme_classification.jsonl + codebook_multilabel.jsonl",
     )
 
     observer.on_stage_complete(
         "Report Generation",
-        f"Reports written to {reports_dir}",
+        f"Reports written to {output_dir}",
     )
 
     # ------------------------------------------------------------------
@@ -728,6 +785,13 @@ def run_full_pipeline(
             print(f"\n  Warning: results analysis failed: {e}")
             print(f"  Run manually: python qra.py analyze --output-dir {output_dir}")
 
+    # Write directory index last, after all outputs are in place.
+    try:
+        from .output_index import write_index
+        write_index(output_dir)
+    except Exception:
+        pass
+
     return master_df
 
 
@@ -735,83 +799,3 @@ def run_full_pipeline(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _apply_speaker_filter(
-    segments: List[Segment], filter_cfg
-) -> List[Segment]:
-    """
-    Return the subset of segments that should be classified, based on
-    SpeakerFilterConfig.
-
-    'none'    — return all segments unchanged
-    'exclude' — drop therapist segments (by role) from classification.
-                Therapist sentences are already filtered before segmentation,
-                but this catches any remaining therapist segments.
-    """
-    mode = getattr(filter_cfg, 'mode', 'none')
-    speakers = set(getattr(filter_cfg, 'speakers', []))
-
-    if mode == 'none' or not speakers:
-        return segments
-
-    if mode == 'exclude':
-        return [
-            s for s in segments
-            if s.speaker != 'therapist'
-        ]
-
-    return segments
-
-
-def _validate_theme_classifications(all_segments: List[Segment], validator) -> None:
-    """Identify and validate uncertain theme classifications."""
-    uncertain = []
-
-    for segment in all_segments:
-        if segment.primary_stage is None:
-            continue
-
-        reasons = []
-        if segment.llm_run_consistency and segment.llm_run_consistency < 3:
-            reasons.append("inconsistency")
-        if segment.llm_confidence_primary and segment.llm_confidence_primary < 0.6:
-            reasons.append("low_confidence")
-
-        if reasons:
-            uncertain.append((segment, reasons))
-
-    if not uncertain:
-        print(f"  All {len(all_segments)} theme classifications are confident and consistent")
-        return
-
-    print(f"\n  Found {len(uncertain)} uncertain classifications needing validation")
-    for segment, reasons in uncertain:
-        result = validator.validate_theme_classification(
-            segment,
-            " + ".join(reasons),
-        )
-        if result:
-            primary_id, secondary_id = result
-            segment.primary_stage = primary_id
-            segment.secondary_stage = secondary_id
-
-
-def _collect_cooccurrence_anomalies(validation_results: dict) -> list:
-    """Collect anomalies from cross-validation results."""
-    anomalies = []
-    for theme_key, results in validation_results.items():
-        for anomaly in results.get('unexpected', []):
-            anomalies.append({
-                'theme': theme_key,
-                'code': anomaly['code'],
-                'type': 'unexpected_strong_association',
-                'lift': anomaly['lift'],
-            })
-        for missing in results.get('unconfirmed', []):
-            if missing['count'] > 0:
-                anomalies.append({
-                    'theme': theme_key,
-                    'code': missing['code'],
-                    'type': 'weak_association',
-                    'lift': missing['lift'],
-                })
-    return anomalies

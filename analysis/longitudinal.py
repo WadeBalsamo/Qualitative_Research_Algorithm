@@ -302,7 +302,8 @@ def generate_longitudinal_summary(
         'narrative_summary': narrative,
     }
 
-    out_dir = os.path.join(output_dir, 'reports', 'analysis')
+    from process import output_paths as _paths
+    out_dir = _paths.analysis_data_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, 'longitudinal_summary.json'), 'w', encoding='utf-8') as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
