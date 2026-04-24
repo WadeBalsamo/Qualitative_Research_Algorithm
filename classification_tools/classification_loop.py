@@ -178,7 +178,7 @@ def classify_segments(
 
         # Print progress for every segment so the terminal stays alive
         pct = f" ({error_count}/{ok_count + error_count} errors)" if (ok_count + error_count) > 0 else ""
-        snippet = segment.text[:80].replace('\n', ' ')
+        snippet = segment.text.replace('\n', ' ')
         if len(segment.text) > 80:
             snippet += "..."
         print(f"  [{i + 1}/{total}] {segment.segment_id}{pct}")

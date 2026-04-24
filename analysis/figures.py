@@ -3,7 +3,7 @@ analysis/figures.py
 -------------------
 Matplotlib figure generation for the analysis module.
 
-All figures are saved as PNGs to {output_dir}/reports/analysis/figures/.
+All figures are saved as PNGs to {output_dir}/03_figures/.
 Uses the Agg backend for headless compatibility.
 """
 
@@ -20,6 +20,7 @@ import re
 
 from .loader import sort_session_ids
 from .stage_progression import compute_state_transition_matrix, compute_cross_session_transitions
+from process import output_paths as _paths
 
 # Qualitative palette for up to 8 stages; extra stages get cycled.
 _BASE_COLORS = [
@@ -43,7 +44,7 @@ def _stage_colors(framework: dict) -> dict:
 
 
 def _ensure_figures_dir(output_dir: str) -> str:
-    out = os.path.join(output_dir, 'reports', 'analysis', 'figures')
+    out = _paths.figures_dir(output_dir)
     os.makedirs(out, exist_ok=True)
     return out
 
@@ -118,7 +119,8 @@ def plot_dominant_stage_heatmap(
               fontsize=8, frameon=True)
 
     fig.tight_layout()
-    path = os.path.join(output_dir, 'dominant_stage_heatmap.png')
+    out_dir = _ensure_figures_dir(output_dir)
+    path = os.path.join(out_dir, 'dominant_stage_heatmap.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
@@ -177,7 +179,8 @@ def plot_group_longitudinal_trajectory(
     ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
-    path = os.path.join(output_dir, 'group_longitudinal_trajectory.png')
+    out_dir = _ensure_figures_dir(output_dir)
+    path = os.path.join(out_dir, 'group_longitudinal_trajectory.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path

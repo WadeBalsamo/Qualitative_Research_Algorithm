@@ -69,42 +69,6 @@ CONTEXT_PREAMBLE = """For context, here is the preceding conversational exchange
 
 """
 
-CONVERSATIONAL_THEME_PROMPT_TEMPLATE = """You are a qualitative researcher \
-trained in the {framework_name} framework for analyzing therapeutic dialogue.
-
-\n {framework_description}
-
-\n {codebook_string}
-
-\n {context_block}
-
-\n  Classify the following conversational excerpt according to these {num_themes} \
-themes. The excerpt may include surrounding context from other speakers. \
-Focus on the thematic content of the participant's speech.
-
-\n Excerpt:
-```
-{text}
-```
-
-\n Provide your classification as JSON with these exact fields:
-{{
-    "primary_stage": "<theme name>",
-    "primary_confidence": <float 0-1>,
-    "secondary_stage": "<theme name or null>",
-    "secondary_confidence": <float 0-1 or null>,
-    "justification": "<brief explanation citing specific speaker language>"
-}}
-
-\n Rules:
-- Assign exactly one primary theme that best characterizes the exchange, or null if the segment is irrelevant to study
-- Assign a secondary theme ONLY if the exchange clearly spans two themes
-- Confidence should reflect how prototypical the exchange is (1.0 = textbook example, 0.0 = not representative)
-- Reference specific words or phrases from the excerpt in your justification
-- Do NOT provide any text outside the JSON
-
-JSON:"""
-
 
 # ---------------------------------------------------------------------------
 # Context window helper
@@ -403,14 +367,11 @@ def classify_segments_zero_shot(
         len(per_run_models) == config.n_runs and len(per_run_models) >= 2
     )
 
-    # Hard guard: stochastic IRR on one model requires temperature > 0.
-    if (not use_per_run_models
-            and config.n_runs > 1
-            and config.temperature == 0.0):
+    if not use_per_run_models and config.n_runs > 1:
         raise ValueError(
-            "Interrater reliability requires either per_run_models or "
-            "temperature > 0 with n_runs > 1. Identical calls at temperature=0 "
-            "produce zero rater variance."
+            "Multi-run IRR requires distinct models in per_run_models. "
+            "Single-model stochastic IRR at temperature>0 has been removed; "
+            "use n_runs=1 or configure per_run_models with >=2 distinct models."
         )
 
     llm_config = LLMClientConfig(
@@ -441,14 +402,8 @@ def classify_segments_zero_shot(
     os.makedirs(config.output_dir, exist_ok=True)
     model_clean = config.model.replace('/', '_')
 
-    # Decide which segments to classify and which prompt template to use
-    classify_all = getattr(config, 'classify_all_segments', False)
-    if classify_all:
-        target_segments = segments
-        prompt_template = CONVERSATIONAL_THEME_PROMPT_TEMPLATE
-    else:
-        target_segments = filter_participant_segments(segments)
-        prompt_template = THEME_PROMPT_TEMPLATE
+    target_segments = filter_participant_segments(segments)
+    prompt_template = THEME_PROMPT_TEMPLATE
 
     # Merge trivially short segments into their neighbors before classification
     MIN_CLASSIFIABLE_WORDS = 10

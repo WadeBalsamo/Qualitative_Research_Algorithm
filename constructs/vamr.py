@@ -219,27 +219,4 @@ def get_vamr_framework() -> ThemeFramework:
             'Early stages': ['Vigilance', 'Avoidance'],
             'Late stages': ['Metacognition', 'Reappraisal'],
         },
-        codebook_hypothesis={
-            'vigilance': [
-                'Fear, Anxiety, Panic, or Paranoia',
-                'Agitation or Irritability',
-                'Pain',
-            ],
-            'avoidance': [
-                'Pain Avoidance',
-                'Fear Avoidance',
-                'Affective Flattening, Emotional Detachment, or Alexithymia',
-            ],
-            'metacognition': [
-                'Meta-Cognition',
-                'Clarity',
-                'Change in Narrative Self',
-            ],
-            'reappraisal': [
-                'Reappraisal',
-                'Change in Worldview',
-                'Change in Self-Other or Self-World Boundaries',
-                'Disintegration of Conceptual Meaning Structures',
-            ],
-        },
     )

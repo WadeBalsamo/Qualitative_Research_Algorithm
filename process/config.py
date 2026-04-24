@@ -24,12 +24,8 @@ _SECRET_KEYS = frozenset({'api_key', 'replicate_api_token'})
 class SegmentationConfig:
     """Parameters for transcript segmentation."""
     embedding_model: str = 'Qwen/Qwen3-Embedding-8B'
-    min_segment_words: int = 30
-    max_segment_words: int = 200
     silence_threshold_ms: int = 1500
     semantic_shift_percentile: int = 25
-    # Conversational segmenter (groups all speakers together by topic)
-    use_conversational_segmenter: bool = True
     min_segment_words_conversational: int = 60
     max_segment_words_conversational: int = 400
     # Advanced grouping parameters
@@ -55,11 +51,9 @@ class SpeakerFilterConfig:
     """Controls which speakers' segments are sent to the classifier.
 
     mode:
-        'none'    — classify all segments (default with conversational segmenter)
+        'none'    — classify all segments (default)
         'exclude' — drop segments whose *sole* speaker is in ``speakers``
                     (multi-speaker segments are always kept)
-        'isolate' — keep only segments that include at least one speaker
-                    from ``speakers``
     speakers:
         List of speaker label strings exactly as they appear in the transcript
         (e.g. ['Move-MORE Study', 'Wade (Study Coordinator)']).
@@ -77,12 +71,29 @@ class ValidationConfig:
 
 
 @dataclass
+class TestSetConfig:
+    """Parameters for cross-session validation test set generation."""
+    enabled: bool = True
+    n_sets: int = 2
+    fraction_per_set: float = 0.10
+    random_seed: int = 42
+
+
+@dataclass
 class ConfidenceTierConfig:
     """Configurable thresholds for confidence tier assignment."""
     high_consistency: int = 3
     high_confidence: float = 0.8
     medium_min_consistency: int = 2
     medium_min_confidence: float = 0.6
+
+
+@dataclass
+class TherapistCueConfig:
+    """Parameters for surfacing therapist dialogue cues at stage transitions."""
+    enabled: bool = True
+    max_length_per_cue: int = 250          # words; if cue exceeds this, LLM-summarize
+    max_length_of_average_cue_responses: int = 1000  # cap per averaged block in cue_response.txt
 
 
 @dataclass
@@ -94,9 +105,6 @@ class PipelineConfig:
 
     # Output
     output_dir: str = './data/output/'
-
-    # Run mode
-    run_mode: str = 'auto'  # 'auto', 'interactive', or 'review'
 
     # Feature flags
     run_theme_labeler: bool = True
@@ -110,7 +118,9 @@ class PipelineConfig:
     codebook_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
     codebook_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
+    test_sets: TestSetConfig = field(default_factory=TestSetConfig)
     confidence_tiers: ConfidenceTierConfig = field(default_factory=ConfidenceTierConfig)
+    therapist_cues: TherapistCueConfig = field(default_factory=TherapistCueConfig)
 
     # Resume from checkpoint
     resume_from: Optional[str] = None
@@ -148,7 +158,9 @@ class PipelineConfig:
             'codebook_llm': LLMCodebookConfig,
             'codebook_ensemble': EnsembleConfig,
             'validation': ValidationConfig,
+            'test_sets': TestSetConfig,
             'confidence_tiers': ConfidenceTierConfig,
+            'therapist_cues': TherapistCueConfig,
         }
 
         kwargs = {}
