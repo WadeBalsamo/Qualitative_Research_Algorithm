@@ -149,6 +149,7 @@ class EmbeddingCodebookClassifier:
 
         # Attempt float16 loading (sentence-transformers v3+ supports model_kwargs)
         loaded = False
+        _last_exc: Optional[Exception] = None
         try:
             import torch
             dtype = torch.float16 if (torch.cuda.is_available() or
@@ -163,15 +164,35 @@ class EmbeddingCodebookClassifier:
             # Older sentence-transformers: model_kwargs not supported
             pass
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to load embedding model '{model_id}'.\n"
-                f"  Ensure the model is downloaded (first run needs ~"
-                f"{_model_size_hint(model_id) or '?? GB'} disk space).\n"
-                f"  Pre-download: python -c \"from sentence_transformers import "
-                f"SentenceTransformer; SentenceTransformer('{model_id}', "
-                f"trust_remote_code=True)\"\n"
-                f"  Error: {e}"
-            ) from e
+            _last_exc = e
+            _oom = 'out of memory' in str(e).lower() or 'cuda error' in str(e).lower()
+            if _oom:
+                # GPU OOM: free memory and fall back to CPU so the pipeline can continue
+                import gc
+                try:
+                    import torch
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                print(f"  Warning: CUDA OOM loading {model_id}; retrying on CPU (slower).")
+                try:
+                    self._model = SentenceTransformer(
+                        model_id, trust_remote_code=True, device='cpu'
+                    )
+                    loaded = True
+                except Exception as cpu_exc:
+                    _last_exc = cpu_exc
+            if not loaded:
+                raise RuntimeError(
+                    f"Failed to load embedding model '{model_id}'.\n"
+                    f"  Ensure the model is downloaded (first run needs ~"
+                    f"{_model_size_hint(model_id) or '?? GB'} disk space).\n"
+                    f"  Pre-download: python -c \"from sentence_transformers import "
+                    f"SentenceTransformer; SentenceTransformer('{model_id}', "
+                    f"trust_remote_code=True)\"\n"
+                    f"  Error: {_last_exc}"
+                ) from _last_exc
 
         if not loaded:
             # Fallback: load without dtype hint (v2 compatibility)
