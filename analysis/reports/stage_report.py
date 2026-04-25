@@ -6,7 +6,7 @@ import re
 import pandas as pd
 
 from process import output_paths as _paths
-from ._common import _bar, _pct, _wrap_quote
+from ._formatting import _bar, _pct, _wrap_quote
 
 
 def generate_stage_text_report(

@@ -8,7 +8,7 @@ import pandas as pd
 from ..loader import sort_session_ids
 from ..stage_progression import compute_cross_session_transitions
 from process import output_paths as _paths
-from ._common import _bar, _pct, _wrap_quote
+from ._formatting import _bar, _pct, _wrap_quote
 
 
 def generate_longitudinal_text_report(

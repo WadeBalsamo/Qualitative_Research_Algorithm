@@ -1,4 +1,4 @@
-"""Shared private helpers used across multiple report modules."""
+"""Shared private formatting helpers used across multiple report modules."""
 
 import pandas as pd
 

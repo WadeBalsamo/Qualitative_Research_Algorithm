@@ -56,10 +56,12 @@ from .dataset_assembly import (
 from .cross_validation import (
     compute_theme_codebook_cooccurrence,
     summarize_theme_code_associations,
+    export_cross_validation_results,
 )
 from . import output_paths as _paths
 from .speaker_filter import apply_speaker_filter as _apply_speaker_filter
-from .validation_exports import collect_top_associations as _collect_top_associations
+from .speaker_anonymization import load_speaker_map as _load_speaker_map
+
 
 
 class PipelineObserver:
@@ -130,7 +132,6 @@ def run_full_pipeline(
     if observer is None:
         observer = SilentObserver()
 
-    ts = datetime.datetime.utcnow().strftime('%y-%m-%dT%H-%M-%S')
     output_dir = config.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
@@ -152,36 +153,7 @@ def run_full_pipeline(
 
     # Load speaker anonymization key, with priority: meta/ > imported config
     speaker_key_path = os.path.join(meta_dir, 'speaker_anonymization_key.json')
-    _existing_speaker_map: dict = {}
-    _use_unknown_prefix: bool = False
-
-    if os.path.exists(speaker_key_path):
-        # Re-run: meta/ key always takes precedence for stability
-        try:
-            with open(speaker_key_path) as _f:
-                _raw_key = json.load(_f)
-            _existing_speaker_map = {
-                name: (entry['role'], entry['anonymized_id'])
-                for name, entry in _raw_key.items()
-            }
-        except Exception:
-            _existing_speaker_map = {}
-        # Mark that we should use unknown prefix if key was imported in config
-        _use_unknown_prefix = bool(getattr(config, 'speaker_anonymization_key_path', None))
-
-    elif getattr(config, 'speaker_anonymization_key_path', None):
-        # First run with imported key: seed from it
-        try:
-            with open(config.speaker_anonymization_key_path) as _f:
-                _raw_key = json.load(_f)
-            _existing_speaker_map = {
-                name: (entry['role'], entry['anonymized_id'])
-                for name, entry in _raw_key.items()
-            }
-            _use_unknown_prefix = True
-        except Exception as e:
-            print(f"  Warning: Could not load speaker_anonymization_key_path: {e}")
-            _existing_speaker_map = {}
+    _existing_speaker_map, _use_unknown_prefix = _load_speaker_map(meta_dir, config)
 
     # ------------------------------------------------------------------
     # Stage 1: Transcript Ingestion and Segmentation
@@ -376,7 +348,7 @@ def run_full_pipeline(
         )
 
         theme_config = config.theme_classification
-        theme_config.output_dir = os.path.join(output_dir, 'llm_raw')
+        theme_config.output_dir = _paths.llm_raw_dir(output_dir)
 
         segments_to_classify = _apply_speaker_filter(all_segments, config.speaker_filter)
         n_filtered = len(all_segments) - len(segments_to_classify)
@@ -457,7 +429,7 @@ def run_full_pipeline(
                 json.dump(_cb_defs, _f, indent=2)
 
         # Set up codebook output directory and exemplar export path
-        codebook_output_dir = os.path.join(output_dir, 'codebook_raw')
+        codebook_output_dir = _paths.codebook_raw_dir(output_dir)
         os.makedirs(codebook_output_dir, exist_ok=True)
         config.codebook_embedding.exemplar_export_path = os.path.join(
             codebook_output_dir, 'found_exemplar_utterances.json'
@@ -552,35 +524,13 @@ def run_full_pipeline(
         )
 
         # Export results
-        _cvdir = _paths.cross_validation_dir(output_dir)
-        os.makedirs(_cvdir, exist_ok=True)
-        cv_output = os.path.join(_cvdir, 'cross_validation_results.json')
-        with open(cv_output, 'w') as f:
-            json.dump(
-                {
-                    'raw_cooccurrence': cooccurrence,
-                    'associations_by_theme': associations_by_theme,
-                    'parameters': _cv_params,
-                },
-                f,
-                indent=2,
-            )
+        cv_output, _ = export_cross_validation_results(
+            cooccurrence, associations_by_theme, _cv_params, output_dir
+        )
         observer.on_stage_progress(
             "Cross-Validation (Theme <-> Codebook)",
             f"Exported cross-validation results to {os.path.relpath(cv_output, output_dir)}",
         )
-
-        # Report top associations
-        top_assoc = _collect_top_associations(associations_by_theme)
-        if top_assoc:
-            observer.on_stage_progress(
-                "Cross-Validation (Theme <-> Codebook)",
-                f"Identified {len(top_assoc)} theme-code associations above lift >= 1.5",
-            )
-            assoc_output = os.path.join(_cvdir, 'top_theme_code_associations.json')
-            with open(assoc_output, 'w') as f:
-                json.dump(top_assoc, f, indent=2)
-
         observer.on_stage_complete(
             "Cross-Validation (Theme <-> Codebook)",
             "Cross-validation complete",
@@ -758,13 +708,6 @@ def run_full_pipeline(
         total_segments=len(master_df),
     )
 
-    # Export validation log if validator was used
-    if validator and hasattr(validator, 'validation_log') and validator.validation_log:
-        log_path = os.path.join(output_dir, f'human_validation_log_{ts}.jsonl')
-        with open(log_path, 'w') as f:
-            for entry in validator.validation_log:
-                f.write(json.dumps(entry) + '\n')
-
     # ------------------------------------------------------------------
     # Optional: Post-pipeline Results Analysis
     # ------------------------------------------------------------------
@@ -777,7 +720,7 @@ def run_full_pipeline(
             observer.on_stage_complete(
                 "Results Analysis",
                 f"Analysis complete: {len(analysis_result['files_generated'])} files "
-                f"written to reports/analysis/",
+                f"written to 02_human_reports/ and 04_analysis_data/",
             )
         except ImportError:
             pass  # analysis module not available — skip silently
