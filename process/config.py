@@ -6,6 +6,7 @@ Top-level pipeline configuration.
 Aggregates sub-configs from classification_tools, constructs, and codebook.
 """
 
+import os
 from dataclasses import dataclass, field, asdict, fields
 from typing import Dict, List, Optional
 
@@ -27,11 +28,11 @@ class SegmentationConfig:
     silence_threshold_ms: int = 1500
     semantic_shift_percentile: int = 25
     min_segment_words_conversational: int = 60
-    max_segment_words_conversational: int = 400
+    max_segment_words_conversational: int = 500
     # Advanced grouping parameters
-    max_gap_seconds: float = 30.0              # Max time gap (seconds) between utterances to group
-    min_words_per_sentence: int = 10           # Sentences below this are folded into adjacent same-speaker sentence
-    max_segment_duration_seconds: float = 300.0  # Max duration (seconds) of a single segment
+    max_gap_seconds: float = 15.0              # Max time gap (seconds) between utterances to group
+    min_words_per_sentence: int = 20           # Sentences below this are folded into adjacent same-speaker sentence
+    max_segment_duration_seconds: float = 60.0  # Max duration (seconds) of a single segment
     # Adaptive threshold / dual-window / clustering
     use_adaptive_threshold: bool = True        # Use local-minima detection instead of static percentile
     min_prominence: float = 0.05               # Minimum prominence for adaptive threshold peaks
@@ -39,7 +40,7 @@ class SegmentationConfig:
     use_topic_clustering: bool = True          # Use AgglomerativeClustering for topic boundaries (strengthens boundary confidence)
     # LLM segmentation refinement (runs by default when LLM backend is configured)
     use_llm_refinement: bool = True
-    llm_refinement_mode: str = 'full'  # 'boundary_review', 'context_expansion', 'coherence_check', 'full'
+    llm_refinement_mode: str = 'full'          # 'boundary_review', 'context_expansion', 'coherence_check', 'full'
     llm_ambiguity_threshold: float = 0.15      # Similarity-threshold proximity for "ambiguous" boundaries
     llm_batch_size: int = 5                    # Boundaries/pairs per LLM call
     # Verbose process logging
@@ -100,7 +101,7 @@ class TherapistCueConfig:
 class PipelineConfig:
     """Top-level pipeline configuration."""
     # Input
-    transcript_dir: str = './data/input/diarized_sessions/'
+    transcript_dir: str = './data/input/'
     trial_id: str = 'standard'
 
     # Output
@@ -129,10 +130,16 @@ class PipelineConfig:
     speaker_anonymization_key_path: Optional[str] = None
 
     # Post-pipeline results analysis
-    auto_analyze: bool = False
+    auto_analyze: bool = True
 
     # Downstream
     autoresearch_dir: str = '../autoresearch/'
+
+    def __post_init__(self):
+        if self.speaker_anonymization_key_path is None:
+            candidate = os.path.join(self.transcript_dir, 'speaker_anonymization_key.json')
+            if os.path.exists(candidate):
+                self.speaker_anonymization_key_path = candidate
 
     def to_json(self) -> Dict:
         """Serialize config to a JSON-safe dict, blanking secret fields."""

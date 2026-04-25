@@ -111,11 +111,11 @@ def _add_common_args(parser: argparse.ArgumentParser):
     # Checkpoint
     parser.add_argument('--resume-from', default=None)
 
-    # Post-pipeline analysis
+    # Post-pipeline analysis (on by default; use --no-auto-analyze to skip)
     parser.add_argument(
-        '--auto-analyze',
+        '--no-auto-analyze',
         action='store_true',
-        help='Automatically run results analysis after the pipeline completes',
+        help='Skip the results analysis stage after the pipeline completes',
     )
 
 
@@ -275,8 +275,8 @@ def _build_config(args):
     if args.medium_confidence_threshold is not None:
         config.confidence_tiers.medium_min_confidence = args.medium_confidence_threshold
 
-    if getattr(args, 'auto_analyze', False):
-        config.auto_analyze = True
+    if getattr(args, 'no_auto_analyze', False):
+        config.auto_analyze = False
 
     return config
 

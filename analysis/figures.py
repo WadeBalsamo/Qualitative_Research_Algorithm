@@ -307,7 +307,7 @@ def plot_transition_heatmap(
     fig.colorbar(im, ax=ax, shrink=0.8, label='Count')
     fig.tight_layout()
 
-    path = os.path.join(output_dir, 'state_transition_heatmap.png')
+    path = os.path.join(_ensure_figures_dir(output_dir), 'state_transition_heatmap.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
