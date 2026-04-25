@@ -4,9 +4,7 @@ process/output_paths.py
 Single source of truth for all output directory paths.
 
 All functions accept `run_dir` (the top-level pipeline output directory) and
-return a path string.  Phase 1: return values match the existing layout —
-changing them here (Phase 2) moves every output without touching individual
-writers.
+return a path string.
 """
 import os
 
@@ -18,7 +16,22 @@ def meta_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '07_meta')
 
 
+def llm_raw_dir(run_dir: str) -> str:
+    """LLM theme-classification checkpoints and status files."""
+    return os.path.join(run_dir, '07_meta', 'llm_raw')
+
+
+def codebook_raw_dir(run_dir: str) -> str:
+    """Codebook embedding-classification checkpoints and status files."""
+    return os.path.join(run_dir, '07_meta', 'codebook_raw')
+
+
 # ── Transcripts ───────────────────────────────────────────────────────────
+
+def transcripts_diarized_dir(run_dir: str) -> str:
+    """Raw diarized transcript files (provenance)."""
+    return os.path.join(run_dir, '01_transcripts', 'diarized')
+
 
 def transcripts_coded_dir(run_dir: str) -> str:
     """Per-session coded transcript .txt files."""

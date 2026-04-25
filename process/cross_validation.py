@@ -7,7 +7,9 @@ Summarizes observed theme-to-code co-occurrence patterns to characterize
 empirical associations between VA-MR stages and phenomenology codes.
 """
 
-from typing import Dict, List
+import json
+import os
+from typing import Dict, List, Tuple
 
 import pandas as pd
 
@@ -154,3 +156,40 @@ def summarize_theme_code_associations(
         }
 
     return results
+
+
+def export_cross_validation_results(
+    cooccurrence: dict,
+    associations_by_theme: dict,
+    params: dict,
+    run_dir: str,
+) -> Tuple[str, str]:
+    """Write CV result JSONs to 05_validation/cross_validation/.
+
+    Returns (cv_output_path, assoc_output_path).
+    """
+    from . import output_paths as _paths
+    from .validation_exports import collect_top_associations
+
+    cv_dir = _paths.cross_validation_dir(run_dir)
+    os.makedirs(cv_dir, exist_ok=True)
+
+    cv_output = os.path.join(cv_dir, 'cross_validation_results.json')
+    with open(cv_output, 'w') as f:
+        json.dump(
+            {
+                'raw_cooccurrence': cooccurrence,
+                'associations_by_theme': associations_by_theme,
+                'parameters': params,
+            },
+            f,
+            indent=2,
+        )
+
+    assoc_output = os.path.join(cv_dir, 'top_theme_code_associations.json')
+    top_assoc = collect_top_associations(associations_by_theme)
+    if top_assoc:
+        with open(assoc_output, 'w') as f:
+            json.dump(top_assoc, f, indent=2)
+
+    return cv_output, assoc_output
