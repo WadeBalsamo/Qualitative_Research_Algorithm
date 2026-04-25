@@ -100,6 +100,13 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     # 1. Load data
     # ----------------------------------------------------------------
     log("[1/8] Loading segments...")
+    # Full dataset (all speakers, including therapist) for cue collection
+    df_all = None
+    try:
+        df_all = load_segments(output_dir, speaker_filter=None, require_labeled=False)
+    except Exception:
+        pass
+
     try:
         df = load_segments(output_dir)
     except FileNotFoundError as e:
@@ -285,6 +292,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
             df, framework, output_dir,
             therapist_cue_config=therapist_cue_config,
             llm_client=llm_client,
+            df_all=df_all,
         )
         if path:
             txt_paths.append(path)
@@ -292,7 +300,8 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
         if therapist_cue_config and therapist_cue_config.enabled:
             try:
                 cue_path = generate_therapist_cues_report(
-                    df, framework, output_dir, therapist_cue_config, llm_client
+                    df, framework, output_dir, therapist_cue_config, llm_client,
+                    df_all=df_all,
                 )
                 if cue_path:
                     txt_paths.append(cue_path)
