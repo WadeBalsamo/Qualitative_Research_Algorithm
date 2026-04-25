@@ -117,6 +117,8 @@ def load_segments(
     df['word_count'] = pd.to_numeric(df['word_count'], errors='coerce').fillna(0).astype(int)
     df['llm_confidence_primary'] = pd.to_numeric(df['llm_confidence_primary'], errors='coerce')
     df['llm_run_consistency'] = pd.to_numeric(df['llm_run_consistency'], errors='coerce')
+    df['start_time_ms'] = pd.to_numeric(df['start_time_ms'], errors='coerce').fillna(0).astype(int)
+    df['end_time_ms'] = pd.to_numeric(df['end_time_ms'], errors='coerce').fillna(0).astype(int)
 
     # Ensure final_label and primary_stage exist
     if 'final_label' not in df.columns:
