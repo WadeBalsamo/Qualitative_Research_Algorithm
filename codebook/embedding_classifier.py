@@ -220,7 +220,7 @@ class EmbeddingCodebookClassifier:
         Returns (N, D) float32 ndarray; returns a (0, D) zero array if texts is empty.
         """
         if not texts:
-            dim = self._embed_dim if self._embed_dim else self._get_model().get_sentence_embedding_dimension() or 1024
+            dim = self._embed_dim if self._embed_dim else self._get_model().get_embedding_dimension() or 1024
             return np.zeros((0, dim), dtype=np.float32)
         return self._get_model().encode(
             texts,
@@ -240,7 +240,7 @@ class EmbeddingCodebookClassifier:
         Falls back to plain passage encoding if the model has no 'query' prompt.
         """
         if not texts:
-            dim = self._embed_dim if self._embed_dim else self._get_model().get_sentence_embedding_dimension() or 1024
+            dim = self._embed_dim if self._embed_dim else self._get_model().get_embedding_dimension() or 1024
             return np.zeros((0, dim), dtype=np.float32)
 
         model = self._get_model()
