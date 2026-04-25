@@ -34,22 +34,27 @@ def _wrap_quote(text: str, indent: int = 9, max_width: int = 80) -> str:
 
 
 def _collect_therapist_cue(
-    df: pd.DataFrame, session_id: str, from_seg_idx: int, to_seg_idx: int
+    df: pd.DataFrame, session_id: str, from_end_ms: int, to_start_ms: int
 ) -> str:
-    """Return concatenated therapist text between two participant segment indices.
+    """Return concatenated therapist text that falls between two participant segments.
 
-    Filters strictly on speaker == 'therapist' to exclude participant cross-talk
-    in group-therapy sessions.
+    Uses temporal overlap (start_time_ms / end_time_ms) rather than segment_index
+    because participant and therapist segment indices live in separate spaces after
+    the LLM merge pass resets participant indices to 0, 1, 2, ...
+
+    Requires df to include therapist rows (load with speaker_filter=None).
     """
-    if 'speaker' not in df.columns:
+    if 'speaker' not in df.columns or 'start_time_ms' not in df.columns:
+        return ''
+    if not from_end_ms or not to_start_ms:
         return ''
     mask = (
         (df['session_id'] == session_id)
         & (df['speaker'] == 'therapist')
-        & (df['segment_index'] > from_seg_idx)
-        & (df['segment_index'] < to_seg_idx)
+        & (df['start_time_ms'] >= from_end_ms)
+        & (df['end_time_ms'] <= to_start_ms)
     )
-    rows = df[mask].sort_values('segment_index')
+    rows = df[mask].sort_values('start_time_ms')
     if rows.empty:
         return ''
     texts = [str(r['text']).strip() for _, r in rows.iterrows() if str(r.get('text', '')).strip()]

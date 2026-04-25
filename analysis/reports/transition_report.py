@@ -44,11 +44,12 @@ def _find_transition_examples_by_cohort_session(
 
     Returns list of dicts sorted by (cohort_id, session_id), each with keys:
     cohort_id, session_id, participant_id, from_text, to_text, from_conf,
-    to_conf, from_seg_idx, to_seg_idx.
+    to_conf, from_seg_idx, to_seg_idx, from_end_ms, to_start_ms.
     """
     seen_keys = set()
     examples = []
     has_conf = 'llm_confidence_primary' in df.columns
+    has_times = 'end_time_ms' in df.columns and 'start_time_ms' in df.columns
 
     for (pid, sid), group in df.groupby(['participant_id', 'session_id']):
         cohort = group['cohort_id'].dropna().iloc[0] if group['cohort_id'].notna().any() else None
@@ -62,6 +63,8 @@ def _find_transition_examples_by_cohort_session(
         texts = group['text'].tolist()
         confs = (group['llm_confidence_primary'].tolist() if has_conf else [0.0] * len(texts))
         seg_indices = group['segment_index'].tolist()
+        end_times = group['end_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
+        start_times = group['start_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
 
         for i in range(len(labels) - 1):
             if labels[i] == from_stage and labels[i + 1] == to_stage:
@@ -76,6 +79,8 @@ def _find_transition_examples_by_cohort_session(
                     'to_conf': float(confs[i + 1] or 0),
                     'from_seg_idx': int(seg_indices[i]),
                     'to_seg_idx': int(seg_indices[i + 1]),
+                    'from_end_ms': end_times[i],
+                    'to_start_ms': start_times[i + 1],
                 })
                 break
 
@@ -194,6 +199,7 @@ def generate_transition_explanation(
     output_dir: str,
     therapist_cue_config=None,
     llm_client=None,
+    df_all: pd.DataFrame = None,
 ) -> str:
     """Generate state_transition_explanation.txt in the output root.
 
@@ -268,7 +274,10 @@ def generate_transition_explanation(
                 )
                 if _show_cue:
                     _cue_raw = _collect_therapist_cue(
-                        df, ex['session_id'], ex['from_seg_idx'], ex['to_seg_idx']
+                        df_all if df_all is not None else df,
+                        ex['session_id'],
+                        ex.get('from_end_ms', 0),
+                        ex.get('to_start_ms', 0),
                     )
                     if not _cue_raw:
                         lines.append('     CUE: [none]')
@@ -379,8 +388,9 @@ def generate_therapist_cues_report(
     output_dir: str,
     therapist_cue_config,
     llm_client,
+    df_all: pd.DataFrame = None,
 ) -> str:
-    """Generate cue_response.txt in the output root.
+    """Generate report_cue_responses.txt in 02_human_reports/.
 
     Iterates all within-session transitions, groups by (from_stage, to_stage),
     and produces averaged FROM / CUE / TO blocks for each transition type.
@@ -389,10 +399,12 @@ def generate_therapist_cues_report(
     stage_ids = sorted(framework.keys())
     stage_names = {sid: framework[sid].get('short_name', f'Stage {sid}') for sid in stage_ids}
     max_agg = therapist_cue_config.max_length_of_average_cue_responses
+    _cue_df = df_all if df_all is not None else df
 
     # Collect (from_text, cue_text, to_text) per (from_stage, to_stage)
     transitions: dict = defaultdict(list)
     total = total_forward = total_backward = total_lateral = 0
+    has_times = 'end_time_ms' in df.columns and 'start_time_ms' in df.columns
 
     for (pid, sid), group in df.groupby(['participant_id', 'session_id']):
         if 'speaker' in group.columns:
@@ -405,11 +417,12 @@ def generate_therapist_cues_report(
 
         labels = pgroup['final_label'].astype(int).tolist()
         texts = pgroup['text'].tolist()
-        seg_idxs = pgroup['segment_index'].tolist()
+        end_times = pgroup['end_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
+        start_times = pgroup['start_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
 
         for i in range(len(labels) - 1):
             fr, to = labels[i], labels[i + 1]
-            cue = _collect_therapist_cue(df, sid, seg_idxs[i], seg_idxs[i + 1])
+            cue = _collect_therapist_cue(_cue_df, sid, end_times[i], start_times[i + 1])
             transitions[(fr, to)].append((
                 str(texts[i]).strip(),
                 cue,
@@ -490,7 +503,7 @@ def generate_therapist_cues_report(
 
     content = '\n'.join(lines)
     os.makedirs(_paths.human_reports_dir(output_dir), exist_ok=True)
-    path = os.path.join(_paths.human_reports_dir(output_dir), 'cue_response.txt')
+    path = os.path.join(_paths.human_reports_dir(output_dir), 'report_cue_responses.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(content)
     return path
