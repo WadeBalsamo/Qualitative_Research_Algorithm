@@ -477,7 +477,7 @@ def run_full_pipeline(
         if _preloaded_embedding_model is not None:
             # Reuse the model already loaded by the segmenter — no second GPU allocation
             embedding_classifier._model = _preloaded_embedding_model
-            _dim = _preloaded_embedding_model.get_sentence_embedding_dimension()
+            _dim = _preloaded_embedding_model.get_embedding_dimension()
             embedding_classifier._embed_dim = _dim or 4096
         embedding_results = embedding_classifier.classify_segments(
             cb_segments, codebook
