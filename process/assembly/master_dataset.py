@@ -7,7 +7,7 @@ import pandas as pd
 
 from classification_tools.data_structures import Segment
 from .. import output_paths as _paths
-from ._common import _ms_to_hms, _fmt_conf, _theme_name_from, _summarize_rationales
+from ._shared import _ms_to_hms, _fmt_conf, _theme_name_from, _summarize_rationales
 
 
 def assemble_master_dataset(
