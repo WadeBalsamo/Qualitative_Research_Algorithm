@@ -218,7 +218,7 @@ def generate_transition_explanation(
     )
 
     # ── Within-session ──
-    lines.append('WITHIN-SESSION TRANSITIONS  (state_transition_heatmap.png)')
+    lines.append('WITHIN-SESSION TRANSITIONS  (see 03_figures/state_transition_heatmap.png)')
     lines.append('-' * 60)
     lines.append(
         'Each cell [row → col] counts how many times a classified segment\n'

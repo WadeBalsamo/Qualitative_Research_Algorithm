@@ -301,6 +301,13 @@ def run_full_pipeline(
 
         all_segments.extend(segments)
 
+        import shutil as _shutil
+        _diar_dir = _paths.transcripts_diarized_dir(output_dir)
+        os.makedirs(_diar_dir, exist_ok=True)
+        _diar_dest = os.path.join(_diar_dir, os.path.basename(session_file))
+        if not os.path.exists(_diar_dest):
+            _shutil.copy2(session_file, _diar_dest)
+
     session_counts = Counter(s.session_id for s in all_segments)
     for seg in all_segments:
         seg.total_segments_in_session = session_counts[seg.session_id]
