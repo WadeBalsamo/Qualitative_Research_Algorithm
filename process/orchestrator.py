@@ -313,6 +313,33 @@ def run_full_pipeline(
     )
 
     # ------------------------------------------------------------------
+    # GPU memory hand-off: segmenter → codebook classifier
+    #
+    # ConversationalSegmenter holds ~16 GB of VRAM (Qwen3-8B float16).
+    # If Stage 3b uses the same model ID we steal that instance rather
+    # than loading a second 16-GB copy, which would OOM a 24-GB GPU.
+    # If a different model is configured we release the segmenter's model
+    # and clear the CUDA cache before Stage 3b loads its own model.
+    # ------------------------------------------------------------------
+    _preloaded_embedding_model = None
+    if config.run_codebook_classifier:
+        seg_model_id = getattr(config.segmentation, 'embedding_model', None)
+        cb_model_id = config.codebook_embedding.embedding_model
+        if seg_model_id and seg_model_id == cb_model_id and hasattr(segmenter, 'embedding_model'):
+            _preloaded_embedding_model = segmenter.embedding_model
+            segmenter.embedding_model = None
+        else:
+            segmenter.release_gpu_memory()
+        if llm_refiner is not None and hasattr(llm_refiner, '_embed_model'):
+            llm_refiner._embed_model = None
+        try:
+            import gc, torch
+            gc.collect()
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
     # Stage 2: Construct Operationalization
     # ------------------------------------------------------------------
     observer.on_stage_start(
@@ -440,6 +467,11 @@ def run_full_pipeline(
         cb_segments = _apply_speaker_filter(all_segments, config.speaker_filter)
 
         embedding_classifier = EmbeddingCodebookClassifier(config.codebook_embedding)
+        if _preloaded_embedding_model is not None:
+            # Reuse the model already loaded by the segmenter — no second GPU allocation
+            embedding_classifier._model = _preloaded_embedding_model
+            _dim = _preloaded_embedding_model.get_sentence_embedding_dimension()
+            embedding_classifier._embed_dim = _dim or 4096
         embedding_results = embedding_classifier.classify_segments(
             cb_segments, codebook
         )

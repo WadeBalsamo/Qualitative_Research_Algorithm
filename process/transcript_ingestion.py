@@ -152,9 +152,21 @@ class ConversationalSegmenter:
     """
 
     def __init__(self, config: dict):
-        self.embedding_model = SentenceTransformer(
-            config.get('embedding_model', 'Qwen/Qwen3-Embedding-8B')
-        )
+        import torch as _torch
+        _model_id = config.get('embedding_model', 'Qwen/Qwen3-Embedding-8B')
+        _model_kwargs: dict = {}
+        if _torch.cuda.is_available() or hasattr(_torch.backends, 'mps'):
+            _model_kwargs['torch_dtype'] = _torch.float16
+        try:
+            self.embedding_model = SentenceTransformer(
+                _model_id,
+                model_kwargs=_model_kwargs or None,
+                trust_remote_code=True,
+            )
+        except TypeError:
+            # Older sentence-transformers without model_kwargs support
+            self.embedding_model = SentenceTransformer(_model_id, trust_remote_code=True)
+        self._embedding_model_id = _model_id
         self.min_words = config.get('min_segment_words_conversational', 60)
         self.max_words = config.get('max_segment_words_conversational', 400)
         self.silence_threshold_ms = config.get('silence_threshold_ms', 2000)
@@ -179,6 +191,17 @@ class ConversationalSegmenter:
         self.use_topic_clustering: bool = config.get('use_topic_clustering', False)
         # Process logger (optional)
         self.plog = config.get('process_logger', None)
+
+    def release_gpu_memory(self) -> None:
+        """Unload the sentence embedding model from GPU memory."""
+        self.embedding_model = None
+        try:
+            import gc
+            import torch
+            gc.collect()
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     def segment_session(
         self, sentences: List[Dict], session_metadata: Dict,
