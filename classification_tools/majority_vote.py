@@ -308,7 +308,7 @@ def vote_multi_label(
 
     for rid, assignments in zip(rater_ids, all_assignments):
         seen_codes = set()
-        for a in assignments:
+        for a in (assignments or []):
             cid = get_id(a)
             seen_codes.add(cid)
             code_counts[cid] = code_counts.get(cid, 0) + 1

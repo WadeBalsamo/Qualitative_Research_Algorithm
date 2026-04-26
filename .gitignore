@@ -30,4 +30,5 @@ results/**/llm_results_status_*.txt
 vamr_manuscript.txt
 varieties_of_contemplative_experience.txt
 MoveMORE_protocol.txt
-methodology.txt
+references/
+references/*
