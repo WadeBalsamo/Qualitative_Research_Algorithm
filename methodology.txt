@@ -1,0 +1,471 @@
+# Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain
+
+**Wade Balsamo, Ryan S. Wexler, and the Move-MORE Research Collaborative**
+
+Running head: *Phenomenology at Trial Speed*
+
+---
+
+## Abstract
+
+Iterative early-phase clinical trials face a structural mismatch between the temporal demands of careful qualitative analysis and the brevity of between-cohort refinement windows. The mismatch is most consequential for phenomenologically-grounded interventions like mindfulness-based therapy for chronic pain, where the active ingredients of treatment are first-person experiential transformations that conventional outcome measures cannot fully capture. We describe the Qualitative Research Algorithm (QRA), a computational pipeline that operationalizes two complementary phenomenological frameworks against the diarized session transcripts of a feasibility trial — the Vigilance–Avoidance–Metacognition–Reappraisal (VA-MR) model of therapeutic progression in Mindfulness-Oriented Recovery Enhancement (Wexler, Balsamo et al., 2026), and the 59-code Varieties of Contemplative Experience (VCE) phenomenology codebook of Lindahl et al. (2017). QRA classifies every participant segment against VA-MR through multi-run large-language-model consensus voting, applies multi-label VCE coding through an embedding-plus-LLM ensemble, computes empirical (stage × code) lift statistics, and indexes therapist segments for cue-response analysis at every observed stage transition.
+
+We argue that the pipeline *scaffolds the conditions for* a Varela-style (1996) neurophenomenological mutual-constraints test, rather than operationalizing one in a single pass. The four-cohort iterative design is integral to this argument: lift patterns observed in Cohorts 1–2 generate theoretically-interpretable expectations that — once encoded as a data structure in `constructs/vamr.py` before Cohort 3 begins — become the formal pre-registered hypothesis tested by Cohorts 3–4 as replication. We are explicit about what the pipeline currently computes (exploratory lift characterization, no automated expected-vs-observed comparison) and what is committed for the between-cohort window before Cohort 3.
+
+The methodology's primary pilot deployment is the Move-MORE Feasibility Trial — a four-cohort adaptation of MORE integrating movement-based therapy for adults with lumbosacral radicular pain and elevated kinesiophobia. As of this writing, Cohorts 1 and 2 have completed and four qualitative researchers are validating a 20% stratified sample of QRA's VA-MR classifications. We describe what the pipeline reveals that conventional methods cannot, the curriculum-modification workflow it supports, the Text Psychometrics validation framework (Low et al., 2024) it implements, and the principled extensions — most consequentially the PURER classification of therapist dialogue — that will complete the dyadic structure of the analysis before the trial's final cohort.
+
+**Keywords:** computational phenomenology; mixed methods; iterative trial design; chronic pain; mindfulness-based interventions; lived body; Vigilance-Avoidance-Metacognition-Reappraisal; Varieties of Contemplative Experience; large language models; text psychometrics
+
+---
+
+## 1. The Methodological Problem
+
+Iterative clinical trial designs share a structural feature with significant practical consequences. Each cohort's experience is intended to inform the next cohort's curriculum, and the analytic synthesis that should drive between-cohort modification has to be completed within weeks, sometimes days. For interventions whose active mechanisms are quantitatively measurable — symptom reductions, biomarker changes, behavioral counts — this temporal demand is reasonable; modern outcome dashboards generate the relevant evidence quickly. But for interventions whose active mechanisms are first-person experiential transformations, the temporal demand collides with the time qualitative analysis genuinely requires.
+
+Mindfulness-based interventions for chronic pain are the case in point. The phenomenological frame most fully developed by Leder (1990) building on Merleau-Ponty (1962) describes chronic pain not as a persistent unpleasant sensation but as a structural disorder of embodied experience — the body's pathological insistence on appearing as obstacle rather than receding as the transparent medium of intentional engagement. Mindfulness training, on this account, is a structured practice of phenomenological re-habituation: it does not seek to make pain disappear but to alter the structural relationship between attention and the painful body such that somatic signals can be registered without organizing the entire field of experience around themselves. The empirical evidence that Mindfulness-Oriented Recovery Enhancement (MORE; Garland, 2024) produces clinically meaningful effects is substantial (Garland et al., 2022), and Wexler, Balsamo et al. (2026) recently characterized the four-stage phenomenological progression — Vigilance, Avoidance, Metacognition, Reappraisal — by which participants traverse this re-habituation in MORE for lumbosacral radicular pain.
+
+But that characterization required months of careful thematic analysis on thirty session recordings — the time genuine qualitative attentiveness demands. The Move-MORE Feasibility Trial that builds on this work runs four cohorts in a learning-health-system design with between-cohort windows measured in weeks. Without a tractable methodology for systematic phenomenological analysis at trial speed, between-cohort refinements default to clinical intuition and aggregate outcome scores — important inputs, but ones that cannot answer the questions a phenomenologically-grounded intervention most needs to answer about itself.
+
+The Qualitative Research Algorithm (QRA) was built to dissolve this tension. It does not replace human qualitative analysis; it deploys human qualitative attention efficiently — labeling at corpus scale where labeling is tractable, surfacing the cases where labeling is ambiguous, and organizing the dyadic structure of session interaction so that the relationship between therapist behavior and participant phenomenological progression becomes empirically interrogable within the temporal constraints of iterative design.
+
+This paper has three aims. First, to document what the pipeline currently computes and what it does not, with explicit identification of every place the manuscript prose describes implementation that exists versus engineering committed for the between-cohort window. Second, to articulate what this methodology uniquely reveals — the per-utterance phenomenological staging at corpus scale, the temporally-adjacent mechanism evidence, the dyadic structure derived from a single input, the empirical evaluation of cross-framework convergent expectations, and the validated labeled corpus produced as cumulative byproduct. Third, to describe how the Move-MORE Feasibility Trial — currently completing its second of four cohorts, with human validation underway — serves as the methodology's primary pilot deployment.
+
+---
+
+## 2. Theoretical Grounding: The Lived Body and Its Re-habituation
+
+### 2.1 Chronic Pain as Dys-appearance
+
+Merleau-Ponty's (1962) account of the lived body distinguishes the body-as-experienced from the body-as-physiological-object. In fluid embodiment, the body recedes from focal attention precisely because it is functioning as the condition of attention itself — the medium through which a perceiver reaches toward the world. The skilled typist, the practiced violinist, the walking pedestrian: in each case the body that serves as the instrument of skilled action is characteristically absent from focal attention because it is functioning well. The body is most fully present as lived body when it is most fully transparent as object.
+
+Leder (1990) extends this analysis to the body's pathological modes of appearance. In *dys-appearance*, the body erupts into thematic consciousness as alien — as that which resists the subject's projects and demands attention that would otherwise be directed outward. The dys-appearing body does not disappear into its functions; it inserts itself between subject and world, reconfiguring the intentional arc. Chronic pain produces dys-appearance as a sustained structural condition: the patient inhabits a body that continuously demands attentional resources, narrowing the perceptual horizon, foreclosing engaged action, and reorganizing self-experience around the figure of the painful body. Pain catastrophizing, hypervigilant body monitoring, and the affective constriction documented in chronic pain populations are not separate phenomena from pain itself but constitutive features of the dys-appearance state — the structural form pain's pathological insistence takes when consciousness is colonized by its signal.
+
+This phenomenological account complements rather than contradicts neuroscientific descriptions of chronic pain. Where neuroscience describes the mechanism (central sensitization, default-mode-network hyperconnectivity, descending modulation dysfunction), phenomenology describes the experiential structure that the mechanism produces and that, in turn, sustains it. The two descriptions converge on the same therapeutic target — the disrupted relation between attention and the body — approached from opposite epistemic directions.
+
+### 2.2 The VA-MR Stages as Trajectory of Re-habituation
+
+The Vigilance-Avoidance-Metacognition-Reappraisal model emerged from thematic analysis of thirty MORE sessions in the parent trial for patients with lumbosacral radicular pain (Wexler, Balsamo et al., 2026). What is theoretically significant about the framework, beyond the four qualitatively distinct patterns of in-session expression it describes, is that those patterns can be interpreted as stages in the progressive restoration of healthy structural relationships between attention and the lived body — the very process Section 2.1's phenomenological analysis describes.
+
+**Stage 0 — Pain Vigilance and Attention Dysregulation.** Attentional colonization by pain. Canonical expression: *"I can't stop thinking about the pain, it's all I can focus on."* Phenomenologically, this is Leder's dys-appearance at its most acute: the body occupying the total field of attentional engagement, leaving no ground from which observation or deliberate action is possible. The subject is not, at this moment, a perspective on pain; she is, in this moment, constituted by it.
+
+**Stage 1 — Attention Regulation Applied to Experiential Avoidance.** The structurally important transition that the Wexler et al. (2026) analysis identified as the central developmental barrier of MORE — and the transition most often misread as progress when it is in fact an obstacle to it. Canonical expression: *"When the pain comes, I focus really hard on my breathing to push it away."* Phenomenologically closer to Heidegger's (1962) present-at-hand orientation — the body as object to be managed — than to the restored transparency of the ready-to-hand. The participant has acquired attentional skill but deploys it *away from* somatic experience rather than *toward* it. Hayes et al.'s (1996) experiential-avoidance construct captures the psychological dynamics; the phenomenological reading adds that this avoidance maintains the structural disruption chronic pain produced even as it provides symptomatic relief.
+
+**Stage 2 — Metacognitive Awareness.** The emergence of *reflexive distance*: the capacity to observe one's own mental processes without immediately identifying with them. Canonical expression: *"I noticed I was getting anxious about the pain, and I could just watch that anxiety."* Husserl (1983) describes this in terms of the act/object distinction — metacognition takes one's own intentional acts (anxiety, catastrophizing, avoidance-impulses) as intentional objects, converting them from unexamined conditions of experience into examined contents of attention. Hanley et al. (2020) operationalize this as decentering through the Metacognitive Processes of Decentering Scale.
+
+**Stage 3 — Pain Reappraisal.** A transformation of the noematic structure of pain experience: a change not merely in how pain is *related to* (as in metacognition) but in what pain itself is *experienced as*. Canonical expression: *"It's interesting, when I really look at it, the 'pain' is actually many different feelings."* Pain decomposed into constituent sensations loses its character as a monolithic threatening event and becomes a complex, textured, changing field. The Mindful Reappraisal of Pain Scale (Garland et al., 2022) operationalizes this empirically; correlations with neural metrics from Riegner et al. (2023) and Zeidan et al. (2015) suggest that this reappraisal corresponds to genuine changes in pain processing architecture, not merely linguistic reframing.
+
+The arc from Stage 0 to Stage 3 describes the progressive recovery of the body as a transparent medium of experience rather than a dysappearing obstacle: from attentional colonization (Vigilance) through instrumental management (Avoidance) to observing perspective (Metacognition) and finally to noematic transformation (Reappraisal).
+
+### 2.3 PURER as Structured Phenomenological Inquiry
+
+Each MORE session follows a structured therapist inquiry format: **P**henomenology, **U**tilization, **R**eframing, **E**ducation/Expectancy, **R**einforcement. PURER functions as something analogous to what Giorgi (1985) describes as the descriptive phenomenological interview: a structured method for eliciting, exploring, and consolidating participants' first-person reports.
+
+The Phenomenology component — *"What did you notice during the practice?"* — is most directly analogous to Husserlian *epoché*: the invitation to bracket ordinary naturalistic assumptions and describe experience as it presents itself. Reframing offers interpretive proposals — *"Can you let yourself just notice the sensations without calling them pain?"* — that function as Giorgi's free imaginative variation. Education/Expectancy provides conceptual scaffolding; Reinforcement consolidates and amplifies expressions of therapeutic insight. Utilization bridges in-session insight to ongoing pain-management challenges.
+
+The methodological consequence: therapist dialogue in MORE is not merely contextual background to participant phenomenological expression but is itself a *systematic elicitor* of phenomenological description. The structure of PURER shapes what kinds of phenomenological reports participants offer. Understanding that shaping requires classifying therapist dialogue against the PURER framework — the most consequential planned extension of the QRA pipeline, discussed in Section 8.1.
+
+---
+
+## 3. The Dual-Framework Architecture
+
+QRA implements two complementary phenomenological frameworks concurrently on the same transcript corpus. They address orthogonal analytical questions, and their concurrent application generates evidence neither framework can produce alone.
+
+### 3.1 VA-MR: Where Is This Participant in Therapeutic Progression?
+
+The VA-MR framework characterizes the developmental trajectory described in Section 2.2. Operationally, it is implemented in `constructs/vamr.py` as a `ThemeFramework` containing four `ThemeDefinition` objects, one per stage. Each definition encodes a complete operational specification for LLM-based classification: a formal definition, seven to eight prototypical linguistic features, distinguishing criteria specifying how to discriminate the stage from its most easily confused neighbors, four exemplar utterances (clear expressions), three subtle utterances (harder to classify), three adversarial utterances (potentially confusable with adjacent stages), and a small set of word prototypes that capture each stage's characteristic lexical register.
+
+The adversarial utterances are particularly important. They encode the conceptual boundaries between stages — the cases where clinical understanding is most needed and where automated classification is most challenged. *"I try to push the pain away but it keeps grabbing my attention"* sits at the Vigilance–Avoidance boundary: it might be Avoidance (if the *attempt* is the relevant feature) or Vigilance (if the *capture* is the relevant feature). *"I noticed myself wanting to push the pain away and I just let that happen"* sits at the Avoidance–Metacognition boundary. Surfacing these as a known-label test set before processing real transcripts (Section 5.1) makes operational ambiguity explicit and testable rather than implicit in classifier behavior.
+
+### 3.2 VCE: What Are Participants Phenomenologically Experiencing?
+
+The Varieties of Contemplative Experience codebook (Lindahl et al., 2017) emerged from content-driven thematic analysis of 60 structured interviews with Western Buddhist meditators across Theravāda, Zen, and Tibetan traditions, deliberately including practitioners who reported meditation-related challenges as well as those reporting positive outcomes. It identifies 59 categories of contemplative experience organized across seven higher-order domains: Affective (13 codes), Cognitive (10 codes), Perceptual (7 codes), Conative (3 codes), Sense of Self (6 codes), Social (5 codes), and Somatic (15 codes).
+
+Three features make the VCE taxonomy particularly suited as a parallel classification framework for MBI research. First, it is grounded in careful first-person phenomenological reporting across multiple traditions. Second, it is explicitly designed to be domain-descriptive rather than valence-prescriptive: it documents the phenomenological content of contemplative experience without classifying experiences as inherently beneficial or adverse, recognizing that the same phenomenological category may be experienced as transformative, threatening, or neutral depending on context, framework, and support. Third, its 59-code resolution enables fine-grained characterization of experiential content that coarser-grained instruments cannot.
+
+The relationship between VCE's tradition-informed taxonomy and the clinical MBI context requires explicit acknowledgment. VCE was derived from practitioners for whom meditation is embedded in a comprehensive practice context — ethical training, communal support, tradition-specific interpretive frameworks, soteriological goals well beyond chronic pain management. Move-MORE participants engage in brief mindfulness practices in a medically framed group context; the phenomenological depths accessible in eight weeks of clinical MBI practice differ significantly from those documented in long-term contemplatives. The pipeline makes no assumption about which codes should be common; the empirical cross-validation is designed to reveal this directly.
+
+### 3.3 Why Both — and a Prominent Disclosure About What the Code Currently Does
+
+The frameworks are orthogonal in their analytical contributions. VA-MR is a developmental stage model: it asks *where* in the trajectory of contemplative transformation a given utterance is located. VCE is a content taxonomy: it asks *what* the participant is phenomenologically experiencing. Their concurrent application enables cross-framework empirical evidence neither alone could produce.
+
+Before stating the theoretically motivated co-occurrence expectations, we make a disclosure that the rest of this section's argument depends on:
+
+> **The cross-validation as currently implemented is purely exploratory.** The codebase computes empirical (VA-MR stage × VCE code) lift statistics filtered by lift ≥ 1.5 and minimum count ≥ 3 (`process/cross_validation.py`); it does *not* compare those statistics against pre-specified expected pairs encoded in any data structure. The expectations stated below are stated in this manuscript prose, not as `expected_codes` in `constructs/vamr.py`. A reader cannot verify from the codebase alone which (stage, code) pairs were anticipated before the lift table was inspected. This is consequential and we describe its remedy below before stating the expectations.
+
+With that disclosure on the table, the phenomenological theory developed in Section 2 motivates a set of theoretically grounded expectations:
+
+| VA-MR stage | Theoretically expected to show elevated lift in | Theoretical rationale |
+|---|---|---|
+| Vigilance | Fear/Anxiety/Panic; Agitation or Irritability; Pain (Somatic) | Dys-appearance as affective-somatic phenomenon characterized by hypervigilant monitoring and anxious anticipation |
+| Avoidance | Affective Flattening; Emotional Detachment/Alexithymia | Emotional blunting documented in experiential-avoidance strategies (Hayes et al., 1996) — the motivated effort to *not experience* pain-related affect produces broader affective constriction |
+| Metacognition | Meta-Cognition (Cognitive); Clarity; Change in Narrative Self | Emergence of reflexive self-observation; beginning of narrative distance from pain-defined self-identity |
+| Reappraisal | Positive Affect; Change in Worldview; Change in Self-Other or Self-World Boundaries; Disintegration of Conceptual Meaning Structures | Noematic transformation of pain experience with attendant changes in sense of self and world |
+
+**The staged operationalization of mutual constraints.** Three points warrant emphasis about how the relationship between these expectations and the iterative cohort design transforms the manuscript's epistemological claim.
+
+*First*, the Stage 4 lift computation (Section 4.5) on Cohorts 1–2 generates the empirical co-occurrence patterns against which these expectations *can be evaluated by inspection*. Whether Cohorts 1–2 confirm or disconfirm them is determinable from the lift table; the pre-specification of expectations, however, lives in this manuscript, not in the running code.
+
+*Second*, this is precisely the situation the iterative cohort design is well-positioned to address. The empirical patterns observed in Cohorts 1–2 — both confirmations of the theoretical predictions above and unanticipated high-lift associations — generate a refined and code-level-specifiable set of expectations that can be pre-registered before Cohort 3 begins as formal hypotheses for replication in Cohorts 3–4. *The iterative cohort design is the mutual-constraints architecture.* Cohorts 1–2 generate empirical regularities under theoretically-motivated description; Cohorts 3–4 test whether those regularities replicate against pre-specified, code-encoded expectations.
+
+*Third*, the structural commitment to add an `expected_codes` field to `ThemeDefinition` in `theme_schema.py`, populated in `vamr.py` with the predictions from the table above, before Cohort 3 begins, is recorded as the highest-priority engineering item for the between-cohort interval (Section 8.2). Once that field is populated, the cross-validation report mechanically generates expected-vs-observed comparisons (predicted-and-confirmed, predicted-and-absent, unpredicted-but-elevated) rather than the prose-level evaluation that is currently possible. This addresses the strongest available critique of the present analysis — that without code-level pre-specification, predictions cannot be verified as having been stated before the data that would test them — by committing to that specification publicly before the data are generated.
+
+The manuscript's epistemological claim is therefore that QRA *scaffolds the conditions for* a Varela-style (1996) mutual-constraints test, not that it operationalizes one in a single pass. The scaffolding includes the corpus, the dual-framework infrastructure, the lift table, the pre-specification commitment, and the replication architecture provided by the four-cohort iterative design. To our knowledge, this constitutes the first systematic empirical examination of the phenomenological correlates of VA-MR stage expression and the first application of the VCE taxonomy to a chronic pain MBI population.
+
+---
+
+## 4. The Computational Pipeline
+
+QRA operates on diarized transcripts of group session recordings produced by automated speech recognition (locally-deployed Whisper) with speaker diarization. Research assistants verify transcript accuracy manually, correcting errors in proper nouns, technical vocabulary, and speaker assignments. All participant identifying information is anonymized before analysis. The pipeline executes seven sequential main stages with optional Stage 8 post-pipeline analysis (the optional VCE codebook classification appears as Stage 3b in the orchestrator, which we describe within Section 4.4 as a sub-stage of Stage 3 to keep the main count clean). The full technical specification is documented in `PROCESS.md` in the project repository; here we describe the analytical logic.
+
+### Capability summary: current vs. planned
+
+| Capability | Current | Planned (before Cohort 3) | Planned (Cohorts 3–4) |
+|---|---|---|---|
+| Semantic segmentation of diarized transcripts | ✓ | — | — |
+| Participant/therapist speaker separation | ✓ | — | — |
+| VA-MR multi-run LLM classification with confidence tiering | ✓ (single-model stochastic) | — | Multi-model migration (§8.4) |
+| Content-validity test set against framework definitions | ✓ | — | — |
+| VCE 59-code multi-label classification (embedding + LLM ensemble, union) | ✓ | — | — |
+| Empirical (stage × code) lift table with 1.5/3-count thresholds | ✓ | — | — |
+| Code-level pre-specified `expected_codes` for hypothesis testing | — | ✓ (§8.2) | — |
+| Shuffled-stage permutation control for lift | — | ✓ (§8.2) | — |
+| Within- and between-session VA-MR transition matrices | ✓ | — | — |
+| FROM → CUE → TO cue-response synthesis (text only) | ✓ | — | — |
+| PURER classification of therapist segments | — | ✓ (§8.1) | — |
+| Avoidance-barrier dedicated automated report | — | ✓ (§8.2) | — |
+| Outcome integration (joint displays with pain/disability/MAIA-2/etc.) | — | ✓ (§8.3) | — |
+| Supervised fine-tuned classifier from validated corpus | — | — | ✓ (§8.4) |
+
+### 4.1 Stage 1 — Semantic Segmentation and Speaker Separation
+
+The first stage divides the diarized sentence stream into semantically coherent participant *segments* — multi-sentence units of meaning that become the atomic unit of classification throughout the rest of the pipeline. The choice not to segment at speaker-turn boundaries embeds a theoretical commitment: the unit of analysis should be the semantically coherent utterance — the stretch of discourse that constitutes a single identifiable expression of an experiential state — rather than the conversational exchange unit. A participant may complete a coherent phenomenological report across multiple short turns interspersed with therapist back-channeling; conversely, a single long turn may contain both an experiential report and a shift to cognitive commentary. Segmentation at semantic rather than conversational boundaries produces units of consistent phenomenological coherence.
+
+The algorithm computes sentence embeddings using a sentence-transformer model (Qwen/Qwen3-Embedding-8B by default; configurable), constructs a windowed cosine-similarity curve across the session (window size = 3), and identifies segment boundaries at local minima in the similarity curve adaptively thresholded to the session's own distribution (default: 25th percentile). This adaptive thresholding handles between-session variance: sessions with uniformly high semantic coherence require a lower absolute threshold than sessions with more variable content, but the algorithm applies the same percentile-based criterion across both. Boundaries are also accepted at temporal pauses exceeding a silence threshold (default: 1500 ms), and a minimum segment length (default: 30 words) prevents over-segmentation of dense dialogue. Segments exceeding a maximum word count (default: 200) are recursively split at their midpoint.
+
+A foundational design decision concerns the handling of therapist speech. Therapist dialogue in MORE is heavily structured by PURER and has a systematically different linguistic register from participant speech: questioning forms, second-person address, clinically calibrated hedging. Including therapist segments in VA-MR classification would generate systematic false positives. The pipeline therefore separates participant and therapist segments at segmentation, submitting only participant segments to VA-MR classification while retaining therapist segments interleaved chronologically by `start_time_ms` in the session timeline. This separation is the structural foundation for the cue-response analysis (Section 4.8) and for the planned PURER classification of therapist segments (Section 8.1).
+
+### 4.2 Stage 2 — Construct Operationalization
+
+Before classification, the VA-MR `ThemeFramework` is serialized to `theme_definitions.json`, preserving the full operational definition of each stage for researcher review and reproducibility. A *content validity test set* (`content_validity_test_set.jsonl`) is also exported, comprising the exemplar, subtle, and adversarial utterances from each stage definition tagged with their known correct labels. This set serves as the primary instrument for the content-validity assessment described in Section 5.1: the classifier can be run against it before processing real transcripts to verify that the LLM correctly handles both the easy cases (exemplars) and the difficult cases (adversarial utterances). When the classifier fails on adversarial items, the framework definitions or the prompt are refined before committing compute to the full corpus.
+
+### 4.3 Stage 3 — VA-MR Classification
+
+Each participant segment is submitted to multi-run LLM classification against the VA-MR framework. The LLM is presented with the segment text, a context preamble (the two to three preceding sentences in the session, capped at 300 words), and the full ThemeFramework definitions, and is asked to return a structured JSON classification with `primary_stage`, `primary_confidence`, `secondary_stage`, `secondary_confidence`, and a `justification` field that must cite specific language from the segment.
+
+The justification field is analytically important beyond aggregation: it makes the LLM's inferential basis explicit and auditable. A justification that cites language not present in the segment, or that is formulaic rather than text-grounded, signals a classification that should be flagged for human review regardless of its confidence score. A `null` `primary_stage` is a valid response — it means the LLM judges the utterance to be irrelevant to the VA-MR framework (e.g., logistical small talk) — and constitutes an ABSTAIN ballot. To reduce position bias, the order in which the four stage definitions appear in the prompt is randomized between runs when temperature > 0.
+
+Classification is repeated `n_runs` times per segment. The pipeline supports two distinct multi-run modes with consequentially different reliability semantics:
+
+- **Multi-model runs** (`per_run_models`): each run uses a different LLM. Cross-model agreement provides the strongest reliability estimate available within the pipeline, since the runs are produced by independently trained models with different architectural and training-data properties.
+- **Single-model stochastic runs**: the same model is called multiple times with temperature jitter. This produces a *stability* measure — agreement across stochastic samples from the same parameter distribution — which is a weaker form of evidence than cross-model agreement, since the runs share all trained parameters, biases, and definitional artifacts.
+
+The current production configuration on Move-MORE Cohorts 1–2 uses single-model stochastic mode with `n_runs=3`. This yields a stability estimate, not independence-based reliability. Migration to multi-model classification is a near-term enhancement (Section 8.4); it is a configuration change rather than an architectural one.
+
+For each segment, per-run ballots are aggregated via majority vote (`classification_tools/majority_vote.py`). The system distinguishes four agreement levels: `unanimous` (all raters agreed and no parse errors), `majority` (winning ballot count exceeds half but not all raters), `split` (no ballot reached majority), and `none` (all raters errored). Segments with `split` or `none` agreement are automatically flagged for human review (`needs_review=True`) and included in the priority human-coding queue. ABSTAIN counts as a valid ballot, not a parse error: a unanimous ABSTAIN result is a high-confidence judgment that the segment is unclassifiable, substantively different from a split between ABSTAIN and a stage label. When ties occur, CODED stages are preferred over ABSTAIN, and among tied coded stages, the one with higher mean confidence among its agreeing raters wins.
+
+A confidence-tiering system integrates run consistency with per-run confidence into a single reliability indicator: *high* confidence requires both unanimous agreement across runs and per-run confidence above 0.80; *medium* requires majority agreement with confidence above 0.60; *low* covers everything else (including all split-vote segments regardless of confidence). The integration matters because high per-run confidence in a single run is not a reliable indicator of correctness — LLMs can be confidently wrong. The combination of consistency across runs and high per-run confidence is more robust than either alone.
+
+### 4.4 Stage 3b — VCE Multi-Label Classification (optional)
+
+When codebook classification is enabled, each participant segment is also submitted to multi-label coding against the 59-code VCE phenomenology codebook. Two complementary classifiers are run and their outputs reconciled by an ensemble.
+
+The **embedding-based classifier** (`codebook/embedding_classifier.py`) encodes segments as *query* embeddings and codebook entries as *passage* embeddings using a retrieval-optimized sentence-transformer model. For each segment-by-code pair, a composite cosine-similarity score is computed weighted across the code's definition, inclusive criteria, and exemplar utterances. A *two-pass procedure* improves recall on subtle phenomenology: in the first pass, codes above a confidence threshold are identified; in the second pass, those high-confidence codes are merged into the exemplar pool and the segment is re-scored.
+
+The **LLM classifier** presents the segment with the codebook definitions and elicits a multi-label classification with per-code justifications. Multi-label LLM coding uses a stricter consensus rule than single-label theme coding: a code is included only if a strict majority of raters apply it.
+
+The **ensemble** (`codebook/ensemble.py`) reconciles the two classifier outputs. The current production behavior produces a *union* ensemble: codes assigned by either method above threshold are retained, with embedding scores weighted 0.6 and LLM scores 0.4 in the composite confidence. The master segment file additionally stores `codebook_labels_embedding` and `codebook_labels_llm` separately, so the *intersection* (codes assigned by both) is reconstructable as a stricter alternative. The default lift computation (Stage 4) operates on the ensemble (union) labels, which favors recall for exploratory phenomenological characterization. We will report both union-based and intersection-based lift tables in the empirical companion paper to this methodology, with the union table as primary for exploratory characterization and the intersection table as the validity-conservative complement.
+
+### 4.5 Stage 4 — Cross-Framework Lift Statistics
+
+When both VA-MR and VCE classifications have been computed, Stage 4 computes empirical lift statistics for each (VA-MR stage, VCE code) pair across the corpus:
+
+> *Lift(stage, code) = P(code | stage) / P(code)*
+
+A lift value above 1.0 indicates the code appears more often in segments classified as that stage than in segments overall; values above 1.5 we treat as substantively elevated. The computation includes a minimum count filter (default: 3 segments) to prevent a code that appears once in one stage from generating a spuriously high lift. The Stage 4 output is the corpus-level lift table and ranked associations above the 1.5 / 3-count thresholds.
+
+As stated prominently in Section 3.3, Stage 4 currently computes empirical lift only — *not* an automated comparison against pre-specified expected codes. The `expected_codes` data structure that would enable mechanical expected-vs-observed comparison is the highest-priority engineering item for the between-cohort interval (Section 8.2).
+
+### 4.6 Stage 5 — Validation Set Generation
+
+Stage 5 generates a balanced human evaluation set by stratified sampling across stages and confidence tiers, ensuring the human validation sample represents the full distribution of classified content rather than over-sampling clear cases. The output (`human_coding_evaluation_set.csv`) is the formal blind-coding worksheet used for the inter-rater reliability protocol (Section 5.4), sized at approximately 10–20% of all labeled participant segments. Cross-session human-coding worksheets and AI-classification worksheets for matched comparisons are also produced.
+
+The validation set is complemented by two other artifacts: the content-validity test set from Stage 2 (the known-label adversarial utterances) and the flagged-for-review list (segments with `split` or `none` LLM agreement). Together, these three artifacts provide three orthogonal entry points into human validation: known-label test of classifier behavior, flagged ambiguous cases that the classifier could not resolve, and stratified random sampling of confident classifications.
+
+### 4.7 Stage 6 — Dataset Assembly
+
+Stage 6 assembles the master dataset (`master_segments.jsonl` and `master_segments.csv`) — every segment from every session, with its classifications, confidence tier, and final label resolved according to a strict priority hierarchy:
+
+> adjudicated > human-consensus > LLM-zero-shot
+
+At the start of a study, all final labels carry the source `llm_zero_shot`. As human coding is completed and entered, labels for coded segments upgrade to `human_consensus` (where a human coder independently assigned the same label as the LLM) or `adjudicated` (where a human expert resolved an LLM-human disagreement). This priority hierarchy makes the final-label provenance fully auditable: every claim about a segment can be traced to its source and the level of human verification it has received.
+
+The chronologically-interleaved master file is itself the session adjacency index needed for cue-response analysis: full segment sequences per session sortable by `session_id` and `segment_index`, and the immediate temporal adjacency between any participant segment and the therapist contribution that precedes or follows it. A session-level stage progression summary (`session_stage_progression.csv`) reports counts of forward, backward, and lateral transitions between adjacent participant segments per session.
+
+### 4.8 Stages 7 and 8 — Reports and Cue-Response Analysis
+
+Stage 7 generates per-session coded transcripts (each segment with all classifications visible, rater ballots displayed, consensus decisions and confidence-tier annotations attached), human blind-coding worksheets, and per-session statistics aggregated to the cohort level.
+
+Stage 8 — invoked by `python qra.py analyze` either at the end of a pipeline run or post-hoc on a completed run — generates the principal analytical reports: per-participant longitudinal trajectories; per-session deep analysis; per-construct corpora (every segment in the corpus assigned to each VA-MR stage, sorted by confidence); graph-ready CSVs; visualization figures of stage distributions, longitudinal trajectories, transition matrices, and codebook lift heatmaps; and the cue-response analysis.
+
+**Important framing note before describing the cue-response analysis.** As of this writing, therapist segments are extracted, indexed in the chronological session timeline, and made available to the cue-response report as *unlabeled text*. PURER classification of therapist segments is not yet implemented. The cue-response analysis therefore currently produces a *textual portrait* of therapist behavior at each transition type, not a PURER-categorized move distribution. The mechanism-evidence claim (Section 7.2) is half-implemented in this respect, and we mark this clearly when describing the analysis below and again in Section 7.2.
+
+The cue-response analysis is built on a simple but powerful observation about how group therapy actually unfolds. A participant speaks. The therapist responds. The participant speaks again. The empirical question is: what does the therapist do, exactly, when participants make a particular kind of stage transition?
+
+For every within-session VA-MR transition — every participant segment at stage X immediately followed by a participant segment at stage Y — the analysis captures the tri-partite structure FROM → CUE → TO:
+
+- **FROM**: the participant utterance preceding the transition, classified at stage X.
+- **CUE**: all therapist segments whose `segment_index` falls strictly between the FROM and TO positions in the same session.
+- **TO**: the participant utterance after the transition, classified at stage Y.
+
+This is not merely the nearest therapist utterance; it is the full therapist contribution in the temporal gap between the two participant segments. The FROM → CUE → TO triple is the atomic unit of the cue-response analysis. Two reports synthesize the structure. The transition report documents the statistical landscape (counts of forward, backward, and lateral transitions; exemplar triples; per-participant trajectories). The cue-response report aggregates the full evidence per transition type: an LLM-synthesized characterization of the average FROM, average CUE, and average TO, drawn from every example of that transition type in the corpus, producing a compressed but interpretively rich portrait of what each kind of stage transition typically looks like — *with the caveat above that the CUE position contains unlabeled therapist text until PURER classification is implemented.*
+
+Within-session and between-session transition matrices answer different questions. Within-session transitions capture the *texture* of a session: how fluidly a participant moves across stages, how often they access higher stages, what therapist cues are temporally associated with momentary advancement. Between-session transitions, computed from the modal stage of each (participant, session) pair, capture *learning*: whether the stage a participant primarily occupies advances week to week. A participant who reaches Reappraisal briefly within Session 2 but reverts to Vigilance as their dominant stage, then shows Reappraisal as their dominant stage by Session 5, has demonstrated the kind of consolidation across sessions that VA-MR predicts. The two levels together tell a richer story: within-session transitions show the therapist pulling the participant temporarily forward, and between-session transitions show whether those temporary advances have been internalized.
+
+---
+
+## 5. Validation: Text Psychometrics
+
+The application of language model-based classification to phenomenological constructs requires a validation methodology appropriate to the distinctive epistemic situation: third-person computational tools applied to first-person experiential reports, where the ground truth is constitutively inaccessible to the classification system and only partially accessible to human coders. Standard psychometric frameworks designed for numerical scale scores do not translate directly to this context. Low, Mair, Nock, and Ghosh (2024) propose Text Psychometrics as a framework specifically designed for this purpose. QRA implements each component for the computational phenomenological context.
+
+### 5.1 Content Validity: Known-Label Test Sets
+
+Content validity in text psychometrics concerns whether the classification system adequately covers the construct domain. QRA's content-validity assessment is implemented through the known-label test set generated at Stage 2, which contains the exemplar, subtle, and adversarial utterances from each stage definition — utterances whose correct classification is fixed by the framework design itself. Running the classification pipeline against these known-label utterances *without* providing their labels yields a direct measure of content validity: per-stage accuracy on clear-tier items reveals how well the LLM has internalized the framework definitions; accuracy on adversarial-tier items reveals how well the pipeline handles conceptual boundary cases; systematic misclassification of specific adversarial utterances identifies the exact stage boundaries where the operational definition requires sharpening.
+
+This assessment is conducted before processing real transcripts. Low accuracy on adversarial items — for example, systematic confusion between Avoidance and Vigilance on utterances combining avoidant intention with attentional capture — identifies a definitional boundary that needs clarification before classifications of real segments can be trusted. The assessment serves both as a validation check and as a prospective improvement instrument.
+
+### 5.2 Construct Validity: Cross-Framework Lift, with Three Caveats
+
+Construct validity concerns whether a measure correlates with other measures of theoretically related constructs. QRA's construct-validity assessment operates through the cross-framework lift statistics described in Section 4.5, evaluated against the theoretically motivated expectations stated in Section 3.3.
+
+Three caveats need to be made before any construct-validity claim is taken seriously, two of which we have already raised and one of which we add here.
+
+*First*, restated from Section 3.3: the expectations are stated in this paper, not encoded as a data structure in the codebase. Section 8.2 commits to remedying this before Cohort 3, populating `expected_codes` in `vamr.py` and implementing the expected-vs-observed comparison in `cross_validation.py`. Until that commit lands, the construct-validity argument for Cohorts 1–2 rests on prose-level pre-specification rather than mechanical reproducibility.
+
+*Second*, when both classifiers are LLMs trained on overlapping internet text, some portion of their co-occurrence will arise from shared training-data patterns rather than from genuine phenomenological structure in the transcripts. The terms "notice," "observe," and "aware" trigger both VA-MR Metacognition classification and VCE Meta-Cognition coding because both classifiers have learned the same lexical associations from the same training distribution. This is *construct overlap* operating at the level of classifier substrate, not mutual constraint operating at the level of independent measurement. A defensible test against this confound is the *shuffled-stage permutation control*: re-running the lift computation against a permuted assignment of segments to stages, breaking the real correspondence and recomputing the lift distribution. If the high-lift associations observed under the real assignment also appear under permutation, the apparent convergence is classifier co-dependency, not framework validation. We commit to this analysis as part of the same engineering item that adds `expected_codes` (Section 8.2); it is computationally trivial since it requires no new classifications.
+
+*Third*, the union ensemble currently used as input to the lift computation favors recall and inflates co-occurrence relative to a stricter intersection criterion. A complementary lift table computed from intersection-only ensemble labels is reconstructable from the stored fields and serves as a conservatism check.
+
+With these caveats made, the substantive interpretation of cross-validation results depends on what is observed: predicted (stage, code) pairs at lift ≥ 1.5 are consistent with the phenomenological theory of dys-appearance and re-habituation (Section 2); unexpected high-lift associations are hypothesis-generating findings about features the theory did not anticipate; predicted associations that do not appear are equally informative — they may reveal that the Move-MORE population's expression diverges from theoretical prediction in identifiable ways, requiring framework adaptation.
+
+### 5.3 Reliability: Multi-Run Consensus and Cross-Model Agreement
+
+Inter-rater reliability in classical psychometrics measures the consistency of judgments across independent raters. Computational classification introduces a stochastic analog with two distinct semantic interpretations that should not be conflated.
+
+When multiple *independent models* produce the runs, cross-model agreement is the strongest reliability estimate available within the pipeline. The runs are genuinely independent in a sense recognizable from classical inter-rater design: they share neither parameters nor training distributions, and their convergence on the same classification is evidence that the classification is grounded in the segment's content rather than in any single model's idiosyncrasies.
+
+When a *single model* with temperature jitter produces multiple runs, the agreement statistic measures *stability* — agreement across stochastic samples from the same parameter distribution. This is weaker evidence: the runs share all trained parameters, biases, and definitional artifacts, and their convergence reflects only that the model's posterior distribution over labels is sharply peaked. High stability does not imply correctness; a confidently wrong model is stably confidently wrong.
+
+Both forms of agreement are recorded and reported in the master segment file. The current Move-MORE production configuration uses single-model stochastic mode, providing stability rather than independence-based reliability. We are explicit about this in our reporting and in the human-validation protocol below: with single-model multi-run, the formal reliability claim that the pipeline can support is internal stability, and human validation against expert judgment carries the primary burden of establishing classification correctness. Migration to multi-model classification is a near-term priority (Section 8.4).
+
+### 5.4 Human Validation: Two-Team Blind Coding
+
+Computational reliability measures are necessary but not sufficient for validating phenomenological classifications. The ultimate validation standard is agreement with human expert judgment.
+
+The current state of human validation in the Move-MORE pilot is as follows. Four qualitative researchers are independently coding a 20% stratified sample of QRA's VA-MR classifications across Cohorts 1 and 2, working blind to the LLM labels. The sample is balanced across stages and confidence tiers, ensuring representation of both the easy classifications (high-confidence, prototypical exemplars) and the hard ones (low-confidence, boundary cases). Before coding real segments, each rater works through the content-validity test set without seeing labels — a procedure that simultaneously calibrates rater familiarity with VA-MR distinctions and surfaces definitional ambiguities specific to the Move-MORE context (most importantly, the kinesthetic vocabulary introduced by the movement integration that was not present in the original MORE corpus on which VA-MR was derived).
+
+Agreement statistics will be interpreted as follows.
+
+- **Agreement at or above 75% raw agreement and Krippendorff's α ≥ 0.60**: computational classifications can serve as primary evidence for curriculum-modification recommendations. High-confidence and medium-confidence classifications are retained as valid; low-confidence classifications are treated as directional indicators requiring researcher confirmation.
+- **Agreement between 50% and 74%, or α between 0.40 and 0.59**: classifications provide directional evidence only. Curriculum recommendations are framed as hypotheses to test in subsequent cohorts, not as conclusions, and all modification decisions require convergent evidence from at least two independent sources.
+- **Agreement below 50% or α below 0.40**: classifications should not be used as primary evidence. The most likely explanations are that the VA-MR framework is insufficiently specified for Move-MORE's movement-specific language register, that the LLM is not reliably distinguishing between adjacent stages, or that participant utterances are more mixed-stage than the framework anticipated. In any of these cases, both rater teams review flagged segments and discuss definitional ambiguities, leading to framework refinement before Cohort 3 begins.
+
+The architecture is designed around complementarity: the LLM applies framework definitions consistently across thousands of segments without fatigue; the human reads carefully where careful reading is needed. The flagged-for-review queue, the stratified evaluation sample, and the content-validity test set provide three orthogonal channels by which human attention is directed where it is most consequential.
+
+---
+
+## 6. The Move-MORE Feasibility Trial as the Methodology's Primary Pilot
+
+### 6.1 The Trial in Brief
+
+Move-MORE is a multicomponent, virtually-delivered mindfulness-and-movement program for adults with lumbosacral radicular pain (LRP) and elevated kinesiophobia (Tampa Scale of Kinesiophobia ≥ 23). The intervention integrates three components grounded in Self-Determination Theory: mindfulness training adapted from MORE, gentle therapist-guided movement therapy targeting kinesiophobia within pain-tolerable ranges, and motivational coaching using motivational-interviewing-consistent techniques. Group delivery satisfies the relatedness need; individualized home-practice prescriptions support autonomy and competence.
+
+The feasibility trial enrolls 32 adults (n ≈ 8 per cohort) across four sequential cohorts in an iterative convergent design (Alwashmi et al., 2019). Each cohort completes the eight-week MORE-for-Pain protocol with movement integration: Session 1 (What is Pain and Why Can Mindfulness Help?), Session 2 (Automaticity in Chronic Pain), Session 3 (Mindful Reappraisal), Session 4 (Mindful Savoring), Session 5 (Pain and Unhealthy Coping Mechanisms), Session 6 (Disrupting the Stress-Pain Link), Session 7 (Pain, Thought Suppression, and Mindfulness to Meaning), Session 8 (Maintaining a Mindfulness Practice). Each session follows a standard structure anchored by PURER-guided practice debriefing. The full protocol (Wexler et al., in preparation) is registered at ClinicalTrials.gov (NCT07125027).
+
+The qualitative-analysis component of the protocol — the component QRA implements — was originally specified as fine-tuning a BERT-base classifier on MORE codebook labels and generating session-level code-frequency heat maps for joint-display review. QRA preserves this overall workflow but extends it in three significant ways: (a) the underlying classification is performed by zero-shot multi-run LLM consensus rather than supervised fine-tuning, allowing the pipeline to run before a fine-tuning corpus exists; (b) the dual-framework architecture adds VCE multi-label coding and cross-framework lift statistics; (c) the cue-response infrastructure makes the dyadic structure of session interaction empirically interrogable in a way that session-aggregate code frequencies cannot.
+
+### 6.2 Current State of the Pilot
+
+As of completion of Cohort 2:
+
+- **VA-MR participant-side classification** is operating across all completed sessions, with confidence tiering and multi-run consensus producing labeled segments at high, medium, and low confidence.
+- **VCE 59-code phenomenology classification** is operating via the embedding-plus-LLM ensemble.
+- **Cross-validation lift statistics** have been computed as exploratory characterization. The theoretically motivated expectations stated in Section 3.3 are being evaluated against the observed lift table for Cohorts 1–2 in the empirical companion paper to this methodology.
+- **Within-session and between-session transition analysis** is producing transition matrices, exemplar (FROM, CUE, TO) triples, longitudinal trajectories per participant, and the cue-response report aggregating therapist language by transition type.
+- **Human validation infrastructure** has been generated; four qualitative researchers are coding a 20% stratified sample.
+- **Therapist segments** are extracted and indexed in the chronological session timeline. They are *not yet classified* against PURER (Section 8.1).
+
+The Cohort 1–2 corpus, once human-validated, becomes the methodology's first systematically labeled corpus of VA-MR stage expression in mindfulness-based pain therapy. It serves three purposes: empirical evidence base for Cohort 3 curriculum modification; convergent-evidence base for the dual-framework architecture as a methodological contribution; and initial training signal for supervised fine-tuning extensions (Section 8.4).
+
+### 6.3 The Curriculum Modification Workflow
+
+The curriculum modification report for Cohort 3 will be organized as follows. We describe it explicitly because translating pipeline outputs into curriculum decisions is the practical test of whether the methodology can do what it claims.
+
+**Stage Distribution Summary.** Group-level prevalence of each VA-MR stage across Cohorts 1 and 2; the feasibility rating computed from segment-tier distribution; validation-agreement statistics. This section makes explicit what has been human-validated versus what is LLM-classified, and reports the longitudinal trajectory at the group level: does the group's mean stage progression slope upward across the eight sessions? Does it do so monotonically, or are there session-specific dips?
+
+**Session-by-Session Analysis.** For each session, the observed stage distribution, notable deviations from theoretical expectation, and one to two representative participant quotes drawn from the highest-confidence exemplar segments. The theoretical expectation for each session is provided by the protocol structure: Session 3 (Mindful Reappraisal) should produce more Reappraisal-stage utterances than Session 1; Session 5 (Pain and Unhealthy Coping) is content-designed to catalyze the Avoidance → Metacognition transition; and so on. Where the empirical distribution deviates from theoretical expectation, that deviation is the hypothesis-generating observation for curriculum modification.
+
+**Avoidance Barrier Assessment.** *Important framing: this section currently requires manual synthesis from the general transition report and the cue-response report; an automated `avoidance_barrier_report` that computes Avoidance prevalence by session number, Avoidance → Metacognition transition rate within and between sessions, and per-participant barrier-crossing classification (defined as the first session in which Avoidance is no longer the participant's dominant stage) is a near-term engineering target identified through the present manuscript's preparation (Section 8.2).* Once the automated report exists, this section reports the Avoidance prevalence and barrier-crossing patterns directly. Until then, the curriculum-modification team produces this section by running the existing transition report and reading the cue-response output for Avoidance → Metacognition transitions specifically. The Avoidance barrier is the single most clinically important dimension of the analysis: it is the central developmental challenge identified by Wexler, Balsamo et al. (2026), and the cue-response analysis directly addresses what therapists are saying when participants do or do not cross it.
+
+**Therapist Behavior Analysis.** Based on the cue-response report, characterization of the therapist language preceding productive (forward) versus unproductive (lateral or backward) transitions. With PURER classification not yet implemented, this section currently presents qualitative description of the average CUE for each transition type. Once PURER classification is in place (Section 8.1), this section will report the empirical PURER move distribution preceding each transition type, supporting therapist fidelity assessment alongside curriculum recommendations.
+
+**Recommended Modifications.** Each recommendation takes the form: *(Observation) + (Mechanism Hypothesis) + (Proposed Change) + (How to Assess Effect in Cohorts 3–4)*. For example: *Session 5 shows persistent Avoidance dominance and few Avoidance → Metacognition transitions despite content explicitly designed to catalyze that transition (observation). The therapist cue patterns at the few observed transitions emphasize Phenomenology inquiry and de-emphasize Reframing (mechanism hypothesis). Adding explicit Reframing prompts at the practice debrief in Session 5 may increase the transition rate (proposed change). Effect can be assessed by comparing Cohort 3's Session 5 stage distribution and transition rate against Cohorts 1 and 2 (assessment plan).* This format converts pipeline outputs into actionable, falsifiable curriculum decisions and supports the MoSCoW (Must, Should, Could, Would-Like) prioritization specified in the Move-MORE protocol.
+
+**Validation Caveats.** The agreement statistics from the human validation, with explicit identification of which recommendations are supported by validated, high-confidence classifications and which rest on directional computational evidence requiring Cohort 3 confirmation. This section is not boilerplate. It is the place where the epistemic limits of the methodology are explicitly attached to specific recommendations, so that the curriculum team can weight them appropriately.
+
+### 6.4 Patient and Public Involvement
+
+The Move-MORE protocol incorporates patient partners as co-investigators and a Community Advisory Board. The QRA workflow is designed to support this involvement rather than bypass it. The reports the pipeline produces are human-readable: coded transcripts with classification justifications visible per segment, session-level summaries with prototypical exemplars, longitudinal trajectories per participant. Patient partners can read the reports, identify cases that match or diverge from their own experience, and contribute to MoSCoW prioritization. The pipeline accelerates and structures the analysis; it does not replace the deliberative process by which modification decisions are made.
+
+---
+
+## 7. What This Methodology Uniquely Reveals
+
+The defensibility of any new method rests on what it makes knowable that was not knowable before. We articulate five contributions that QRA makes possible in MBI research that are not achievable through conventional qualitative methods, conventional process research, or single-framework computational classification alone.
+
+### 7.1 Per-Utterance Phenomenological Staging at Full-Trial Corpus Scale
+
+Wexler, Balsamo et al. (2026) identified the VA-MR stages through thematic analysis of thirty MORE sessions. That work was painstaking and methodologically careful, but it could not produce a per-utterance phenomenological classification of every participant utterance in every session of a full clinical trial. QRA does. Every participant segment in every session of Move-MORE is assigned a VA-MR stage label with associated confidence, justification, and (optionally) multi-label phenomenological codes. This density of labeling, at this resolution, is simply not achievable by human coders within the temporal constraints of iterative trial design.
+
+What this enables is not merely more data but a different kind of analysis. Stage distributions per session become tractable. Per-participant longitudinal trajectories become tractable. Within-session transition matrices, between-session dominant-stage transition matrices, and progression-score regressions across sessions become tractable. The empirical texture of therapeutic progression — its variability across participants, its session-specific patterns, its responsiveness to curriculum changes — becomes visible at a resolution at which it was previously invisible.
+
+### 7.2 Mechanism Evidence at Temporal Adjacency, Not Session-Level Correlation
+
+Most psychotherapy process research either codes therapist behavior or codes client outcomes and correlates the two at the session or treatment-episode level. *In sessions where therapists used more Phenomenology inquiry, did participants score higher on decentering at session end?* This is correlational evidence at session aggregation. It is informative but coarse, and it is vulnerable to confounding by participant characteristics, alliance quality, and a host of other session-level variables.
+
+QRA's cue-response analysis operates at temporal adjacency, not session aggregation. The question becomes: *In the participant utterance immediately following this specific therapist contribution, what stage appears, relative to the stage of the participant utterance immediately before?* The unit of analysis is the FROM → CUE → TO triple. The therapist's contribution is bracketed exactly; the before and after are immediate. This is much closer to mechanistic evidence than session-level correlation can provide. It cannot establish causality (it remains naturalistic observation), but it controls for participant-level and session-level confounders by virtue of operating at the within-participant, within-session, within-minutes level.
+
+The honest qualification — repeated from Section 4.8 — is that the mechanism-evidence claim is currently *half-implemented*. The CUE position contains *unlabeled therapist text*. The pipeline can show what therapists said before each transition; it cannot yet say which PURER move that text was performing. The clinical consequence is that QRA can answer questions of the form *what does the therapist do, exactly, when participants cross the Avoidance barrier?* — by retrieving every observed Avoidance → Metacognition transition in the corpus and synthesizing the therapist contributions in those triples — but the synthesis is currently a textual portrait, not a quantified PURER-move distribution. Once PURER classification is implemented (Section 8.1), the synthesis is upgraded from textual description to quantified move distribution, and the question can be answered at a resolution that conventional process research cannot match.
+
+### 7.3 Both Sides of the Therapeutic Dyad from the Same Input
+
+In conventional process research, therapist behavior and client experience are typically coded separately, often by different teams using different frameworks, with the resulting analyses correlated post hoc. QRA derives both labels from the same diarized transcript, in the same pipeline pass, using the same architectural assumptions. The internal consistency of dyadic analysis is structural rather than achieved through reconciliation. This becomes most powerful when PURER classification is implemented, at which point the dyadic structure is fully labeled: every participant segment has a VA-MR stage; every therapist segment has a PURER move; every transition has a (PURER move composition, VA-MR transition type) pair. The PURER × VA-MR lift table is the empirical test of the PURER facilitation hypothesis at the resolution where it actually operates.
+
+### 7.4 Empirical Evaluation of Cross-Framework Convergent Expectations
+
+The theoretical predictions stated in Section 3.3 derive from the phenomenological theory of dys-appearance and re-habituation articulated in Section 2 and from the contemplative-tradition empirical record encoded in VCE. The cross-validation lift statistics provide empirical evaluation of these predictions on Cohorts 1–2.
+
+The framing matters. Per the disclosures of Sections 3.3 and 5.2, the current cross-validation does not mechanically test pre-specified hypotheses encoded in the codebase; it generates an empirical lift table that can be evaluated against expectations stated in this manuscript. Patterns observed in Cohorts 1–2 generate refined and code-level-specifiable expectations that — once `expected_codes` is populated in `vamr.py` (Section 8.2) — become the formal pre-registered hypotheses tested by Cohorts 3–4 as replication. *This staged structure is what scaffolds the conditions for a Varela-style mutual-constraints test*: the iterative cohort design provides the replication architecture, and the engineering commitment to pre-specification before Cohort 3 makes the predictions falsifiable from the codebase rather than from the prose alone.
+
+This kind of cross-framework empirical test was not previously tractable in MBI research. It is possible here because the same corpus is classified against both frameworks computationally, allowing the lift table to be computed at corpus scale.
+
+### 7.5 A Validated Labeled Corpus as Cumulative Trial Output
+
+A frequently overlooked feature of computationally-augmented qualitative analysis is that the labeled corpus produced as its byproduct is a durable research asset. The Cohort 1–2 corpus, once human-validated, supports supervised fine-tuning of a domain-adapted classifier (Section 8.4). Extended by Cohorts 3 and 4, it will, by trial end, constitute the largest systematically labeled corpus of VA-MR stage expression in any mindfulness-based pain intervention. This is a contribution to MBI process research that persists beyond the trial — a resource for future validation work, replication studies, and cross-trial comparisons.
+
+---
+
+## 8. Trajectory: Planned Extensions, in Priority Order
+
+### 8.1 PURER Classification of Therapist Dialogue (Priority 1, before Cohort 3)
+
+The most consequential extension is the systematic classification of therapist segments against the PURER framework. The infrastructure already exists: therapist segments are extracted and indexed in Stage 1, the chronological session timeline preserves therapist-to-participant adjacencies, and the existing LLM client and classification loop can be redirected at therapist segments with a new ThemeFramework definition encoding the PURER components. What remains is the codebook authorship itself — a `constructs/purer.py` `ThemeFramework` operationalizing each component with definition, prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances at the same level of operational rigor as the VA-MR definitions. Detailed engineering specification is documented in `purer_specs.md` in the project repository.
+
+The boundary cases that the PURER codebook must handle carefully are the same ones the qualitative literature on PURER identifies. Phenomenology inquiry must be distinguishable from Education delivered as inquiry-shaped explanation (the test: Phenomenology asks about *this participant's* experience; Education explains a principle that would mean the same thing to any participant). Reframing must be distinguishable from Phenomenology (Reframing introduces a frame; Phenomenology opens inquiry). Reinforcement must be distinguishable from Utilization (Reinforcement closes around something just done in this exchange; Utilization draws on existing capacity from outside the immediate moment).
+
+Once PURER is in place, the cue-response analysis becomes structurally complete. The PURER × VA-MR influence table answers the dyadic question at corpus scale: across all transitions of each type, what is the distribution of PURER moves in the CUE position, relative to the base rate of those moves? Is Reframing disproportionately present before Reappraisal transitions? Is Reinforcement concentrated *after* Metacognition (consolidation) rather than preceding it? PURER classification also enables session-level therapist fidelity profiles: the proportion of each PURER move per session, per therapist, per cohort — supporting targeted therapist feedback alongside curriculum recommendations and providing the first quantitative characterization of PURER component adherence across MORE sessions. Validation against the MORE Fidelity Measure (Hanley & Garland, 2021) at the session level provides external construct validity for the PURER classification.
+
+### 8.2 `expected_codes` Pre-Specification, Avoidance-Barrier Report, and Permutation Control (Priority 2, before Cohort 3)
+
+Three engineering items, undertaken together because they share the same code surface, address concerns surfaced by the present manuscript's preparation.
+
+The first is the data-structure encoding of the theoretical predictions stated in Section 3.3. We add an `expected_codes: List[str]` field to `ThemeDefinition` in `theme_schema.py`, populate it in `vamr.py` with the predictions from the table in Section 3.3, and update `cross_validation.py`'s `summarize_theme_code_associations()` to add `predicted_codes`, `predicted_and_confirmed`, `predicted_and_absent`, and `unpredicted_but_elevated` lists to each theme's result. This restores the falsifiable hypothesis-test structure that a careful reader expects from a Varela-style mutual-constraints argument and makes the predictions verifiable from the codebase alone, not just from manuscript prose. The `expected_codes` populating must be completed before Cohort 3 begins so the predictions are pre-specified before the data that test them are generated.
+
+The second is a dedicated `avoidance_barrier_report` that computes Avoidance prevalence by session number, Avoidance → Metacognition transition rate within and between sessions, and per-participant barrier-crossing classification. This grounds Section 6.3's clinically central analysis in automated output rather than manual synthesis from the general transition report.
+
+The third is the *shuffled-stage permutation control* discussed in Section 5.2: a permutation test that breaks the real assignment of segments to stages and recomputes the lift distribution under random assignment. This addresses the construct-overlap concern that would otherwise apply to any cross-framework lift result generated by two LLM-based classifiers operating on the same text, and is computationally trivial since it requires no new classifications.
+
+### 8.3 Outcome Integration and Joint Displays (Priority 3)
+
+The Move-MORE protocol collects a rich set of quantitative outcomes — weekly pain numerical rating scales, Tampa Scale of Kinesiophobia-11, Oswestry Disability Index, Mindful Reappraisal of Pain Scale, MAIA-2 interoception, ecological momentary assessment, actigraphy, quantitative sensory testing, cognitive-control metrics. These are presently analyzed separately from the qualitative output. An outcome-integration layer joining session-level VA-MR stage distributions and transition rates with session-level outcome data on the (participant, session) key would enable the joint-display analyses specified in the Move-MORE protocol's mixed-methods design — *do participants whose VA-MR trajectories show consolidated Reappraisal also show greater pain-intensity reductions and disability improvements? Do participants who do not cross the Avoidance barrier show different home-practice adherence patterns?* This extension is a few days of engineering work and is the appropriate quantitative grounding for the convergent-evidence section of curriculum-modification reports.
+
+### 8.4 Multi-Model Reliability Migration and Supervised Fine-Tuning (Priority 4, concurrent with Cohorts 3–4)
+
+Two related upgrades to the classification infrastructure.
+
+First, migrating the production configuration from single-model stochastic mode (`n_runs=3` with one model and temperature jitter) to multi-model mode (`n_runs=3` with three different LLMs, e.g., one frontier closed model and two diverse open-weights models) converts the reliability semantics of the pipeline from stability to genuine cross-rater agreement. This is a configuration change rather than an architectural one. The migration can be staged on a subset of segments first to compare cross-model agreement to single-model stability and characterize where the two diverge.
+
+Second, the Cohort 1–2 validated corpus, formatted as labeled examples for sequence classification, supports fine-tuning a domain-adapted transformer classifier. The advantages over zero-shot LLM classification are reduced inference cost, improved boundary-case accuracy on the corpus's own boundary cases (including human-corrected misclassifications), and deployability for ongoing therapeutic-fidelity monitoring at a scale and cost that zero-shot does not support. The fine-tuning workflow can be orchestrated using an LLM-driven hyperparameter-search controller that repeatedly modifies a training script and scores the result against a fixed held-out validation split. The epistemological requirements for fine-tuned deployment in *new* populations are more demanding than for the current exploratory use within Move-MORE: validation against independent samples — ideally from MORE trials not included in Move-MORE training data — would be required before fine-tuned deployment could be claimed to have the same validity basis as the human-expert-grounded zero-shot approach.
+
+### 8.5 Graph-Neural-Network Extensions: A Critical Note
+
+The roadmap document includes a Phase 3 extension to a CFiCS-style graph neural network (Schmidt et al., 2025) modeling therapeutic interactions as a heterogeneous graph over PURER moves, VA-MR stages, and skill-level relationships. We include this here only to be honest about its trajectory and its limits. CFiCS demonstrated that graph structure plus contextual embeddings substantially outperforms text embeddings alone on fine-grained psychotherapy skill classification, and the analogous architecture for Move-MORE is a tractable engineering target.
+
+But we do not believe this extension is essential to the methodology's clinical-utility goals. The primary purposes of the pipeline — phenomenologically-grounded curriculum modification at trial speed, dyadic analysis of stage transitions, cross-framework convergent-evidence characterization — are served by the existing classification + lift-table + cue-response architecture. A GNN extension adds inductive generalization to unseen text and a unified embedding space across therapeutic concepts, which are valuable for cross-trial transfer and large-scale therapist-fidelity monitoring but are not the bottleneck for between-cohort curriculum work in a single feasibility trial. We advocate completing PURER classification, validating the dual-framework results, and producing the methodology paper before investing in the GNN extension. If the GNN turns out to be needed, it can be built on the labeled corpus that the trial produces.
+
+---
+
+## 9. Epistemological Limits and Honest Caveats
+
+The methodology's contributions need to be paired with honest acknowledgment of what it cannot do. We articulate five structural limits that follow from the kind of inference QRA performs and that no engineering improvement can dissolve.
+
+**9.1 Linguistic expression is not phenomenological state.** QRA classifies what participants *say*, not what they *experience*. Participants in a group therapy setting are simultaneously experiencing pain, attending to the therapist's questions, monitoring other group members, managing social impression, and trying to find language for processes that may not have readily available linguistic representations. The VA-MR stage expressed in a participant's words at any given moment reflects all of these factors — not only the underlying phenomenological state. This limit applies equally to human qualitative coders and to LLM classifiers; it is structural to the interpretation of language as evidence of experience. The advantage of the LLM approach is consistency at scale; the disadvantage is the inability to draw on the contextual, relational, and clinical knowledge an experienced researcher brings to a difficult classification. The methodological response is human validation, designed not as a corrective applied after the fact but as integral to the analytical process.
+
+**9.2 Naturalistic adjacency is not causal mechanism.** The cue-response analysis provides temporal-adjacency evidence of associations between therapist contributions and subsequent participant stage expressions. It is much closer to mechanistic evidence than session-level correlation can be. But it is not causal evidence. It is naturalistic observation in an unblinded, uncontrolled, multi-confounded setting. Many other variables — participant readiness, prior session content, group dynamics, alliance quality — influence what stage a participant expresses next. The temporal adjacency controls some of these confounders but not all. The appropriate epistemic stance is: the cue-response analysis provides a systematic, corpus-level description of the empirical relationship between therapist behavior and participant stage outcomes. It is evidence to be interpreted by clinical experts, not a prescription to be followed mechanically.
+
+**9.3 Frameworks derived elsewhere constrain application here.** Both phenomenological frameworks were derived in contexts that differ from Move-MORE. VA-MR was derived from MORE sessions for LRP without movement integration; the kinesthetic vocabulary that movement introduces may express VA-MR stages through different surface forms than the framework exemplars currently capture. VCE was derived from Western Buddhist meditators with substantial practice experience; many VCE codes may appear rarely or not at all in eight weeks of clinical MBI practice. This is not a reason to abandon either framework. It is a reason to treat the cross-validation results as genuinely informative about fit. If theoretically predicted (stage, code) associations do not hold empirically in Move-MORE data, this is important evidence that the frameworks require contextual adaptation.
+
+**9.4 Therapist influence on participant phenomenological expression.** PURER-guided phenomenological inquiry is specifically designed to direct participants' attention toward features of their experience that MORE considers therapeutically relevant. A Phenomenology question — *"What are you noticing right now in your body as you describe this?"* — elicits metacognitive-sounding language regardless of the participant's underlying experiential state, because it invites a metacognitive stance. VA-MR stage classifications therefore characterize the *dyadic expression* of therapeutic interactions, not purely participant phenomenological states. This limitation is a reason to pursue PURER classification (Section 8.1), not a reason to abandon VA-MR classification: with both participant and therapist segments classified, the pipeline can distinguish *participant-initiated* stage expression (Metacognition appearing in a participant segment without an immediately preceding Phenomenology inquiry) from *therapist-facilitated* stage expression. The former is stronger evidence of developmental attainment than the latter.
+
+**9.5 Computational phenomenology cannot replace phenomenological judgment.** The pipeline's output is hypotheses about phenomenological expression, generated by a system that has no access to first-person experience and that operates on the linguistic surface of what participants say. Human validation is not optional methodological fastidiousness; it is the epistemological requirement that distinguishes computational phenomenology from pattern-matching. The pipeline's contribution is to direct expert attention efficiently — to surface the cases where attention is most needed, to characterize patterns at scales where pattern characterization is intractable manually, and to produce reproducible empirical evidence about whether independently-derived phenomenological frameworks achieve coherent triangulation on the same experiential territory. It cannot substitute for the phenomenologically-trained clinical judgment that determines what those patterns mean and what should be done about them.
+
+---
+
+## 10. Conclusion
+
+This paper has argued that chronic pain constitutes, in Leder's phenomenological terms, a dys-appearance of the lived body, and that mindfulness-based therapy for chronic pain is most coherently understood as structured contemplative re-habituation — a systematic practice for restoring functional structural relationships between attention and the lived body. The Vigilance-Avoidance-Metacognition-Reappraisal model, derived by Wexler, Balsamo et al. (2026), describes the trajectory of this re-habituation in phenomenological terms grounded in participant first-person reports.
+
+The Qualitative Research Algorithm represents an attempt to operationalize the empirical study of contemplative transformation at the scale and tempo that iterative clinical trial design requires. By implementing two independently-derived phenomenological frameworks as classification targets for LLM analysis, by examining their empirical convergence through lift statistics evaluated against theoretically motivated expectations, and by capturing the dyadic structure of session interaction at temporal adjacency, QRA *scaffolds the conditions for* a Varela-style (1996) mutual-constraints test that the four-cohort iterative design enables: Cohorts 1–2 generate empirical patterns under theoretically motivated description; Cohorts 3–4, preceded by code-level pre-specification of `expected_codes` before they begin, formally test whether those patterns replicate.
+
+The contribution we claim is modest but defensible. The pipeline cannot characterize phenomenological states directly; it cannot validate whether linguistic expressions of contemplative transformation correspond to genuine experiential attainments; it cannot substitute for expert phenomenological judgment. What it can do is make systematic phenomenological analysis of full clinical-trial corpora tractable within the temporal constraints of iterative design, make the dyadic structure of therapist-participant interaction empirically interrogable at the resolution where mechanism actually operates, and direct expert attention to precisely the cases where that attention is most needed. These are not small achievements. They are what the temporal mismatch between phenomenological understanding and iterative trial development has previously prevented.
+
+What the methodology uniquely reveals — the per-utterance phenomenological staging at corpus scale, the temporally-adjacent mechanism evidence, the dyadic structure derived from the same input, the empirical evaluation of cross-framework convergent expectations, the cumulative validated corpus produced as byproduct — is not achievable through any one of the conventional alternatives. It is the integration of computational tractability with phenomenological seriousness that makes the integration valuable, not the computation alone.
+
+---
+
+## Acknowledgments
+
+We thank the patient partners, Community Advisory Board members, and Move-MORE participants whose engagement makes both the trial and this methodological work possible. We thank Daniel M. Low and the Text Psychometrics group for the validation framework adapted here for computational phenomenological purposes. Move-MORE is registered at ClinicalTrials.gov (NCT07125027) and approved by the National University of Natural Medicine IRB (RW6625).
+
+---
+
+## References
+
+Alwashmi, M. F., Hawboldt, J., Davis, E., & Fetters, M. D. (2019). The iterative convergent design for mobile health usability testing. *JMIR mHealth and uHealth*, 7(4), e11656.
+
+Garland, E. L. (2024). *Mindfulness-Oriented Recovery Enhancement: An evidence-based treatment for chronic pain and opioid use*. Guilford Press.
+
+Garland, E. L., Hanley, A. W., Nakamura, Y., Barrett, J. W., Baker, A. K., Reese, S. E., Riquino, M. R., Froeliger, B., & Donaldson, G. W. (2022). Mindfulness-Oriented Recovery Enhancement vs supportive group therapy for co-occurring opioid misuse and chronic pain: A randomized clinical trial. *JAMA Internal Medicine*, 182, 407–417.
+
+Giorgi, A. (1985). *Phenomenology and psychological research*. Duquesne University Press.
+
+Hanley, A. W., de Vibe, M., Solhaug, I., Farb, N., Goldin, P. R., Gross, J. J., & Garland, E. L. (2020). Modeling the Mindfulness-to-Meaning Theory's mindful reappraisal hypothesis. *Mindfulness*.
+
+Hanley, A. W., & Garland, E. L. (2021). The Mindfulness-Oriented Recovery Enhancement Fidelity Measure (MORE-FM): Development and validation of a new tool to assess therapist adherence and competence. *Journal of Evidence-Based Social Work*, 18(3), 308–322.
+
+Hayes, S. C., Wilson, K. G., Gifford, E. V., Follette, V. M., & Strosahl, K. (1996). Experiential avoidance and behavioral disorders. *Journal of Consulting and Clinical Psychology*, 64, 1152–1168.
+
+Heidegger, M. (1962). *Being and time* (J. Macquarrie & E. Robinson, Trans.). Harper & Row. (Original work published 1927)
+
+Husserl, E. (1983). *Ideas pertaining to a pure phenomenology and to a phenomenological philosophy: First book* (F. Kersten, Trans.). Martinus Nijhoff.
+
+Leder, D. (1990). *The absent body*. University of Chicago Press.
+
+Lindahl, J. R., Fisher, N. E., Cooper, D. J., Rosen, R. K., & Britton, W. B. (2017). The varieties of contemplative experience: A mixed-methods study of meditation-related challenges in Western Buddhists. *PLOS ONE*, 12, e0176239.
+
+Low, D. M., Mair, P., Nock, M. K., & Ghosh, S. S. (2024). Text psychometrics: Assessing psychological constructs in text using natural language processing. *Psychological Methods*.
+
+Merleau-Ponty, M. (1962). *Phenomenology of perception* (C. Smith, Trans.). Routledge. (Original work published 1945)
+
+Riegner, G., Posey, G., Oliva, V., Jung, Y., Mobley, W., & Zeidan, F. (2023). Disentangling self from pain: Mindfulness meditation-induced pain relief is driven by thalamic-default mode network decoupling. *PAIN*, 164, 2008–2020.
+
+Schmidt, F., Hammerfald, K., Jahren, H. H., & Vlassov, V. (2025). CFiCS: Graph-based classification of common factors and microcounseling skills. *Proceedings of the 10th Workshop on Computational Linguistics and Clinical Psychology*, 106–115. *[Verify publication year against the source — ROADMAP cites 2024.]*
+
+Varela, F. J. (1996). Neurophenomenology: A methodological remedy for the hard problem. *Journal of Consciousness Studies*, 3, 330–349.
+
+Wexler, R. S., Balsamo, W., Fox, D. J., ZuZero, D., Parikshak, A., Kwin, S., Ramirez, J., Thompson, A. R., Carlson, H. L., Kern, T., Mist, S. D., Bradley, R., Zwickey, H., Pickworth, C. K., & Garland, E. L. (2026). "Noticing the way that I'm noticing pain": A qualitative analysis of therapeutic progression in Mindfulness-Oriented Recovery Enhancement for patients with lumbosacral radicular pain. *Mindfulness*, 17, 819–833.
+
+Wexler, R. S., Balsamo, W., Lendof, V., et al. (in preparation). Development and pilot feasibility testing of Move-MORE: A multicomponent mindfulness-and-movement intervention for lumbosacral radicular pain.
+
+Wexler, R. S., Fox, D. J., ZuZero, D., et al. (2024). Virtually delivered MORE reduces daily pain intensity in patients with lumbosacral radiculopathy: A randomized controlled trial. *Pain Reports*, 9(2), e1132.
+
+Zeidan, F., Emerson, N. M., Farris, S. R., Ray, J. N., Jung, Y., McHaffie, J. G., & Coghill, R. C. (2015). Mindfulness meditation–based pain relief employs different neural mechanisms than placebo and sham mindfulness meditation–induced analgesia. *Journal of Neuroscience*, 35, 15307–15325.

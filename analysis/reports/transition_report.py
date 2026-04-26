@@ -415,7 +415,10 @@ def generate_therapist_cues_report(
         if len(pgroup) < 2:
             continue
 
-        labels = pgroup['final_label'].astype(int).tolist()
+        try:
+            labels = pgroup['final_label'].astype(int).tolist()
+        except (ValueError, TypeError):
+            continue
         texts = pgroup['text'].tolist()
         end_times = pgroup['end_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
         start_times = pgroup['start_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
@@ -454,52 +457,56 @@ def generate_therapist_cues_report(
     )
 
     for (fr, to), entries in sorted_pairs:
-        n = len(entries)
-        direction = 'forward' if to > fr else ('backward' if to < fr else 'lateral/stay')
-        fr_name = stage_names.get(fr, str(fr))
-        to_name = stage_names.get(to, str(to))
-        n_empty_cues = sum(1 for e in entries if not e[1])
+        try:
+            n = len(entries)
+            direction = 'forward' if to > fr else ('backward' if to < fr else 'lateral/stay')
+            fr_name = stage_names.get(fr, str(fr))
+            to_name = stage_names.get(to, str(to))
+            n_empty_cues = sum(1 for e in entries if not e[1])
 
-        lines.append(f'── {fr_name} → {to_name}  (n={n}, [{direction}])')
-        lines.append('─' * 60)
-        lines.append(
-            f'  n = {n}  |  empty cues (no therapist speech between segments): {n_empty_cues}'
-        )
-        lines.append('')
-
-        # average FROM
-        from_texts = [e[0] for e in entries if e[0]]
-        if from_texts:
-            agg_from = ' || '.join(from_texts)
-            agg_from, _ = _summarize_participant_text(agg_from, llm_client, max_agg)
-            lines.append(f'  average FROM [{fr_name}]:')
-            lines.append(_wrap_quote(agg_from, indent=4))
-            lines.append('')
-
-        # average CUE (skip empty-cue entries)
-        cue_texts = [e[1] for e in entries if e[1]]
-        if cue_texts:
-            agg_cue = ' || '.join(cue_texts)
-            agg_cue, _ = _summarize_cue(agg_cue, llm_client, max_agg)
-            lines.append('  average CUE:')
-            lines.append(_wrap_quote(agg_cue, indent=4))
-            lines.append('')
-        else:
+            lines.append(f'── {fr_name} → {to_name}  (n={n}, [{direction}])')
+            lines.append('─' * 60)
             lines.append(
-                '  average CUE: [none — all transitions had no therapist speech between segments]'
+                f'  n = {n}  |  empty cues (no therapist speech between segments): {n_empty_cues}'
             )
             lines.append('')
 
-        # average TO
-        to_texts = [e[2] for e in entries if e[2]]
-        if to_texts:
-            agg_to = ' || '.join(to_texts)
-            agg_to, _ = _summarize_participant_text(agg_to, llm_client, max_agg)
-            lines.append(f'  average TO [{to_name}]:')
-            lines.append(_wrap_quote(agg_to, indent=4))
-            lines.append('')
+            # average FROM
+            from_texts = [e[0] for e in entries if e[0]]
+            if from_texts:
+                agg_from = ' || '.join(from_texts)
+                agg_from, _ = _summarize_participant_text(agg_from, llm_client, max_agg)
+                lines.append(f'  average FROM [{fr_name}]:')
+                lines.append(_wrap_quote(agg_from, indent=4))
+                lines.append('')
 
-        lines.append('')
+            # average CUE (skip empty-cue entries)
+            cue_texts = [e[1] for e in entries if e[1]]
+            if cue_texts:
+                agg_cue = ' || '.join(cue_texts)
+                agg_cue, _ = _summarize_cue(agg_cue, llm_client, max_agg)
+                lines.append('  average CUE:')
+                lines.append(_wrap_quote(agg_cue, indent=4))
+                lines.append('')
+            else:
+                lines.append(
+                    '  average CUE: [none — all transitions had no therapist speech between segments]'
+                )
+                lines.append('')
+
+            # average TO
+            to_texts = [e[2] for e in entries if e[2]]
+            if to_texts:
+                agg_to = ' || '.join(to_texts)
+                agg_to, _ = _summarize_participant_text(agg_to, llm_client, max_agg)
+                lines.append(f'  average TO [{to_name}]:')
+                lines.append(_wrap_quote(agg_to, indent=4))
+                lines.append('')
+
+            lines.append('')
+        except Exception as _exc:
+            lines.append(f'  [error generating this transition block: {_exc}]')
+            lines.append('')
 
     content = '\n'.join(lines)
     os.makedirs(_paths.human_reports_dir(output_dir), exist_ok=True)

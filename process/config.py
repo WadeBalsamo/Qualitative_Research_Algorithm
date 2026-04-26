@@ -94,7 +94,7 @@ class TherapistCueConfig:
     """Parameters for surfacing therapist dialogue cues at stage transitions."""
     enabled: bool = True
     max_length_per_cue: int = 250          # words; if cue exceeds this, LLM-summarize
-    max_length_of_average_cue_responses: int = 1000  # cap per averaged block in cue_response.txt
+    max_length_of_average_cue_responses: int = 500  # cap per averaged block in cue_response.txt
 
 
 @dataclass

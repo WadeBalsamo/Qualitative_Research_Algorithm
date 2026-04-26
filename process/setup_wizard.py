@@ -738,7 +738,7 @@ class SetupWizard:
             "Max words per inline cue (longer cues will be LLM-summarized)", 250
         )
         max_agg = _prompt_int(
-            "Max words per averaged block in cue_response.txt", 1000
+            "Max words per averaged block in cue_response.txt", 500
         )
         self.config_data['therapist_cues'] = {
             'enabled': True,
