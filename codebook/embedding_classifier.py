@@ -26,8 +26,12 @@ Two-pass exemplar accumulation:
   Pass 2 — re-classify with merged exemplars for improved recall.
 
 The LLM codebook classifier (classification_tools/llm_classifier.py) uses the
-configured LM Studio backend for zero-shot prompting.  An ensemble step
-(codebook/ensemble.py) reconciles both sets of results.
+configured LM Studio backend for zero-shot prompting. This independently codes the segments, and an ensemble step
+(codebook/ensemble.py) reconciles both sets of results to ensure agreeability.
+
+Note that this process seems to code much less than the 3 model classification loop but is more computationally efficient, especially in large codebooks, and enables multiple codes to be applied. Some tuning could be done here to further understand associations of codes and themes.
+
+
 """
 
 import json

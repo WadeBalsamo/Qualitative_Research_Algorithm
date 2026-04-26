@@ -4,7 +4,6 @@ models/
 MoveMORE-Partial-Dataset/
 output/
 data/output/
-#data/input/*
 data/*.vtt
 data/*
 __pycache__/
@@ -30,4 +29,4 @@ results/**/llm_results_status_*.txt
 vamr_manuscript.txt
 varieties_of_contemplative_experience.txt
 MoveMORE_protocol.txt
-methodology.txt
+references/

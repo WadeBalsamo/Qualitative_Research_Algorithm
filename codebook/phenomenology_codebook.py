@@ -1,11 +1,11 @@
 """
 phenomenology.py
 ----------------
-Meditation phenomenology codebook. 
+Meditation phenomenology codebook.
 
-Contains 54 codes across 6 domains (Affective, Cognitive, Perceptual,
-Sense of Self, Social, Somatic) based on the Varieties of Contemplative
-Experience (VCE) codebook.
+Contains 59 codes across 7 domains (Affective, Cognitive, Conative,
+Perceptual, Sense of Self, Social, Somatic) based on the Varieties of
+Contemplative Experience (VCE) codebook (Lindahl et al., 2017).
 
 """
 
@@ -35,11 +35,11 @@ def get_phenomenology_codebook() -> Codebook:
 
     return Codebook(
         name="Meditation Phenomenology Codebook",
-        version="1.0",
+        version="1.1",
         description=(
             "Qualitative codebook for phenomenological experiences associated "
-            "with meditation practice, covering affective, cognitive, perceptual, "
-            "sense-of-self, social, and somatic domains."
+            "with meditation practice, covering affective, cognitive, conative, "
+            "perceptual, sense-of-self, social, and somatic domains."
         ),
         codes=codes,
         domains=domains,
@@ -194,6 +194,13 @@ def _get_raw_codes():
                 'exclusive': 'A brief moment of meta-cognition, or meta-cognition not related to meditation or to particular views and values associated with meditation. Prolonged and intense forms of meta-cognition may develop into a Loss of Sense of Ownership over thoughts, emotions, or body sensations or a Loss of Agency over actions, at which point those codes would be more appropriate. Some forms of distancing from thoughts and the content of thoughts in which a cognitive event is no longer processed with associated meaning or significance may be better coded (or double-coded) as Disintegration of Conceptual Meaning Structures.',
             },
             {
+                'category': 'Increased Cognitive Processing',
+                'description': 'An increase in the speed, volume, or rate of cognitive processing, often described colloquially as "mind racing" or an unusually rapid succession of thoughts.',
+                'codes': ['Mind racing', 'Racing thoughts', 'Cognitive overload'],
+                'inclusive': 'Reports of thoughts arising more rapidly than usual, a subjective sense of "mind racing," or an unusual increase in the volume or speed of thoughts. Tends to be reported as unpleasant or destabilizing. May co-occur with Agitation or Irritability, Positive Affect at the manic end, Perceptual Hypersensitivity, or Somatic Energy, and should be double-coded accordingly.',
+                'exclusive': 'Normal periods of mental activity not experienced as unusual or not attributed to meditation. Differentiate from Vivid Imagery, which concerns the content and clarity of mental images rather than processing speed or volume. When the predominant feature is elevated mood with productivity, prefer or double-code Positive Affect.',
+            },
+            {
                 'category': 'Scrupulosity',
                 'description': 'Obsessive thinking, specifically about moral or religious issues and behaviors.',
                 'codes': ['Moral obsession', 'Religious obsession', 'Change in self-perception'],
@@ -238,6 +245,13 @@ def _get_raw_codes():
                 'exclusive': 'Hallucinations or illusions not reported either in the context of meditation practice or in the context of post-meditation effects.',
             },
             {
+                'category': 'Visual Lights',
+                'description': 'Visual experiences of light, including simple hallucinations in the form of light, a general brightening of the visual field, or related luminous phenomena attributed to meditation practice.',
+                'codes': ['Visual light hallucination', 'Brightening of visual field', 'Luminous phenomena'],
+                'inclusive': 'Simple visual hallucinations in the form of light (e.g., flashes, glows, auras, halos, inner light) or a general brightening of the visual field. May begin with increased color vividness (hyperchromia) and intensify from there. May co-occur with Perceptual Hypersensitivity or Clarity. Double-code with Hallucinations, Visions, or Illusions when the light experience is percept-like (i.e., appearing as an external stimulus) or is interpreted as a vision.',
+                'exclusive': 'External light sources perceived normally without distortion. Complex visual hallucinations of formed objects, faces, or figures should be coded under Hallucinations, Visions, or Illusions rather than here. General brightening attributed to environmental conditions rather than to meditation should not be coded.',
+            },
+            {
                 'category': 'Perceptual Hypersensitivity',
                 'description': 'Unusual or atypical sensitivity to certain frequencies or volumes of sound (hyperacusis), to color (hyperchromia), to visual details, to light, to taste, to smell, or to embodiment.',
                 'codes': ['Hyperacusis', 'Hyperchromia', 'Hyper-sensitivity'],
@@ -250,6 +264,29 @@ def _get_raw_codes():
                 'codes': ['Change in body schema', 'Distorted body perception', 'Change in body scale'],
                 'inclusive': 'Increased proprioceptive information, or increased awareness of or sensitivity to the body schema. Distortions in the body schema resulting in a change in scale of body parts or the body in general, disappearance of body boundaries (such as feeling that arms are missing), inaccurate perception of position of body parts (such as feeling that legs as being twisted when they are not), or changes in body scale (such as body parts feeling larger or smaller or dissolving).',
                 'exclusive': "Mentioning the body in a way unrelated to one's perception of it.",
+            },
+        ],
+        'Conative': [
+            {
+                'category': 'Changes in Motivation or Goal',
+                'description': 'A change in the motivations, values, or goals that drive a practitioner\'s behavior, within or beyond their practice context.',
+                'codes': ['Shift in goals', 'Change in values', 'Change in life direction'],
+                'inclusive': 'Reports of shifts in what the practitioner finds meaningful, important, or worth pursuing, including changes in life goals, priorities, or values attributed to meditation. Includes changes in what motivates one to act in daily life as well as within the practice context itself. Frequently co-occurs with Change in Worldview and changes in the Social domain; double-code accordingly. When the loss of motivation is severe, consider also coding Anhedonia and Avolition.',
+                'exclusive': 'Motivational changes due to life circumstances, relationships, or other causes clearly unrelated to meditation. When conative changes are described primarily as causal factors for the onset or alleviation of meditation difficulties rather than as experiences in their own right, code as Influencing Factors instead.',
+            },
+            {
+                'category': 'Change in Effort or Striving',
+                'description': 'A notable change in the degree of effort or striving experienced in relation to meditation practice or daily activities.',
+                'codes': ['Effortlessness', 'Excessive striving', 'Change in practice effort'],
+                'inclusive': 'Reports of practice or daily activities becoming effortless or of effort naturally diminishing (typically experienced as positive). Also includes reports of excessive, escalating, or destabilizing striving in which increased effort corresponds with heightened arousal, tension, or worsening conditions. Double-code with Somatic Energy, Agitation or Irritability, or other Affective or Somatic domain codes when striving is associated with marked physical or emotional arousal.',
+                'exclusive': 'Ordinary levels of effort entailed by a meditation technique that are not experienced as notable or as a change. When effort or striving is described primarily as a practice approach or as a causal factor for meditation difficulties, code as Influencing Factors instead.',
+            },
+            {
+                'category': 'Anhedonia and Avolition',
+                'description': 'A loss of pleasure or interest in activities that were previously enjoyed (anhedonia) and/or a loss of motivation to pursue goals (avolition).',
+                'codes': ['Anhedonia', 'Avolition', 'Loss of interest', 'Loss of motivation'],
+                'inclusive': 'Reports of reduced desire or inability to enjoy activities previously found pleasurable, attributed to meditation. Reports of diminished drive or motivation to pursue goals or initiate activities. Often co-occurs with social and occupational impairment; double-code with Social Impairment or Occupational Impairment as relevant. May also be double-coded with Depression or Affective Flattening when these co-occur.',
+                'exclusive': 'Loss of interest or motivation not attributed to meditation practice. Differentiate from ordinary fluctuations in motivation that are part of typical practice. Distinguish from Depression (low mood is the primary feature), though these may co-occur and warrant double-coding.',
             },
         ],
         'Sense of Self': [

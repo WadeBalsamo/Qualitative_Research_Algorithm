@@ -1,669 +1,237 @@
 # QRA: Qualitative Research Algorithm
 
-A comprehensive LLM-based classification pipeline for analyzing therapeutic dialogue transcripts. QRA classifies dialogue segments into theme/stage categories (e.g., the VA-MR framework: Vigilance, Avoidance, Metacognition, Reappraisal) and optionally applies multi-label phenomenology codebook classification.
+**Computational phenomenology for mindfulness-based intervention research.**
 
-## Overview
+QRA is a machine-assisted qualitative analysis pipeline that classifies therapy transcript segments using two established phenomenological frameworks concurrently — the Vigilance-Avoidance Metacognition-Reappraisal (VA-MR) model of therapeutic progression and the Varieties of Contemplative Experience (VCE) phenomenology codebook — producing defensible cohort-level qualitative analysis in days rather than weeks.
 
-QRA is designed for qualitative research in psychotherapy and mindfulness-based interventions. It takes diarized transcripts (typically from speech-to-text pipelines like Whisper with speaker diarization) and produces structured, coded datasets suitable for statistical analysis and thematic interpretation.
+---
 
-### Key Capabilities
+## The Problem: Phenomenology at the Pace of Iterative Design
 
-- **Semantic Segmentation**: Embedding-based segmentation with adaptive thresholds, topic clustering, and optional LLM-assisted boundary refinement
-- **Theme Classification**: Zero-shot LLM classification into theoretical frameworks (e.g., VA-MR stages of contemplative transformation)
-- **Codebook Classification**: Multi-label coding via embedding similarity + LLM zero-shot prompting, reconciled by ensemble
-- **Interrater Reliability**: Multi-model runs with consensus voting for cross-rater reliability metrics
-- **Validation Test Sets**: Stratified cross-session sampling for human blind-coding
-- **Therapist Cue Analysis**: Surfaces therapist dialogue at stage transitions for interpretation
-- **Automated Analysis**: Post-pipeline analysis generating longitudinal reports, per-participant summaries, figures, and graph-ready CSVs
+Chronic pain is not simply pain that persists. In Leder's (1990) phenomenological account, building on Merleau-Ponty's (1962) analysis of the lived body, chronic pain constitutes a *dys-appearance*: the body's forcible eruption into thematic attention as an alien obstacle rather than a transparent instrument of engagement. Where a healthy body recedes into the background of experience, functioning as the medium through which a person attends to the world, the chronically pained body insists on its own presence — continuously recruiting attentional resources that would otherwise support meaning, relationship, and action. This is not merely an unpleasant sensation; it is a structural disorder of experience.
 
-## Architecture
+Mindfulness-based interventions (MBIs) for chronic pain are, on this account, best understood as structured practices of phenomenological re-habituation: systematic attempts to restore functional structural relationships between attention and the lived body that chronic pain disorder disrupts. Mindfulness-Oriented Recovery Enhancement (MORE; Garland 2013, 2024) has demonstrated this efficacy across multiple randomized controlled trials — reducing pain intensity, opioid misuse, and pain catastrophizing, with neural correlates including thalamic-default mode network decoupling that appears to drive mindfulness-based pain relief by supporting self-referential disengagement from pain (Riegner et al., 2023).
 
-### Pipeline Stages
+But tracking *how* this re-habituation unfolds — session by session, participant by participant, in the language patients actually use to describe their experience — requires qualitative analysis of therapy transcripts. And this creates a structural tension in iterative trial design.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Stage 1: Transcript Ingestion & Segmentation               │
-│  - Load diarized transcripts (JSON/VTT)                     │
-│  - Semantic segmentation via sentence-transformer           │
-│  - Adaptive threshold + topic clustering                    │
-│  - Optional LLM-assisted boundary refinement                │
-│  - Speaker normalization and anonymization                  │
-└─────────────────────────────────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│  Stage 2: Construct Operationalization                      │
-│  - Build theme framework definitions                        │
-│  - Create content validity test set                         │
-└─────────────────────────────────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│  Stage 3: Theme Classification (LLM)                        │
-│  - Zero-shot LLM classification with framework prompting    │
-│  - Multi-model consensus voting for interrater reliability  │
-│  - Context-aware classification with preceding dialogue     │
-└───────────────────────────▼─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│  Stage 3b: Codebook Classification (Optional)               │
-│  - Embedding-based similarity scoring                       │
-│  - LLM zero-shot multi-label coding                         │
-│  - Ensemble reconciliation of both methods                  │
-└───────────────────────────▼─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│  Stage 4: Cross-Validation (Optional, requires 3b)          │
-│  - Theme ↔ codebook co-occurrence analysis                  │
-│  - Lift and statistical validation of hypotheses            │
-└───────────────────────────▼─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│  Stage 5: Human Validation Set                              │
-│  - Create balanced evaluation set for human coding          │
-│  - Export validation test set worksheets                    │
-└───────────────────────────▼─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│  Stage 6: Dataset Assembly                                  │
-│  - Assemble master segment dataset (JSONL)                  │
-│  - Apply confidence tiering                                 │
-│  - Generate training labels                                 │
-└─────────────────────────────────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│  Stage 7: Report Generation                                 │
-│  - Coded transcripts (per-session)                          │
-│  - Human blind-coding forms                                 │
-│  - Validation test set worksheets                           │
-│  - Per-session statistics and cumulative report             │
-│  - Training data export (JSONL)                             │
-│  - Output directory index (00_index.txt)                    │
-└─────────────────────────────────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│  Stage 8: Results Analysis (Optional, --auto-analyze)       │
-│  - Per-participant longitudinal reports                     │
-│  - Per-session and per-construct analyses                   │
-│  - Graph-ready CSVs                                         │
-│  - Stage progression and transition explanation             │
-│  - Therapist cue response analysis                          │
-│  - Visualization figures                                    │
-└─────────────────────────────────────────────────────────────┘
-```
+The between-cohort refinement window in iterative feasibility trials is measured in weeks. Full qualitative analysis of a therapy transcript corpus takes months. The practical result is that curriculum modifications between cohorts are made on the basis of clinical intuition and aggregate outcome scores rather than systematic analysis of the phenomenological processes the intervention is designed to produce.
 
-### Data Flow
+QRA was built to dissolve this tension.
 
-1. **Input**: Diarized transcripts from Whisper (JSON or VTT format)
-2. **Processing**: Segments → LLM classification → Consensus voting
-3. **Output**: Master dataset, coded transcripts, analysis reports
+---
 
-## Installation & Dependencies
+## The Dual-Framework Architecture
 
-### Requirements
+QRA implements two complementary phenomenological frameworks concurrently on the same transcript corpus. They address orthogonal questions.
 
-- Python 3.9–3.11 (Python 3.12 may have compatibility issues with some dependencies)
-- PyTorch (for HuggingFace models and sentence-transformers)
-- sentence-transformers (for embedding-based segmentation and codebook classification)
-- huggingface-hub (for model downloading)
-- pandas, scikit-learn (for data processing)
+### VA-MR: Where is this participant in therapeutic progression?
 
-### Quick Start
+The Vigilance-Avoidance Metacognition-Reappraisal (VA-MR) framework was derived from thematic analysis of thirty recorded MORE sessions in a randomized controlled trial for patients with lumbosacral radicular pain (Wexler, Balsamo et al., 2026). It characterizes four stages of mindfulness skill development, interpretable as progressive stages in the restoration of healthy structural relationships between attention and the lived body:
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd Qualitative_Research_Algorithm
+| Stage | Name | Phenomenological Character | Canonical Expression |
+|-------|------|---------------------------|---------------------|
+| 0 | **Vigilance** | Leder's dys-appearance at its most acute: the body occupying the total field of attentional engagement. Attention is reactive rather than directed, captured by pain signals that continuously reassert themselves. | *"I can't stop thinking about the pain, it's all I can focus on."* |
+| 1 | **Avoidance** | The critical developmental barrier: attentional competence acquired but deployed in the service of experiential avoidance rather than investigation. Mindfulness techniques used instrumentally to push pain away rather than to inhabit it. | *"When the pain comes, I focus really hard on my breathing to push it away."* |
+| 2 | **Metacognition** | The emergence of reflexive distance — an observing standpoint from which the contents of experience, including pain-related cognitions and affects, can be witnessed without identification. The body begins to re-emerge as something observed rather than something constituting. | *"I noticed I was getting anxious about the pain, and I could just watch that anxiety."* |
+| 3 | **Reappraisal** | A transformation of the noematic structure of pain experience: pain decomposed into constituent sensations, losing its character as monolithic threatening event and becoming a complex, textured, changing field. | *"It's interesting, when I really look at it, the 'pain' is actually many different feelings."* |
 
-# Install dependencies (recommended in virtual environment)
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+The arc from Stage 0 to Stage 3 describes the progressive recovery of the body as a transparent medium of experience rather than a dysappearing obstacle — the theoretical process MORE is designed to produce.
 
-### LLM Backend Options
+The full operational definitions, including prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances (the boundary-case language that separates adjacent stages), are implemented in [`constructs/vamr.py`](constructs/vamr.py).
 
-QRA supports multiple LLM backends:
+### VCE: What is this participant phenomenologically experiencing?
 
-| Backend | Setup |
-|---------|-------|
-| **LM Studio** | Start LM Studio, load a model, start server (default: http://127.0.0.1:1234/v1) |
-| **OpenRouter** | `export OPENROUTER_API_KEY=your_key` |
-| **Replicate** | `export REPLICATE_API_TOKEN=your_token` |
-| **HuggingFace** | Models downloaded automatically; GPU recommended for large models |
-| **Ollama** | Install Ollama locally, pull desired model: `ollama pull llama3` |
+The Varieties of Contemplative Experience codebook (Lindahl et al., 2017; DOI: [10.1371/journal.pone.0176239](https://doi.org/10.1371/journal.pone.0176239)) was derived from content-driven thematic analysis of 60 structured interviews with Western Buddhist meditators across Theravāda, Zen, and Tibetan traditions. It characterizes 59 categories of contemplative experience across seven higher-order domains, designed to be domain-descriptive rather than valence-prescriptive.
 
-## Usage
+| Domain | Codes | What it captures |
+|--------|-------|-----------------|
+| Affective | 13 | Fear, anxiety, positive affect, agitation, emotional detachment, bliss |
+| Cognitive | 10 | Meta-cognition, clarity, disintegration of meaning structures, change in narrative self |
+| Conative | 3 | Changes in motivation, effort, desire |
+| Perceptual | 7 | Sensory hypersensitivity, altered perception, synesthesia |
+| Sense of Self | 6 | Change in self-other boundaries, changes in sense of agency and ownership |
+| Social | 5 | Empathic changes, affiliative changes, relational shifts |
+| Somatic | 15 | Pain, energy, pressure, temperature, internal sensations |
 
-### Command-Line Interface
+Implemented in [`codebook/phenomenology_codebook.py`](codebook/phenomenology_codebook.py) as `CodeDefinition` objects with formal descriptions, subcodes, inclusive criteria, and exclusive criteria.
 
-```bash
-python qra.py <command> [options]
-```
+### Why Both: Orthogonal Analytical Dimensions
 
-#### Commands
+VA-MR is a *developmental stage model* — it answers *where in therapeutic progression*. VCE is a *content taxonomy* — it answers *what is being experienced at each location in that progression*. Their concurrent application generates evidence neither framework can produce alone.
 
-##### 1. Setup Wizard (Interactive Configuration)
+The VA-MR framework itself encodes a set of theoretical predictions about which VCE codes should co-occur with each stage, implemented as a `codebook_hypothesis` dictionary in [`constructs/vamr.py`](constructs/vamr.py):
 
-```bash
-python qra.py setup
-```
+- **Vigilance** is predicted to lift: *Fear/Anxiety/Panic/Paranoia*, *Agitation or Irritability*, *Pain (Somatic)* — consistent with dys-appearance as an affective-somatic phenomenon
+- **Avoidance** is predicted to lift: *Affective Flattening*, *Emotional Detachment, or Alexithymia* — consistent with the emotional blunting documented in experiential avoidance strategies (Hayes et al., 1996)
+- **Metacognition** is predicted to lift: *Meta-Cognition*, *Clarity*, *Change in Narrative Self* — consistent with the emergence of reflexive self-observation
+- **Reappraisal** is predicted to lift: *Positive Affect*, *Change in Worldview*, *Change in Self-Other or Self-World Boundaries*, *Disintegration of Conceptual Meaning Structures* — consistent with a transformation in the noematic structure of pain experience
 
-Runs an interactive 12-step configuration wizard that:
-- Configures input/output paths and speaker anonymization
-- Identifies therapist vs participant speakers
-- Sets segmentation parameters (including LLM refinement options)
-- Selects LLM backend and model
-- Configures multi-model interrater reliability
-- Chooses theme framework and optional codebook
-- Configures confidence thresholds and validation test sets
-- Sets up therapist cue summarization
+Pipeline Stage 4 tests these predictions empirically through **lift statistics** — co-occurrence ratios that measure how strongly each VCE code appears with each VA-MR stage relative to its corpus-wide base rate. This cross-validation implements Varela's (1996) neurophenomenological logic of *mutual constraints*: two independently-derived phenomenological frameworks constrain each other through empirical co-occurrence, and their convergence — or non-convergence — is informative in both directions. Confirmed predictions constitute convergent validity evidence; disconfirmed predictions reveal where theoretical frameworks require revision in this population.
 
-Saves configuration to `07_meta/qra_config.json` for reproducible runs.
+---
 
-##### 2. Run Pipeline
+## The PURER Framework and Therapist Cue Analysis
+
+Each MORE session follows a structured therapist inquiry format called PURER: **P**henomenology, **U**tilization, **R**eframing, **E**ducation/Expectancy, **R**einforcement. In the context of this analysis, PURER functions as a structured phenomenological interview method — analogous to Giorgi's (1985) descriptive phenomenological interview — systematically eliciting and consolidating participants' first-person reports of their experience.
+
+The Phenomenology component (*"What did you notice during the practice?"*) is structurally similar to Husserlian epoché: the invitation to bracket naturalistic assumptions and describe experience as it presents itself. Reframing offers interpretive proposals that may shift participants' appraisive relationship to pain — what Giorgi calls free imaginative variation. Reinforcement consolidates participants' expressions of therapeutic insight.
+
+This has a direct methodological implication. Therapist dialogue is not merely contextual background to participant phenomenological expression — it is a systematic *elicitor* of phenomenological description. The structure of PURER shapes which phenomenological reports participants offer; understanding therapeutic mechanism requires understanding that shaping.
+
+QRA's **therapist cue-response analysis** makes this visible. Because the pipeline separates participant and therapist segments at Stage 1 and indexes them chronologically, it can retrieve — for every observed within-session VA-MR stage transition — the therapist dialogue that immediately preceded it. This produces an empirical characterization of which therapist behaviors are associated with each type of stage change.
+
+The Avoidance → Metacognition transition is the single most clinically important transition to monitor: it marks the crossing of the experiential avoidance barrier, where emerging attentional skill is redirected from suppression toward investigation. Examining the therapist dialogue at these transitions and mapping it onto its PURER component — Is the therapist using a Phenomenology inquiry? A Reframe? A Reinforcement? — answers what therapist behaviors precipitate the most therapeutically significant moments in the session. This directly informs therapist training and scripting for subsequent cohorts.
+
+---
+
+## What the Pipeline Produces
+
+Given diarized session transcripts (from Whisper + speaker diarization):
+
+1. **Semantically coherent segments** — embedding-based segmentation with adaptive thresholds that treats the semantically coherent utterance (not the speaker turn) as the unit of analysis, implemented in [`process/transcript_ingestion.py`](process/transcript_ingestion.py)
+2. **VA-MR stage classifications** — multi-run LLM consensus voting with confidence tiering (High/Medium/Low) and auditable justifications citing specific participant language, via [`classification_tools/classification_loop.py`](classification_tools/classification_loop.py)
+3. **VCE phenomenology codes** — multi-label coding via embedding similarity + LLM zero-shot ensemble, implemented in [`codebook/embedding_classifier.py`](codebook/embedding_classifier.py) and [`codebook/ensemble.py`](codebook/ensemble.py)
+4. **Cross-validation lift statistics** — empirical (VA-MR stage × VCE code) co-occurrence ratios testing theoretically predicted phenomenological correlates, via [`process/cross_validation.py`](process/cross_validation.py)
+5. **Human validation worksheets** — stratified evaluation sets for blind-coding and inter-rater reliability assessment
+6. **Session-level stage progression summaries** — forward, backward, and lateral transition counts between adjacent participant segments
+7. **Longitudinal trajectory reports** — group-level mean stage proportions per session number across participants
+8. **Therapist cue-response reports** — therapist language grouped by transition type, characterizing the empirical PURER profile at each kind of stage change
+
+---
+
+## What Can Be Learned
+
+The outputs support three levels of analysis, each addressing a different research question:
+
+### Session level: Which sessions are catalyzing stage progression?
+
+Session stage distributions, compared against the theoretical arc implied by session content, reveal where the curriculum is working and where it is not. Sessions where Avoidance remains dominant in weeks 5–7 — despite content explicitly designed to catalyze the Avoidance → Metacognition transition (Sessions 3, 5) — are primary curriculum targets. Sessions where Reappraisal first emerges identify the intervention's active ingredients at the phenomenological level.
+
+### Dyadic level: What therapist behaviors facilitate contemplative transformation?
+
+The cue-response analysis directly addresses a limitation of most MBI process research: participant phenomenological reports are typically analyzed in isolation from the therapist behaviors that elicited them, obscuring the dyadic structure of the therapeutic interaction. QRA's session adjacency index makes this dyad visible at the level of individual transitions — allowing researchers to identify which PURER components appear in the therapist dialogue preceding the most significant stage changes and to directly translate these findings into therapist training and scripting recommendations.
+
+### Population level: What is the phenomenological texture of each stage in this population?
+
+The lift statistics answer a question that neither framework could address alone: what are participants *actually experiencing* at each stage of the developmental arc, and does the phenomenological texture of therapeutic transformation in a chronic pain MBI population match theoretical predictions derived from Buddhist meditators? High-lift associations that confirm the codebook hypothesis constitute convergent validity evidence; unexpected associations constitute novel findings about the phenomenological character of MBI-induced transformation in this population.
+
+### Longitudinal: Is there a coherent developmental trajectory?
+
+A non-decreasing mean stage progression across session numbers is the basic validity check for the VA-MR model as a developmental framework in this population. If participants are, on average, expressing higher-stage language in later sessions, this is consistent with the model's theoretical structure. Departure from this pattern — particularly in movement-integrated sessions — is itself informative about where the intervention's phenomenological effects diverge from prediction.
+
+---
+
+## Validation: Text Psychometrics
+
+Computational phenomenological classification requires a validation methodology appropriate to the distinctive epistemic situation: third-person computational tools classifying first-person experiential reports. Low, Mair, Nock, and Ghosh (2024) propose *Text Psychometrics* as a framework specifically designed for this purpose, adapting classical psychometric validity theory to text-based psychological measurement. QRA implements each component:
+
+- **Content validity** — via the known-label test set exported at Stage 2 (`content_validity_test_set.jsonl`), comprising the exemplar, subtle, and adversarial utterances from each stage definition. Running the pipeline against these known-label utterances measures how well the classifier handles both clear instances and conceptual boundary cases.
+- **Construct validity** — via the Stage 4 lift statistics, which constitute convergent validity hypotheses: if both frameworks are accurately tracking phenomenological states, the predicted (stage, code) co-occurrences should appear in the empirical data.
+- **Reliability** — via multi-run consensus (`llm_run_consistency`), treating independent LLM calls as proxy raters. Full cross-run agreement is the computational analog of unanimous inter-rater agreement; confidence tiering integrates run consistency with per-run confidence into a single reliability indicator.
+
+Human validation of the stratified evaluation set by two independent rater teams, with Krippendorff's alpha and raw agreement statistics, provides the ultimate validation standard. Agreement ≥ 75% (κ ≥ 0.60) supports using classifications as primary evidence for curriculum modification; lower agreement rates define tiered evidence standards described in the validation protocol.
+
+The epistemological limit that applies throughout: QRA classifies *linguistic expressions of experience*, not experience itself. This limitation applies equally to human qualitative coders. The pipeline's value is in directing expert attention efficiently toward the cases, sessions, and transition moments where expert phenomenological judgment is most consequential — not in replacing it.
+
+---
+
+## Research Context
+
+QRA was developed in service of the **Move-MORE Feasibility Trial** — an adaptation of Mindfulness-Oriented Recovery Enhancement (MORE) that integrates movement-based therapy for patients with lumbosacral radicular pain (LRP). Move-MORE uses an iterative convergent design across four cohorts; each cohort's session transcripts must be analyzed before the curriculum for the next cohort is finalized. Cohorts 1 and 2 have completed the eight-week intervention; Cohorts 3 and 4 are pending.
+
+The eight-session MORE for Pain protocol proceeds from psychoeducation about pain and mindfulness (Sessions 1–2) through mindful reappraisal and savoring (Sessions 3–4), unhealthy coping and stress–pain relationships (Sessions 5–6), thought suppression and meaning-making (Session 7), to sustained practice planning (Session 8). Each session follows a standard structure anchored by PURER-guided practice debriefing. Move-MORE integrates movement practice within this structure, introducing a kinesthetic vocabulary — awareness of the body in motion, proprioceptive attention, the relationship between movement and pain sensation — that may express VA-MR stages through different linguistic surface forms than the verbal mindfulness exercises on which the framework was originally derived.
+
+---
+
+## Getting Started
+
+- **[USAGE.md](USAGE.md)** — Installation, LLM backend configuration, pipeline commands, output structure, configuration reference
+- **[methodology.txt](methodology.txt)** — Full neurophenomenological methodology paper (Journal of Phenomenology and the Cognitive Sciences)
+- **[methodology_v2.txt](methodology_v2.txt)** — Applied methodology paper oriented toward clinical trial researchers (Journal of Contemplative Studies)
 
 ```bash
-# With saved config
+python qra.py setup    # interactive 12-step configuration wizard
 python qra.py run --config ./data/output/07_meta/qra_config.json
-
-# With inline configuration
-python qra.py run \
-  --backend openrouter \
-  --model openai/gpt-4o \
-  --transcript-dir ./data/input/ \
-  --output-dir ./data/output/
-
-# Run pipeline and automatically generate analysis reports afterward
-python qra.py run --config ./qra_config.json --auto-analyze
-```
-
-##### 3. Analyze (Post-Hoc Results Analysis)
-
-```bash
 python qra.py analyze --output-dir ./data/output/
 ```
 
-Runs post-hoc analysis on existing pipeline output to generate:
-- Per-participant longitudinal reports (VA-MR progression)
-- Per-session summaries with prototypical exemplars
-- Per-construct (stage + codebook) analyses
-- Longitudinal text reports and transition explanations
-- Therapist cue response analysis
-- Graph-ready CSVs and visualization figures
-
-##### 4. Testsets (Generate Validation Worksheets)
-
-```bash
-python qra.py testsets --output-dir ./data/output/
-
-# With options
-python qra.py testsets \
-  --output-dir ./data/output/ \
-  --config ./data/output/07_meta/qra_config.json \
-  --n-sets 3 \
-  --fraction 0.15
-```
-
-Generates cross-session human coding and AI classification worksheets from an existing pipeline run, for inter-rater reliability assessment.
-
-### Configuration Options
-
-#### Common Arguments (`run` subcommand)
-
-| Argument | Description |
-|----------|-------------|
-| `--config, -c` | Path to saved config JSON |
-| `--transcript-dir` | Directory containing input transcripts |
-| `--output-dir` | Output directory for results |
-| `--trial-id` | Trial identifier |
-| `--resume-from` | Checkpoint path to resume an interrupted run |
-| `--auto-analyze` | Run results analysis automatically after pipeline completes |
-
-#### Backend & Model Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `--backend` | LLM backend: openrouter, replicate, huggingface, ollama, lmstudio |
-| `--lmstudio-url` | LM Studio server URL (default: http://127.0.0.1:1234/v1) |
-| `--model` | Primary model ID for classification |
-| `--models` | Multiple model IDs for cross-referencing |
-| `--api-key` | OpenRouter API key (or use `OPENROUTER_API_KEY` env var) |
-| `--replicate-api-token` | Replicate API token (or use `REPLICATE_API_TOKEN` env var) |
-
-#### Framework & Codebook Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `--framework` | Theme framework: `vamr` (default) or path to custom JSON |
-| `--codebook` | Codebook: `phenomenology` (default) or path to custom JSON |
-
-#### Classification Parameters
-
-| Argument | Description |
-|----------|-------------|
-| `--n-runs` | Number of classification runs per segment (for IRR) |
-| `--temperature` | LLM temperature |
-| `--high-confidence-threshold` | High confidence tier threshold |
-| `--medium-confidence-threshold` | Medium confidence tier threshold |
-
-#### Feature Flags
-
-| Argument | Description |
-|----------|-------------|
-| `--no-theme-labeler` | Skip theme classification |
-| `--run-codebook-classifier` | Enable codebook classification |
-| `--no-codebook-classifier` | Disable codebook classification |
-| `--verbose-segmentation` | Write detailed process log to `07_meta/process_log.txt` |
-
-#### Embedding Classifier Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `--embedding-model` | Sentence-transformer model (default: Qwen/Qwen3-Embedding-8B) |
-| `--no-two-pass` | Disable two-pass embedding classification |
-| `--exemplar-import-path` | Path to pre-built exemplar embeddings |
-| `--criteria-weight` | Weight for criteria similarity in ensemble scoring |
-| `--exemplar-weight` | Weight for exemplar similarity in ensemble scoring |
-
-#### Speaker Filtering
-
-| Argument | Description |
-|----------|-------------|
-| `--speaker-filter-mode` | `none` (classify all) or `exclude` (drop listed speakers) |
-| `--exclude-speakers` | Speaker labels to exclude (use with `--speaker-filter-mode exclude`) |
-
-### Example Workflows
-
-#### Complete Pipeline with OpenRouter
-
-```bash
-# 1. Run setup wizard
-python qra.py setup
-
-# 2. Run the pipeline
-python qra.py run --config ./data/output/07_meta/qra_config.json
-
-# 3. Analyze results (or add --auto-analyze to step 2)
-python qra.py analyze --output-dir ./data/output/
-```
-
-#### Multi-Model Interrater Reliability
-
-```bash
-python qra.py run \
-  --backend openrouter \
-  --model openai/gpt-4o \
-  --models openai/gpt-4o anthropic/claude-3.5-sonnet google/gemini-2.0-flash-exp \
-  --n-runs 3 \
-  --run-codebook-classifier
-```
-
-#### Local LM Studio
-
-```bash
-# Start LM Studio server first, then:
-python qra.py run \
-  --backend lmstudio \
-  --lmstudio-url http://localhost:1234/v1 \
-  --model nvidia/nemotron-3-super \
-  --auto-analyze
-```
-
-#### HuggingFace Models (No API Required)
-
-```bash
-export CUDA_VISIBLE_DEVICES=0
-
-python qra.py run \
-  --backend huggingface \
-  --model meta-llama/Llama-4-Maverick-17B-128E-Instruct \
-  --transcript-dir ./data/input/ \
-  --output-dir ./data/output/
-```
-
-## Theme Frameworks
-
-### VA-MR (Vigilance-Avoidance Metacognition-Reappraisal)
-
-The default framework for mindfulness-based interventions:
-
-| Stage | Key | Description |
-|-------|-----|-------------|
-| **0** | Vigilance | Pain hypervigilance and attention dysregulation |
-| **1** | Avoidance | Attention control deployed for experiential avoidance |
-| **2** | Metacognition | Observing mental processes without identification |
-| **3** | Reappraisal | Fundamental reinterpretation of sensory experience |
-
-### Custom Frameworks
-
-Create a JSON file to define your own theme framework:
-
-```json
-{
-  "framework": "Custom Framework",
-  "version": "1.0",
-  "description": "Your framework description",
-  "themes": [
-    {
-      "theme_id": 0,
-      "key": "category_a",
-      "name": "Category A",
-      "short_name": "A",
-      "prompt_name": "category_a",
-      "definition": "Description of category A...",
-      "prototypical_features": ["feature1", "feature2"],
-      "distinguishing_criteria": "What makes this unique",
-      "exemplar_utterances": ["Example utterance 1", "Example utterance 2"]
-    }
-  ]
-}
-```
-
-## Codebook Classification
-
-The codebook classifier applies multi-label phenomenology codes to segments using two complementary methods:
-
-### Embedding-Based Classification
-
-- Uses sentence-transformer embeddings (default: `Qwen/Qwen3-Embedding-8B`)
-- Asymmetric encoding: segments encoded as queries, codebook entries as passages
-- Scoring based on definition + criteria + exemplar similarity
-- Optional two-pass approach for higher precision
-
-### LLM Zero-Shot Classification
-
-- Reuses the configured theme classification backend
-- Multi-label prompting with codebook definitions
-- Majority voting across runs
-
-### Ensemble Reconciliation
-
-Combines both methods; disagreements are flagged for review and confidence scores from each method are preserved in the segment.
-
-## Output Directory Structure
-
-After a complete pipeline run, the output directory is organized as follows:
-
-```
-output_dir/
-├── 00_index.txt                          # Auto-generated file index with sizes
-│
-├── 01_transcripts/
-│   └── coded/
-│       └── coded_transcript_<session>.txt  # Human-readable coded transcripts
-│
-├── 02_human_reports/
-│   ├── per_session/
-│   │   └── session_<id>.json             # Per-session analysis reports
-│   ├── per_participant/
-│   │   └── participant_<id>.json         # Per-participant longitudinal reports
-│   └── per_construct/
-│       ├── construct_<stage>.json        # Per-stage analysis
-│       └── codebook_exemplars.txt        # Codebook exemplar report
-│
-├── 03_figures/
-│   └── *.png                             # Visualization figures
-│
-├── 04_analysis_data/
-│   ├── session_stats/
-│   │   └── stats_<session>.json          # Per-session statistics
-│   ├── graphing/
-│   │   └── *.csv                         # Graph-ready CSVs for R/Python
-│   ├── cumulative_report.json            # Dataset-wide summary
-│   ├── longitudinal_summary.json         # Overall progression summary
-│   └── session_stage_progression.csv    # Session-level stage progression
-│
-├── 05_validation/
-│   ├── content_validity_test_set.jsonl   # Content validity items
-│   ├── human_coding_evaluation_set.csv  # Balanced evaluation set
-│   ├── human_classification_<session>.txt  # Blind-coding forms
-│   ├── flagged_for_review.txt           # Segments needing review
-│   ├── testsets/
-│   │   ├── human_classification_testset_worksheet_1.txt
-│   │   └── AI_classification_testset_worksheet_1.txt
-│   └── cross_validation/
-│       ├── cross_validation_results.json
-│       └── top_theme_code_associations.json
-│
-├── 06_training_data/
-│   ├── master_segments.jsonl             # Complete master dataset
-│   ├── theme_classification.jsonl        # Training data for supervised models
-│   └── codebook_multilabel.jsonl         # Multi-label codebook training data
-│
-└── 07_meta/
-    ├── qra_config.json                   # Pipeline configuration
-    ├── speaker_anonymization_key.json    # Speaker ID mapping
-    ├── theme_definitions.json            # Framework definitions
-    ├── codebook_definitions.json         # Codebook definitions (if enabled)
-    └── process_log.txt                   # Verbose LLM I/O log (if --verbose-segmentation)
-```
-
-## Data Structures
-
-### Segment
-
-The atomic unit of classification:
-
-```python
-@dataclass
-class Segment:
-    # Identity
-    segment_id: str
-    trial_id: str
-    participant_id: str
-    session_id: str
-    session_number: int
-    cohort_id: Optional[int]
-    session_variant: str           # '' for normal, 'a'/'b' for split sessions
-
-    # Temporal
-    segment_index: int
-    start_time_ms: int
-    end_time_ms: int
-    total_segments_in_session: int
-
-    # Content
-    speaker: str                   # 'participant' | 'therapist'
-    text: str
-    word_count: int
-
-    # Theme classification
-    primary_stage: Optional[int]
-    secondary_stage: Optional[int]
-    llm_confidence_primary: Optional[float]
-    llm_confidence_secondary: Optional[float]
-    llm_justification: Optional[str]
-    llm_run_consistency: Optional[int]
-
-    # Interrater reliability
-    rater_ids: Optional[List[str]]
-    rater_votes: Optional[List[Dict]]
-    agreement_level: Optional[str]     # 'unanimous'|'majority'|'split'|'none'
-    agreement_fraction: Optional[float]
-    needs_review: bool
-    consensus_vote: Optional[object]
-    tie_broken_by_confidence: bool
-
-    # Codebook labels
-    codebook_labels_embedding: Optional[List[str]]
-    codebook_labels_llm: Optional[List[str]]
-    codebook_labels_ensemble: Optional[List[str]]
-    codebook_disagreements: Optional[List[str]]
-    codebook_confidence: Optional[Dict[str, float]]
-
-    # Human validation
-    human_label: Optional[int]
-    adjudicated_label: Optional[int]
-    in_human_coded_subset: bool
-    label_status: str              # 'llm_only' | 'human_coded' | 'adjudicated'
-
-    # Final training label
-    final_label: Optional[int]
-    final_label_source: Optional[str]
-    label_confidence_tier: Optional[str]  # 'high'|'medium'|'low'|'unclassified'
-```
-
-### PipelineConfig
-
-Top-level configuration object:
-
-```python
-@dataclass
-class PipelineConfig:
-    transcript_dir: str
-    output_dir: str
-    trial_id: str
-    run_theme_labeler: bool
-    run_codebook_classifier: bool
-    speaker_anonymization_key_path: Optional[str]
-    auto_analyze: bool
-    resume_from: Optional[str]
-
-    segmentation: SegmentationConfig
-    speaker_filter: SpeakerFilterConfig
-    theme_classification: ThemeClassificationConfig
-    codebook_embedding: EmbeddingClassifierConfig
-    codebook_llm: LLMCodebookConfig
-    codebook_ensemble: EnsembleConfig
-    validation: ValidationConfig
-    test_sets: TestSetConfig
-    confidence_tiers: ConfidenceTierConfig
-    therapist_cues: TherapistCueConfig
-```
-
-## Module Reference
-
-### Classification Tools (`classification_tools/`)
-
-| File | Description |
-|------|-------------|
-| `llm_client.py` | Unified LLM API client (OpenRouter, Replicate, Ollama, LM Studio, HuggingFace) |
-| `data_structures.py` | Segment dataclass and core data structures |
-| `llm_classifier.py` | Theme and codebook LLM classification logic |
-| `majority_vote.py` | Interrater reliability voting aggregation |
-| `response_parser.py` | Parse LLM outputs into structured format |
-| `reliability.py` | Reliability metrics (Krippendorff's alpha, etc.) |
-| `validation.py` | Create evaluation sets and consistency checking |
-| `model_loader.py` | HuggingFace model downloading and loading |
-| `classification_loop.py` | Classification loop with checkpointing |
-
-### Constructs (`constructs/`)
-
-| File | Description |
-|------|-------------|
-| `theme_schema.py` | `ThemeFramework` and `ThemeDefinition` dataclasses |
-| `vamr.py` | VA-MR framework definitions (default) |
-| `config.py` | `ThemeClassificationConfig` dataclass |
-
-### Codebook (`codebook/`)
-
-| File | Description |
-|------|-------------|
-| `codebook_schema.py` | `Codebook` and `CodeDefinition` dataclasses |
-| `phenomenology_codebook.py` | Default phenomenology codebook |
-| `embedding_classifier.py` | Sentence-transformer based classification |
-| `ensemble.py` | Combine embedding + LLM results |
-| `config.py` | Embedding and ensemble configuration dataclasses |
-
-### Process (`process/`)
-
-| File | Description |
-|------|-------------|
-| `orchestrator.py` | Main pipeline orchestration (7 stages + optional analysis) |
-| `config.py` | `PipelineConfig` and sub-config dataclasses |
-| `setup_wizard.py` | Interactive 12-step configuration wizard |
-| `transcript_ingestion.py` | Load VTT/JSON, speaker normalization and anonymization |
-| `llm_segmentation.py` | LLM-assisted segmentation boundary refinement |
-| `dataset_assembly.py` | Export master dataset and reports |
-| `speaker_filter.py` | Apply speaker inclusion/exclusion rules |
-| `output_paths.py` | Single source of truth for all output directory paths |
-| `output_index.py` | Generate `00_index.txt` at pipeline completion |
-| `process_logger.py` | Verbose LLM I/O and segmentation logging |
-| `cross_validation.py` | Theme ↔ codebook co-occurrence and lift analysis |
-| `validation_exports.py` | Validation artifact export helpers |
-
-### Analysis (`analysis/`)
-
-| File | Description |
-|------|-------------|
-| `runner.py` | Post-hoc analysis orchestrator (8 sub-steps) |
-| `loader.py` | Load master JSONL and framework from output directory |
-| `participant.py` | Per-participant report generation |
-| `session.py` | Per-session analysis |
-| `construct.py` | Per-construct (stage + code) analyses |
-| `stage_progression.py` | Session-level stage progression computation |
-| `longitudinal.py` | Longitudinal summary generation |
-| `figure_data.py` | Export graph-ready CSV datasets |
-| `figures.py` | Generate visualization figures (matplotlib) |
-| `exemplars.py` | Exemplar utterance extraction per stage |
-| `text_reports.py` | Human-readable text report utilities |
-| `reports/` | Detailed text report generators (session, stage, transition, cue response, longitudinal) |
-
-## LLM Backend Configuration
-
-### LM Studio (Local GUI)
-
-1. Download and start LM Studio from lmstudio.ai
-2. Load a model and start the local server (default port 1234)
-3. Run: `python qra.py run --backend lmstudio --lmstudio-url http://127.0.0.1:1234/v1 --model <model-name>`
-
-### OpenRouter
-
-```bash
-export OPENROUTER_API_KEY=sk-or-v1-...
-python qra.py run --backend openrouter --model openai/gpt-4o
-```
-
-### Replicate
-
-```bash
-export REPLICATE_API_TOKEN=r8_...
-python qra.py run --backend replicate --model meta/llama-2-70b-chat
-```
-
-### Ollama (Local)
-
-```bash
-ollama pull llama3
-python qra.py run --backend ollama --model llama3
-```
-
-### HuggingFace (Local GPU)
-
-```bash
-export CUDA_VISIBLE_DEVICES=0
-python qra.py run --backend huggingface --model meta-llama/Llama-4-Maverick-17B-128E-Instruct
-```
-
-## Confidence Tiers
-
-Segments are assigned to confidence tiers based on LLM agreement across runs:
-
-| Tier | Consistency | Confidence | Description |
-|------|-------------|------------|-------------|
-| **High** | unanimous | >0.8 | All raters agree with high confidence |
-| **Medium** | majority | >0.6 | Majority agreement or good single-run confidence |
-| **Low** | minority | <0.6 | Split votes or low confidence |
-| **Unclassified** | none | — | No consensus reached |
+**LLM backend options:** LM Studio (local), OpenRouter, Replicate, Ollama, HuggingFace — any OpenAI-compatible endpoint. The codebook embedding classifier uses Qwen/Qwen3-Embedding-8B by default and requires GPU for reasonable throughput.
+
+---
+
+## Development Roadmap
+
+The pipeline is currently being validated on Move-MORE Cohorts 1 and 2. Engineering priorities before the final cohort:
+
+1. **PURER classification of therapist dialogue** — extend classification to therapist segments, operationalizing the five PURER components as a therapist-side framework. Infrastructure already exists in Stage 1 speaker separation and the session adjacency index; requires a `constructs/purer.py` `ThemeFramework` definition and an aggregation layer in the cue-response report. This would transform the cue analysis from a content summary into a genuine PURER fidelity assessment.
+
+2. **Context-window expansion** — add preceding-segment context to classification prompts to improve accuracy at stage boundaries, particularly the Avoidance–Metacognition transition. Data structures already capture `segment_index` and `session_id`; the missing piece is a context-building function in [`classification_tools/llm_classifier.py`](classification_tools/llm_classifier.py).
+
+3. **Movement language adaptation** — if human validation reveals systematic disagreement in movement-specific sessions, augment VA-MR stage definitions with kinesthetic exemplar utterances drawn from human-validated Cohorts 1–2 segments.
+
+4. **Supervised fine-tuning** — the `master_segments.jsonl` files produced across all four cohorts will constitute the first systematically labeled corpus of VA-MR stage expression in mindfulness-based pain therapy, formatted for supervised fine-tuning. A domain-adapted classifier would enable therapeutic fidelity monitoring in future trials at a scale and cost that zero-shot LLM classification does not support.
+
+---
+
+## Publications in Preparation
+
+Two methodology papers are in preparation, grounded in this pipeline:
+
+**Balsamo, W., Wexler, R. S., et al.** — "From Vigilance to Reappraisal: A Computational Neurophenomenological Method for Analyzing Contemplative Transformation in Mindfulness-Based Pain Therapy." *In preparation for Journal of Phenomenology and the Cognitive Sciences.* [`methodology.txt`](methodology.txt)
+
+**Balsamo, W., Wexler, R. S., Fox, D. J., Garland, E. L., et al.** — "Computational Phenomenology in Mindfulness-Based Interventions for Chronic Pain: A Machine-Assisted Methodology for Rapid Iterative Curriculum Refinement." *In preparation for Journal of Contemplative Studies.* [`methodology_v2.txt`](methodology_v2.txt)
+
+---
+
+## Prior Work
+
+This project is built directly upon the following bodies of work:
+
+**VA-MR Framework**
+- Wexler, R. S., Balsamo, W., et al. (2026). "Noticing the Way that I'm Noticing Pain": A qualitative analysis of therapeutic progression in mindfulness-oriented recovery enhancement for patients with lumbosacral radicular pain. *Mindfulness*, 17, 819–833. Preprint: [https://doi.org/10.21203/rs.3.rs-7104279/v1](https://doi.org/10.21203/rs.3.rs-7104279/v1)
+
+**Move-MORE Feasibility Trial**
+- Wexler, R. S., Balsamo, W., et al. (2026). Development and pilot feasibility testing of Move-MORE: A multicomponent mindfulness-and-movement intervention for lumbosacral radicular pain. Preprint: [https://doi.org/10.21203/rs.3.rs-8682836/v1](https://doi.org/10.21203/rs.3.rs-8682836/v1)
+
+**MORE for LRP Randomized Controlled Trial**
+- Wexler, R. S., Fox, D. J., ZuZero, D., et al. (2024). Virtually delivered MORE reduces daily pain intensity in patients with lumbosacral radiculopathy: A randomized controlled trial. *Pain Reports*, 9(2), e1132.
+- Wexler, R. S. (2022). Protocol for mindfulness-oriented recovery enhancement (MORE) in the management of lumbosacral radiculopathy/radiculitis symptoms: A randomized controlled trial. *Contemporary Clinical Trials Communications*.
+
+**VCE Phenomenology Codebook**
+- Lindahl, J. R., Fisher, N. E., Cooper, D. J., Rosen, R. K., & Britton, W. B. (2017). The varieties of contemplative experience: A mixed-methods study of meditation-related challenges in Western Buddhists. *PLOS ONE*, 12(5), e0176239. [https://doi.org/10.1371/journal.pone.0176239](https://doi.org/10.1371/journal.pone.0176239)
+
+**Text Psychometrics Validation Framework**
+- Low, D. M., Mair, P., Nock, M. K., & Ghosh, S. S. (2024). Text psychometrics: Assessing psychological constructs in text using natural language processing. *Psychological Methods*.
+
+**Foundational Phenomenology**
+- Leder, D. (1990). *The Absent Body.* University of Chicago Press.
+- Merleau-Ponty, M. (1962). *Phenomenology of Perception.* Routledge.
+- Varela, F. J. (1996). Neurophenomenology: A methodological remedy for the hard problem. *Journal of Consciousness Studies*, 3(4), 330–349.
+- Varela, F. J., Thompson, E., & Rosch, E. (1991). *The Embodied Mind.* MIT Press.
+
+**MORE Efficacy and Mechanism**
+- Garland, E. L. (2024). *Mindfulness-Oriented Recovery Enhancement: An Evidence-Based Treatment for Chronic Pain and Opioid Use.* The Guilford Press.
+- Garland, E. L., Hanley, A. W., et al. (2022). Mindfulness-oriented recovery enhancement vs supportive group therapy for co-occurring opioid misuse and chronic pain in primary care. *JAMA Internal Medicine*, 182(4), 407–417.
+- Riegner, G., Posey, G., Oliva, V., Jung, Y., Mobley, W., & Zeidan, F. (2023). Disentangling self from pain: Mindfulness meditation-induced pain relief is driven by thalamic-default mode network decoupling. *Pain*, 164(2), 280–291.
+- Hanley, A. W., Bernstein, A., et al. (2020). The metacognitive processes of decentering scale. *Psychological Assessment*, 32(10), 956–971.
+- Hanley, A. W., & Garland, E. L. (2021). The mindfulness-oriented recovery enhancement fidelity measure (MORE-FM). *Journal of Evidence-Based Social Work*, 18(3), 308–322.
+
+**Iterative Trial Design**
+- Alwashmi, M. F., Hawboldt, J., Davis, E., & Fetters, M. D. (2019). The iterative convergent design for mobile health usability testing. *JMIR Mhealth and Uhealth*, 7(4), e11656.
+
+---
 
 ## Citation
 
-If you use QRA in your research, please cite:
-
-```
-@software{QRA2024,
-  title={QRA: Qualitative Research Algorithm},
-  author={Wade Balsamo},
-  year={2026},
-  url={https://github.com/wadebalsamo/qra}
+```bibtex
+@software{QRA2026,
+  title  = {QRA: Qualitative Research Algorithm},
+  author = {Balsamo, Wade and Wexler, Ryan S.},
+  year   = {2026},
+  note   = {Computational phenomenology pipeline for mindfulness-based intervention research}
 }
 ```
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- VA-MR framework based on research by [Wexler, Balsamo et al.]
-- Powered by LLMs from OpenRouter, Replicate, HuggingFace, Ollama, and LM Studio
-- Embeddings powered by sentence-transformers and Qwen models
+MIT License — see [LICENSE](LICENSE).
