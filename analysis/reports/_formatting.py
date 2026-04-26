@@ -15,6 +15,8 @@ def _pct(value: float) -> str:
 
 def _wrap_quote(text: str, indent: int = 9, max_width: int = 80) -> str:
     """Wrap a quoted text to max_width, indenting continuation lines."""
+    if not text:
+        return ' ' * indent + '""'
     words = text.split()
     lines = []
     current = ' ' * indent + '"'
@@ -46,7 +48,9 @@ def _collect_therapist_cue(
     """
     if 'speaker' not in df.columns or 'start_time_ms' not in df.columns:
         return ''
-    if not from_end_ms or not to_start_ms:
+    if from_end_ms is None or to_start_ms is None:
+        return ''
+    if to_start_ms <= from_end_ms:
         return ''
     mask = (
         (df['session_id'] == session_id)
@@ -63,6 +67,8 @@ def _collect_therapist_cue(
 
 def _summarize_cue(text: str, llm_client, max_words: int):
     """Summarize therapist cue text to ≤ max_words words. Returns (text, was_summarized)."""
+    if not text:
+        return text or '', False
     words = text.split()
     if len(words) <= max_words:
         return text, False
@@ -94,6 +100,8 @@ def _summarize_participant_text(text: str, llm_client, max_words: int):
     themes, presenting concerns, and stage-of-change indicators rather than
     therapeutic technique language.
     """
+    if not text:
+        return text or '', False
     words = text.split()
     if len(words) <= max_words:
         return text, False

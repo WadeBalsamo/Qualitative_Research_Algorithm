@@ -504,9 +504,26 @@ def run_full_pipeline(
         # Set the output dir on the codebook_llm config so checkpoints land in the right place
         config.codebook_llm.output_dir = codebook_output_dir
         llm_classifier = LLMCodebookClassifier(llm_client, config.codebook_llm)
-        llm_results = llm_classifier.classify_segments(
-            cb_segments, codebook, output_dir=codebook_output_dir,
-        )
+        try:
+            llm_results = llm_classifier.classify_segments(
+                cb_segments, codebook, output_dir=codebook_output_dir,
+            )
+        except Exception as _llm_exc:
+            import datetime as _dt
+            _fail_note = os.path.join(codebook_output_dir, 'codebook_llm_FAILED.txt')
+            with open(_fail_note, 'w') as _f:
+                _f.write(
+                    f"Codebook LLM classification failed at {_dt.datetime.now().isoformat()}\n\n"
+                    f"Error: {_llm_exc}\n"
+                )
+            print(f"\n  [WARNING] Codebook LLM classification failed: {_llm_exc}")
+            print(f"  Failure note written to: {_fail_note}")
+            print("  Continuing with embedding-only codebook results.\n")
+            observer.on_stage_progress(
+                "Codebook Classification",
+                f"LLM classification failed — using embedding-only results (see {_fail_note})",
+            )
+            llm_results = {}
 
         # Ensemble reconciliation
         observer.on_stage_progress("Codebook Classification", "Running ensemble reconciliation...")

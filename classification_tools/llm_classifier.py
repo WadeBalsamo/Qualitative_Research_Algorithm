@@ -632,7 +632,7 @@ class LLMCodebookClassifier:
         self, all_assignments: List[List[CodeAssignment]]
     ) -> List[CodeAssignment]:
         """Merge assignments across multiple runs via strict-majority voting."""
-        if not all_assignments:
+        if not all_assignments or not any(a is not None for a in all_assignments):
             return []
 
         voted = vote_multi_label(all_assignments)
