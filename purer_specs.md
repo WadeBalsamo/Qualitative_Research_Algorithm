@@ -8,7 +8,7 @@ This document specifies the PURER therapist-dialogue classification system: the 
 
 ## 1. Why PURER
 
-QRA currently treats therapist dialogue as read-only context. Therapist segments are created as `Segment` objects with `speaker='therapist'`, interleaved back into the session timeline by timestamp, and then filtered out before VA-MR classification. They are stored in `master_segments.jsonl` with all classification fields null. They serve one purpose: providing conversational context for the LLM when it classifies adjacent participant segments.
+QRA currently treats therapist dialogue as read-only context. Therapist segments are created as `Segment` objects with `speaker='therapist'`, interleaved back into the session timeline by timestamp, and then filtered out before VAMMR classification. They are stored in `master_segments.jsonl` with all classification fields null. They serve one purpose: providing conversational context for the LLM when it classifies adjacent participant segments.
 
 This is a waste. The therapist cues *are* the intervention mechanism. The transition reports already surface raw therapist text between stage transitions — but they cannot answer the structural question: *which kinds of therapist moves precede which participant stage transitions?* That question requires labeled therapist segments.
 
@@ -25,7 +25,7 @@ PURER operationalizes the five therapist guided-inquiry moves in Mindfulness-Ori
 Adding PURER classification produces:
 
 1. A labeled therapist corpus for supervised fine-tuning (Phase 2 autoresearch)
-2. PURER × VA-MR influence tables — empirical lift measures of which therapist moves precede which participant stage transitions
+2. PURER × VAMMR influence tables — empirical lift measures of which therapist moves precede which participant stage transitions
 3. Per-session therapist fidelity profiles showing PURER move frequency and distribution
 4. The training signal for the CFiCS-style therapist-participant interaction GNN (Phase 3)
 
@@ -33,7 +33,7 @@ Adding PURER classification produces:
 
 ## 2. PURER Construct Definitions
 
-These are the `ThemeDefinition` specifications for `constructs/purer.py`. Each construct maps directly to a `ThemeDefinition` object using the schema defined in `constructs/theme_schema.py`. The `theme_id` integers 0–4 are the PURER stage IDs, analogous to VA-MR stage IDs 0–3 but in a separate namespace (stored in `purer_*` Segment fields, never conflated with VA-MR fields).
+These are the `ThemeDefinition` specifications for `theme_framework/purer.py`. Each construct maps directly to a `ThemeDefinition` object using the schema defined in `theme_framework/theme_schema.py`. The `theme_id` integers 0–4 are the PURER stage IDs, analogous to VAMMR stage IDs 0–4 but in a separate namespace (stored in `purer_*` Segment fields, never conflated with VAMMR fields).
 
 ---
 
@@ -278,10 +278,10 @@ transcript_ingestion.py
 orchestrator.py
   └── Stage 2: Semantic Segmentation     — participant sentences only
   └── all_segments = merge + interleave  — therapist segs reinserted by timestamp (lines 288–300)
-  └── Stage 3: VA-MR Classification
+  └── Stage 3: VAMMR Classification
         └── _apply_speaker_filter()       — filters OUT therapist segs (line 387)
         └── classify_segments_zero_shot() — participant segs only
-        └── parse_all_results()           — VA-MR fields populated on participant segs
+        └── parse_all_results()           — VAMMR fields populated on participant segs
   └── Stage 3b: VCE Codebook             — participant segs only
   └── master_segments.jsonl              — therapist segs stored with all classification fields = None
 ```
@@ -290,9 +290,9 @@ orchestrator.py
 
 ```
 orchestrator.py (modified)
-  └── Stage 3: VA-MR (unchanged)
-        └── _apply_speaker_filter() — still excludes therapists from VA-MR
-        └── parse_all_results()     — VA-MR fields on participant segs
+  └── Stage 3: VAMMR (unchanged)
+        └── _apply_speaker_filter() — still excludes therapists from VAMMR
+        └── parse_all_results()     — VAMMR fields on participant segs
   └── Stage 3c: PURER (NEW — between Stage 3 and Stage 3b)
         └── therapist_segs = [s for s in all_segments if s.speaker == 'therapist']
         └── classify_segments_zero_shot(therapist_segs, purer_framework, purer_config)
@@ -301,20 +301,20 @@ orchestrator.py (modified)
   └── master_segments.jsonl — therapist segs now have purer_* fields populated
 ```
 
-The key architectural insight: `speaker_filter.mode='exclude'` is *correct and should not change*. It means "exclude from VA-MR classification." PURER is a parallel classification path, not a replacement. The `_apply_speaker_filter()` call in Stage 3 selects participant segments; Stage 3c explicitly selects therapist segments. They are two separate classification passes on two disjoint sets of segments.
+The key architectural insight: `speaker_filter.mode='exclude'` is *correct and should not change*. It means "exclude from VAMMR classification." PURER is a parallel classification path, not a replacement. The `_apply_speaker_filter()` call in Stage 3 selects participant segments; Stage 3c explicitly selects therapist segments. They are two separate classification passes on two disjoint sets of segments.
 
 ---
 
 ## 4. Code Specifications
 
-### 4.1 `constructs/purer.py` — NEW FILE
+### 4.1 `theme_framework/purer.py` — NEW FILE
 
-A module structurally parallel to `constructs/vamr.py`. Exports a single function `get_purer_framework()` that returns a `ThemeFramework` containing five `ThemeDefinition` objects, one per PURER construct.
+A module structurally parallel to `theme_framework/vammr.py`. Exports a single function `get_purer_framework()` that returns a `ThemeFramework` containing five `ThemeDefinition` objects, one per PURER construct.
 
 **Module structure:**
 
 ```python
-from constructs.theme_schema import ThemeDefinition, ThemeFramework
+from theme_framework.theme_schema import ThemeDefinition, ThemeFramework
 
 _PURER_DEFINITIONS = [
     ThemeDefinition(
@@ -404,7 +404,7 @@ purer_classification: ThemeClassificationConfig = field(default_factory=ThemeCla
 'purer_classification': ThemeClassificationConfig,
 ```
 
-No new config class needed. `ThemeClassificationConfig` from `constructs/config.py` already handles all parameters (model, n_runs, per_run_models, temperature, backend, etc.). The `purer_classification` sub-config allows independent model and run-count settings for the therapist classification pass — useful if a smaller/cheaper model is appropriate for PURER.
+No new config class needed. `ThemeClassificationConfig` from `theme_framework/config.py` already handles all parameters (model, n_runs, per_run_models, temperature, backend, etc.). The `purer_classification` sub-config allows independent model and run-count settings for the therapist classification pass — useful if a smaller/cheaper model is appropriate for PURER.
 
 ---
 
@@ -428,7 +428,7 @@ if config.run_purer_labeler:
         explanation_key='purer_classification',
     )
 
-    from constructs.purer import get_purer_framework
+    from theme_framework.purer import get_purer_framework
     purer_framework = get_purer_framework()
 
     purer_config = config.purer_classification
@@ -471,7 +471,7 @@ else:
 
 ### 4.5 `classification_tools/response_parser.py` — MODIFY
 
-Add `parse_purer_results()` function after `parse_all_results()`. The function is structurally identical to `parse_all_results()` but writes to `purer_*` fields instead of VA-MR fields. It does not need a `name_to_id` parameter (the PURER IDs 0–4 are already integer-encoded in the consensus output, same as VA-MR).
+Add `parse_purer_results()` function after `parse_all_results()`. The function is structurally identical to `parse_all_results()` but writes to `purer_*` fields instead of VAMMR fields. It does not need a `name_to_id` parameter (the PURER IDs 0–4 are already integer-encoded in the consensus output, same as VAMMR).
 
 **Signature:**
 
@@ -510,13 +510,13 @@ The function should maintain the same error counting and stats return dict struc
 
 **New behavior**: Split into two concerns.
 
-**Part A** (unchanged except messaging): Identify which speakers are therapists. Set `speaker_filter.mode = 'exclude'` always when therapists are identified. The old "exclude from classification" question is removed — its answer is always yes for VA-MR.
+**Part A** (unchanged except messaging): Identify which speakers are therapists. Set `speaker_filter.mode = 'exclude'` always when therapists are identified. The old "exclude from classification" question is removed — its answer is always yes for VAMMR.
 
 Update the explanatory text from:
 > "Therapist utterances can be excluded from classification while still being used as conversational context."
 
 To:
-> "Therapist utterances will be excluded from VA-MR participant-stage classification. They will be classified separately using the PURER therapist-dialogue framework."
+> "Therapist utterances will be excluded from VAMMR participant-stage classification. They will be classified separately using the PURER therapist-dialogue framework."
 
 **Part B** (new sub-step after therapist identification): Enable PURER.
 
@@ -530,7 +530,7 @@ To:
       R  — Reinforcement       (validating just-completed insight or skill)
 
     PURER labels enable analysis of which therapist moves precede
-    participant stage transitions in VA-MR.
+    participant stage transitions in VAMMR.
 
 Enable PURER classification for therapist dialogue? [Y/n]
 ```
@@ -546,7 +546,7 @@ If no: `config_data['run_purer_labeler'] = False`
 
 ### 4.7 `process/cross_validation.py` — MODIFY
 
-Add `compute_purer_vamr_influence()` function. This is the PURER × VA-MR lift analysis, the analog of the VCE × VA-MR lift table already produced for participant segments.
+Add `compute_purer_vammr_influence()` function. This is the PURER × VAMMR lift analysis, the analog of the VCE × VAMMR lift table already produced for participant segments.
 
 **Core logic**:
 
@@ -554,14 +554,14 @@ Add `compute_purer_vamr_influence()` function. This is the PURER × VA-MR lift a
 2. For each session, sort segments by `segment_index`
 3. For each therapist segment `t` with `purer_primary` set, find the immediately following participant segment `p` (next `segment_index` where `speaker != 'therapist'` and `primary_stage` is not null)
 4. Record the `(purer_primary, primary_stage)` pair as a co-occurrence
-5. Compute lift: `lift(p, s) = P(s | p) / P(s)` where `P(s)` is the marginal base rate of VA-MR stage `s` across all participant segments in the corpus
+5. Compute lift: `lift(p, s) = P(s | p) / P(s)` where `P(s)` is the marginal base rate of VAMMR stage `s` across all participant segments in the corpus
 
 **Output**: Three artifacts:
-- `purer_vamr_influence_raw.csv` — raw co-occurrence counts, columns: `purer_construct, vamr_stage, count, purer_total, vamr_base_rate, lift`
-- `purer_vamr_influence_pivot.csv` — 5×4 pivot table (PURER × VA-MR stage) of lift values
+- `purer_vammr_influence_raw.csv` — raw co-occurrence counts, columns: `purer_construct, vammr_stage, count, purer_total, vammr_base_rate, lift`
+- `purer_vammr_influence_pivot.csv` — 5×5 pivot table (PURER × VAMMR stage) of lift values
 - Section in `cross_validation_report.md` describing the influence table with interpretive notes
 
-**Lift interpretation note** for the report: Lift > 1.0 means the VA-MR stage is more common *following* that therapist move than in the base rate. A lift of 2.0 for (Reframing, Reappraisal) means Reappraisal is twice as likely to appear after a therapist Reframing move than it is overall — suggesting a direct mechanism.
+**Lift interpretation note** for the report: Lift > 1.0 means the VAMMR stage is more common *following* that therapist move than in the base rate. A lift of 2.0 for (Reframing, Reappraisal) means Reappraisal is twice as likely to appear after a therapist Reframing move than it is overall — suggesting a direct mechanism.
 
 ---
 
@@ -577,7 +577,7 @@ purer_justification, purer_run_consistency, purer_agreement_level, purer_agreeme
 purer_needs_review
 ```
 
-Note: `purer_rater_ids` and `purer_rater_votes` are list/dict fields and should be serialized as JSON strings, consistent with how `rater_votes` is handled for VA-MR.
+Note: `purer_rater_ids` and `purer_rater_votes` are list/dict fields and should be serialized as JSON strings, consistent with how `rater_votes` is handled for VAMMR.
 
 ---
 
@@ -598,7 +598,7 @@ if therapists:
         'speakers': therapists,
     }
     print(f"\n    {len(therapists)} therapist speaker(s) identified.")
-    print("    Therapist segments will be excluded from VA-MR participant-stage classification.")
+    print("    Therapist segments will be excluded from VAMMR participant-stage classification.")
     print("    They will be classified separately using the PURER framework (see below).")
 else:
     self.config_data['speaker_filter'] = {'mode': 'none', 'speakers': []}
@@ -616,7 +616,7 @@ if therapists:
     print("      E — Education/Expectancy (psychoeducation and expectancy-setting)")
     print("      R — Reinforcement       (validating insight or skill)")
     print()
-    print("    Enables PURER × VA-MR influence analysis: which therapist moves")
+    print("    Enables PURER × VAMMR influence analysis: which therapist moves")
     print("    precede which participant stage transitions.")
     print()
     run_purer = _prompt_yes_no("Enable PURER classification for therapist dialogue?", True)
@@ -629,15 +629,15 @@ else:
     self.config_data['run_purer_labeler'] = False
 ```
 
-Note: Advanced PURER model configuration (separate model, n_runs, per_run_models for the PURER pass) would appear in a later configuration step or be inferred from the VA-MR classification config as defaults. The wizard should not over-configure Step 2.
+Note: Advanced PURER model configuration (separate model, n_runs, per_run_models for the PURER pass) would appear in a later configuration step or be inferred from the VAMMR classification config as defaults. The wizard should not over-configure Step 2.
 
 ---
 
-## 6. PURER × VA-MR Influence Analysis — Research Specification
+## 6. PURER × VAMMR Influence Analysis — Research Specification
 
 ### Motivation
 
-VA-MR characterizes *where participants are* in therapeutic progression. PURER characterizes *what the therapist did before that*. The influence analysis asks: are certain PURER moves systematically associated with certain VA-MR outcomes in the following participant turn?
+VAMMR characterizes *where participants are* in therapeutic progression. PURER characterizes *what the therapist did before that*. The influence analysis asks: are certain PURER moves systematically associated with certain VAMMR outcomes in the following participant turn?
 
 ### Hypotheses (to test with lift data)
 
@@ -658,7 +658,7 @@ These are directional hypotheses grounded in the theoretical structure of PURER.
 ### Reporting format
 
 The influence table section in the cross-validation report should include:
-1. The 5×4 lift matrix with cells colored by lift magnitude
+1. The 5×5 lift matrix with cells colored by lift magnitude
 2. A plain-language interpretation of the top 3 highest-lift cells
 3. A note on sample size per PURER construct (number of therapist segments contributing to each row) to flag under-powered cells
 4. A comparison across cohorts if ≥2 cohorts of data are available
@@ -669,16 +669,16 @@ The influence table section in the cross-validation report should include:
 
 ### Human coding of therapist segments
 
-Extend the existing human validation workflow to include therapist segments. The human validation worksheet generator (`analysis/reports/validation_worksheet.py` or equivalent) should produce a PURER worksheet alongside the VA-MR participant worksheet.
+Extend the existing human validation workflow to include therapist segments. The human validation worksheet generator (`analysis/reports/validation_worksheet.py` or equivalent) should produce a PURER worksheet alongside the VAMMR participant worksheet.
 
-Target: N=30 therapist segments per PURER construct (150 total) blind-coded by two independent raters (research team members with MORE training). Krippendorff's alpha ≥ 0.70 is the reliability threshold, consistent with the VA-MR standard.
+Target: N=30 therapist segments per PURER construct (150 total) blind-coded by two independent raters (research team members with MORE training). Krippendorff's alpha ≥ 0.70 is the reliability threshold, consistent with the VAMMR standard.
 
 ### Construct validity checks
 
 For each PURER construct, verify:
 1. **Content validity**: Each exemplar utterance in the construct definition is classified correctly by the LLM at rate ≥ 90% in zero-shot testing
 2. **Discriminant validity**: Each adversarial utterance in the construct definition is rejected at rate ≥ 90%
-3. **Consistency**: Mean `purer_run_consistency` per construct ≥ 2.5 out of 3 runs (consistent with VA-MR threshold)
+3. **Consistency**: Mean `purer_run_consistency` per construct ≥ 2.5 out of 3 runs (consistent with VAMMR threshold)
 
 ### Session-level fidelity profiles
 
@@ -695,13 +695,13 @@ These profiles can be compared against theoretical PURER move distribution (e.g.
 
 | Action | File | Location |
 |--------|------|----------|
-| CREATE | `constructs/purer.py` | New file, parallel to `constructs/vamr.py` |
+| CREATE | `theme_framework/purer.py` | New file, parallel to `theme_framework/vammr.py` |
 | MODIFY | `classification_tools/data_structures.py` | After line 77 — add 11 `purer_*` fields to Segment |
 | MODIFY | `process/config.py` | Lines 111–117 — add `run_purer_labeler` flag + `purer_classification` sub-config |
 | MODIFY | `process/orchestrator.py` | After line 419 — insert Stage 3c block; add import |
 | MODIFY | `classification_tools/response_parser.py` | After line ~160 — add `parse_purer_results()` |
 | MODIFY | `process/setup_wizard.py` | Lines 263–286 — remove old exclude prompt; add Phase B + Phase C |
-| MODIFY | `process/cross_validation.py` | New function `compute_purer_vamr_influence()` |
+| MODIFY | `process/cross_validation.py` | New function `compute_purer_vammr_influence()` |
 | MODIFY | `process/dataset_assembly.py` | Add `purer_*` fields to CSV export column list |
 
 ---
@@ -710,7 +710,7 @@ These profiles can be compared against theoretical PURER move distribution (e.g.
 
 The following items are intentionally deferred:
 
-- **Multi-label PURER**: A single therapist utterance can theoretically contain more than one PURER move (e.g., brief Education followed by Reinforcement). The first iteration classifies primary and secondary only (same pattern as VA-MR). Multi-label PURER is Phase 2 scope once the single-label corpus is built and validated.
+- **Multi-label PURER**: A single therapist utterance can theoretically contain more than one PURER move (e.g., brief Education followed by Reinforcement). The first iteration classifies primary and secondary only (same pattern as VAMMR). Multi-label PURER is Phase 2 scope once the single-label corpus is built and validated.
 - **PURER × VCE cross-validation**: What phenomenological experiences follow which therapist moves? Technically feasible (therapist PURER → participant VCE codes), but requires both PURER and VCE to be validated first. Deferred to post-Cohort 2.
 - **Wizard-level PURER model configuration**: The `purer_classification` sub-config defaults to the same settings as `theme_classification`. Exposing separate PURER model/n_runs settings in the wizard is deferred until there is evidence that different settings are needed.
 - **Real-time fidelity feedback**: A separate tool that provides session-by-session PURER profiles to the clinical team between cohorts. Architecturally trivial once the labels exist; deferred to Phase 2 reporting tooling.

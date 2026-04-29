@@ -8,7 +8,7 @@ Supports single-model or multi-model cross-referencing.
 
 import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -33,3 +33,13 @@ class ThemeClassificationConfig:
     ollama_port: int = 11434
     lmstudio_base_url: str = 'http://127.0.0.1:1234/v1'  # LM Studio server URL
     context_window_segments: int = 2  # Number of preceding segments to include as context (0 = disabled)
+    # Prompt exemplar control
+    zero_shot_prompt: bool = False          # True = definitions only, no examples
+    prompt_n_exemplars: Optional[int] = None        # None = all available
+    prompt_include_subtle: bool = True
+    prompt_n_subtle: Optional[int] = None           # None = all available
+    prompt_include_adversarial: bool = True
+    prompt_n_adversarial: Optional[int] = None      # None = all available
+    # Evidence-based secondary vote reconciliation
+    evidence_secondary_weight: float = 0.6  # Weight applied to secondary/dissenting votes
+    evidence_presence_threshold: float = 0.5  # Min pooled evidence score for secondary label

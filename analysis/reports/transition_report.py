@@ -201,7 +201,7 @@ def generate_transition_explanation(
     llm_client=None,
     df_all: pd.DataFrame = None,
 ) -> str:
-    """Generate state_transition_explanation.txt in the output root.
+    """Generate stage_transitions.txt in the output root.
 
     Explains both within-session and between-session transition heatmaps,
     with example quotes for the most common transitions.
@@ -224,7 +224,7 @@ def generate_transition_explanation(
     )
 
     # ── Within-session ──
-    lines.append('WITHIN-SESSION TRANSITIONS  (see 03_figures/state_transition_heatmap.png)')
+    lines.append('WITHIN-SESSION TRANSITIONS  (see 03_figures/stage_transition_heatmap.png)')
     lines.append('-' * 60)
     lines.append(
         'Each cell [row → col] counts how many times a classified segment\n'
@@ -241,17 +241,17 @@ def generate_transition_explanation(
                 pairs.append((cnt, fr, to))
     pairs.sort(reverse=True)
 
-    lines.append('Most common within-session transitions:')
-    for cnt, fr, to in pairs[:8]:
+    lines.append('All within-session transitions:')
+    for cnt, fr, to in pairs:
         direction = 'stay' if fr == to else ('forward' if to > fr else 'backward')
         lines.append(f'  {stage_names[fr]:<20} → {stage_names[to]:<20} {cnt:>4}x  [{direction}]')
     lines.append('')
 
-    # Example quotes for top non-self transitions — one per (cohort, session)
+    # Example quotes for all non-self transitions — one per (cohort, session), max 5 per pair
     non_self = [(cnt, fr, to) for cnt, fr, to in pairs if fr != to]
     if non_self:
         lines.append('Exemplar quotes by cohort and session (within-session transitions):')
-        for cnt, fr, to in non_self[:5]:
+        for cnt, fr, to in non_self:
             examples = _find_transition_examples_by_cohort_session(df, fr, to)
             if not examples:
                 continue
@@ -259,7 +259,24 @@ def generate_transition_explanation(
             lines.append(
                 f'\n  ── {stage_names[fr]} → {stage_names[to]}  ({cnt}x, [{direction}]) ──'
             )
-            for ex in examples:
+            for ex in examples[:5]:
+                _show_cue = (
+                    therapist_cue_config is not None
+                    and getattr(therapist_cue_config, 'enabled', False)
+                )
+                # Collect cue first to determine if we should skip this example
+                _cue_raw = None
+                if _show_cue:
+                    _cue_raw = _collect_therapist_cue(
+                        df_all if df_all is not None else df,
+                        ex['session_id'],
+                        ex.get('from_end_ms', 0),
+                        ex.get('to_start_ms', 0),
+                    )
+                    # Skip examples with no cue when cue collection is enabled
+                    if not _cue_raw:
+                        continue
+                
                 lines.append(
                     f'  [{ex["participant_id"]}  {ex["session_id"]}  '
                     f'seg{ex["from_seg_idx"]:04d}→seg{ex["to_seg_idx"]:04d}]'
@@ -268,30 +285,17 @@ def generate_transition_explanation(
                     f'    FROM: [{stage_names[fr]}={ex["from_conf"]:.2f}] '
                     + _wrap_quote(ex['from_text'].strip(), indent=12).lstrip()
                 )
-                _show_cue = (
-                    therapist_cue_config is not None
-                    and getattr(therapist_cue_config, 'enabled', False)
-                )
-                if _show_cue:
-                    _cue_raw = _collect_therapist_cue(
-                        df_all if df_all is not None else df,
-                        ex['session_id'],
-                        ex.get('from_end_ms', 0),
-                        ex.get('to_start_ms', 0),
+                if _show_cue and _cue_raw:
+                    _cue_text, _was_summarized = _summarize_cue(
+                        _cue_raw, llm_client,
+                        therapist_cue_config.max_length_per_cue,
                     )
-                    if not _cue_raw:
-                        lines.append('     CUE: [none]')
-                    else:
-                        _cue_text, _was_summarized = _summarize_cue(
-                            _cue_raw, llm_client,
-                            therapist_cue_config.max_length_per_cue,
-                        )
-                        _cue_words = len(_cue_text.split())
-                        _marker = ', summarized' if _was_summarized else ''
-                        lines.append(
-                            f'     CUE: [therapist, {_cue_words} words{_marker}] '
-                            + _wrap_quote(_cue_text.strip(), indent=12).lstrip()
-                        )
+                    _cue_words = len(_cue_text.split())
+                    _marker = ', summarized' if _was_summarized else ''
+                    lines.append(
+                        f'     CUE: [therapist, {_cue_words} words{_marker}] '
+                        + _wrap_quote(_cue_text.strip(), indent=12).lstrip()
+                    )
                 lines.append(
                     f'      TO: [{stage_names[to]}={ex["to_conf"]:.2f}] '
                     + _wrap_quote(ex['to_text'].strip(), indent=12).lstrip()
@@ -317,17 +321,17 @@ def generate_transition_explanation(
                 cross_pairs.append((cnt, fr, to))
     cross_pairs.sort(reverse=True)
 
-    lines.append('Most common between-session transitions:')
-    for cnt, fr, to in cross_pairs[:8]:
+    lines.append('All between-session transitions:')
+    for cnt, fr, to in cross_pairs:
         direction = 'stay' if fr == to else ('advance' if to > fr else 'regress')
         lines.append(f'  {stage_names[fr]:<20} → {stage_names[to]:<20} {cnt:>4}x  [{direction}]')
     lines.append('')
 
-    # Exemplar quotes for top between-session transitions — one per (cohort, from_session)
+    # Exemplar quotes for all between-session transitions — one per (cohort, from_session), max 5 per pair
     non_self_cross = [(cnt, fr, to) for cnt, fr, to in cross_pairs if fr != to]
     if non_self_cross:
         lines.append('Exemplar quotes by cohort and session (between-session transitions):')
-        for cnt, fr, to in non_self_cross[:5]:
+        for cnt, fr, to in non_self_cross:
             examples = _find_cross_transition_examples_by_cohort_session(
                 df, fr, to, participant_sequences
             )
@@ -337,7 +341,7 @@ def generate_transition_explanation(
             lines.append(
                 f'\n  ── {stage_names[fr]} → {stage_names[to]}  ({cnt}x, [{direction}]) ──'
             )
-            for ex in examples:
+            for ex in examples[:5]:
                 gap = ex.get('session_gap', 0)
                 if gap > 0:
                     skipped = list(range(ex['from_snum'] + 1, ex['to_snum']))
@@ -376,7 +380,7 @@ def generate_transition_explanation(
 
     content = '\n'.join(lines)
     os.makedirs(_paths.human_reports_dir(output_dir), exist_ok=True)
-    path = os.path.join(_paths.human_reports_dir(output_dir), 'state_transition_explanation.txt')
+    path = os.path.join(_paths.human_reports_dir(output_dir), 'stage_transitions.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(content)
     return path
@@ -403,7 +407,7 @@ def generate_therapist_cues_report(
 
     # Collect (from_text, cue_text, to_text) per (from_stage, to_stage)
     transitions: dict = defaultdict(list)
-    total = total_forward = total_backward = total_lateral = 0
+    total = total_forward = total_backward = 0
     has_times = 'end_time_ms' in df.columns and 'start_time_ms' in df.columns
 
     for (pid, sid), group in df.groupby(['participant_id', 'session_id']):
@@ -425,6 +429,8 @@ def generate_therapist_cues_report(
 
         for i in range(len(labels) - 1):
             fr, to = labels[i], labels[i + 1]
+            if fr == to:
+                continue
             cue = _collect_therapist_cue(_cue_df, sid, end_times[i], start_times[i + 1])
             transitions[(fr, to)].append((
                 str(texts[i]).strip(),
@@ -436,8 +442,6 @@ def generate_therapist_cues_report(
                 total_forward += 1
             elif to < fr:
                 total_backward += 1
-            else:
-                total_lateral += 1
 
     sorted_pairs = sorted(transitions.items(), key=lambda x: -len(x[1]))
 
@@ -446,10 +450,9 @@ def generate_therapist_cues_report(
     lines.append('=' * 60)
     lines.append(f'Generated: {date.today().isoformat()}')
     lines.append('')
-    lines.append(f'Total within-session transitions: {total}')
+    lines.append(f'Total within-session transitions (excluding self-transitions): {total}')
     lines.append(f'  Forward:  {total_forward}')
     lines.append(f'  Backward: {total_backward}')
-    lines.append(f'  Lateral:  {total_lateral}')
     lines.append('')
     lines.append(
         'For each transition type the "average" blocks show a representative\n'
@@ -471,36 +474,35 @@ def generate_therapist_cues_report(
             )
             lines.append('')
 
-            # average FROM
-            from_texts = [e[0] for e in entries if e[0]]
-            if from_texts:
+            # average CUE (skip empty-cue entries)
+            cue_entries = [e for e in entries if e[1]]
+            cue_texts = [e[1] for e in cue_entries]
+            if cue_texts:
+                # Only summarize transitions that have a therapist cue.
+                from_texts = [e[0] for e in cue_entries if e[0]]
+                to_texts = [e[2] for e in cue_entries if e[2]]
+
                 agg_from = ' || '.join(from_texts)
                 agg_from, _ = _summarize_participant_text(agg_from, llm_client, max_agg)
                 lines.append(f'  average FROM [{fr_name}]:')
                 lines.append(_wrap_quote(agg_from, indent=4))
                 lines.append('')
 
-            # average CUE (skip empty-cue entries)
-            cue_texts = [e[1] for e in entries if e[1]]
-            if cue_texts:
                 agg_cue = ' || '.join(cue_texts)
                 agg_cue, _ = _summarize_cue(agg_cue, llm_client, max_agg)
                 lines.append('  average CUE:')
                 lines.append(_wrap_quote(agg_cue, indent=4))
                 lines.append('')
-            else:
-                lines.append(
-                    '  average CUE: [none — all transitions had no therapist speech between segments]'
-                )
-                lines.append('')
 
-            # average TO
-            to_texts = [e[2] for e in entries if e[2]]
-            if to_texts:
                 agg_to = ' || '.join(to_texts)
                 agg_to, _ = _summarize_participant_text(agg_to, llm_client, max_agg)
                 lines.append(f'  average TO [{to_name}]:')
                 lines.append(_wrap_quote(agg_to, indent=4))
+                lines.append('')
+            else:
+                lines.append(
+                    '  average CUE: [none — all transitions had no therapist speech between segments]'
+                )
                 lines.append('')
 
             lines.append('')

@@ -39,7 +39,7 @@ class LLMClientConfig:
     models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
     temperature: float = 0.0
     max_new_tokens: int = 512  # Used by Replicate and HuggingFace only
-    timeout: int = 1200
+    timeout: int = 1800
     max_retries: int = 3
     retry_base_delay: float = 2.0
     ollama_host: str = '0.0.0.0'

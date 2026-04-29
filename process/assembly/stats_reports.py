@@ -78,6 +78,17 @@ def export_per_transcript_stats(
                     for _, row in top.iterrows()
                 ]
 
+        # Dual-code co-occurrence: primary → secondary → count
+        dual_cooccurrence: dict = {}
+        if 'primary_stage' in sdf.columns and 'secondary_stage' in sdf.columns:
+            dual = sdf[sdf['secondary_stage'].notna() & sdf['primary_stage'].notna()]
+            for _, row in dual.iterrows():
+                p_name = id_to_name.get(int(row['primary_stage']), str(int(row['primary_stage'])))
+                s_name = id_to_name.get(int(row['secondary_stage']), str(int(row['secondary_stage'])))
+                dual_cooccurrence.setdefault(p_name, {})[s_name] = (
+                    dual_cooccurrence.get(p_name, {}).get(s_name, 0) + 1
+                )
+
         report = {
             'session_id': str(session_id),
             'generated': _dt.datetime.utcnow().strftime('%Y-%m-%d'),
@@ -85,6 +96,7 @@ def export_per_transcript_stats(
             'duration_ms': duration_ms,
             'theme_distribution': theme_dist,
             'theme_scores': theme_scores,
+            'dual_code_cooccurrence': dual_cooccurrence,
             'code_frequencies': code_freq,
             'confidence_tiers': {str(k): int(v) for k, v in tier_counts.items()},
             'exemplar_segments_by_theme': exemplars,

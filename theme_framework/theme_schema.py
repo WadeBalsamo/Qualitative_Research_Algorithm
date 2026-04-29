@@ -95,28 +95,51 @@ class ThemeFramework:
             ],
         }
 
-    def to_prompt_string(self, randomize: bool = False) -> str:
+    def to_prompt_string(
+        self,
+        randomize: bool = False,
+        zero_shot: bool = False,
+        n_exemplars: Optional[int] = None,
+        include_subtle: bool = True,
+        n_subtle: Optional[int] = None,
+        include_adversarial: bool = True,
+        n_adversarial: Optional[int] = None,
+    ) -> str:
         """
         Format themes for LLM prompting.
 
-        Each theme is rendered with its definition, prototypical features,
-        key distinction, and exemplar utterances.
+        When zero_shot=True: definition, features, and key distinction only — no examples.
+        When zero_shot=False (default): all exemplar types included. None counts = all available.
         """
         themes = list(self.themes)
         if randomize:
-            themes = list(themes)
             random.shuffle(themes)
 
         parts = []
         for t in themes:
             features = '; '.join(t.prototypical_features)
-            exemplars = ' | '.join(t.exemplar_utterances[:3])
             block = (
                 f"{t.prompt_name.capitalize()}: {t.definition} "
                 f"Prototypical features: {features}. "
-                f"Key distinction: {t.distinguishing_criteria}. "
-                f"Examples: {exemplars}"
+                f"Key distinction: {t.distinguishing_criteria}."
             ).replace('\n', ' ').replace('  ', ' ')
+
+            if not zero_shot:
+                ex = (t.exemplar_utterances if n_exemplars is None
+                      else t.exemplar_utterances[:n_exemplars])
+                if ex:
+                    block += f" Examples: {' | '.join(ex)}"
+                if include_subtle and t.subtle_utterances:
+                    sub = (t.subtle_utterances if n_subtle is None
+                           else t.subtle_utterances[:n_subtle])
+                    if sub:
+                        block += f" Edge cases: {' | '.join(sub)}"
+                if include_adversarial and t.adversarial_utterances:
+                    adv = (t.adversarial_utterances if n_adversarial is None
+                           else t.adversarial_utterances[:n_adversarial])
+                    if adv:
+                        block += f" Watch-outs (boundary cases): {' | '.join(adv)}"
+
             parts.append(block)
 
         return '\n\n'.join(parts)
