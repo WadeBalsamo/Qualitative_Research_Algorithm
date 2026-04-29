@@ -34,7 +34,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     from .loader import load_segments, load_framework, sort_session_ids
     from .participant import generate_all_participant_reports
     from .session import generate_all_session_analyses
-    from .construct import generate_all_construct_reports, generate_codebook_text_report
+    from .theme import generate_all_theme_reports, generate_codebook_text_report
     from .figure_data import export_all_graphing_datasets
     from .longitudinal import generate_longitudinal_summary
     from .stage_progression import compute_session_stage_progression
@@ -140,7 +140,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     for _d in (
         _paths.sessions_json_dir(output_dir),
         _paths.participants_json_dir(output_dir),
-        _paths.constructs_dir(output_dir),
+        _paths.themes_dir(output_dir),
         _paths.graphing_dir(output_dir),
         _paths.figures_dir(output_dir),
         _paths.longitudinal_dir(output_dir),
@@ -191,19 +191,19 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     # 4. Per-construct reports
     # ----------------------------------------------------------------
     n_stages = len(framework)
-    log(f"[4/8] Generating per-construct reports ({n_stages} stages + codebook codes)...")
+    log(f"[4/8] Generating per-theme reports ({n_stages} stages + codebook codes)...")
     stage_reports = []
     try:
-        stage_reports = generate_all_construct_reports(df, framework, output_dir) or []
+        stage_reports = generate_all_theme_reports(df, framework, output_dir) or []
         # Collect written files
-        _cjdir = _paths.constructs_json_dir(output_dir)
+        _cjdir = _paths.themes_json_dir(output_dir)
         if os.path.isdir(_cjdir):
             for fname in os.listdir(_cjdir):
                 if fname.endswith('.json'):
                     files_generated.append(os.path.join(_cjdir, fname))
-        log(f"    Construct reports written to 02_human_reports/per_construct/.")
+        log(f"    Theme reports written to 02_human_reports/per_theme/.")
     except Exception as e:
-        print(f"  Warning: construct reports failed: {e}")
+        print(f"  Warning: theme reports failed: {e}")
         if verbose:
             traceback.print_exc()
 
@@ -211,7 +211,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
         ref_path = generate_codebook_text_report(df, framework, output_dir)
         if ref_path:
             files_generated.append(ref_path)
-            log("    Codebook exemplars: 02_human_reports/per_construct/codebook_exemplars.txt")
+            log("    Codebook exemplars: 02_human_reports/per_theme/codebook_exemplars.txt")
     except Exception as e:
         print(f"  Warning: codebook exemplars report failed: {e}")
         if verbose:

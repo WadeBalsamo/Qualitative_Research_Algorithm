@@ -68,6 +68,8 @@ class Segment:
     needs_review: bool = False
     consensus_vote: Optional[object] = None
     tie_broken_by_confidence: bool = False
+    secondary_agreement_level: Optional[str] = None       # 'unanimous'|'majority'|'partial'|'split'|None
+    secondary_agreement_fraction: Optional[float] = None  # n_agreeing_with_secondary / n_agreeing
 
     # Codebook label fields (populated by codebook_classifier)
     codebook_labels_embedding: Optional[List[str]] = None

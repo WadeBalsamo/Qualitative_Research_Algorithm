@@ -27,7 +27,7 @@ agreement (3 stochastic runs of one model) and per-model agreement
 so the returned ``agreement_profile`` can be rendered in reports.
 """
 
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 ABSTAIN = 'ABSTAIN'   # Sentinel stage value for "irrelevant to study"
@@ -55,9 +55,60 @@ def _vote_value(run: Optional[Dict]) -> Any:
     return run.get('primary_stage')
 
 
+def _evidence_secondary(
+    ballots: List[Tuple[str, Any, Optional[float], Dict]],
+    winner: Any,
+    secondary_weight: float,
+    presence_threshold: float,
+) -> Tuple[Optional[int], Optional[float]]:
+    """
+    Evidence-pooled secondary stage from all rater ballots.
+
+    For each non-winner stage, sums contributions from:
+      - Any rater's secondary vote for that stage (secondary_conf * weight)
+      - Any dissenting rater's primary vote for that stage (primary_conf * weight)
+
+    Returns (secondary_stage_id, mean_confidence) or (None, None) if no
+    stage clears presence_threshold.
+    """
+    stage_evidence: Dict[Any, float] = defaultdict(float)
+    stage_conf_sum: Dict[Any, float] = defaultdict(float)
+    stage_conf_n: Dict[Any, int] = defaultdict(int)
+
+    for _, val, conf, run in ballots:
+        if val == ABSTAIN:
+            continue
+        primary_conf = conf or 0.0
+        secondary_s = run.get('secondary_stage')
+        secondary_c = run.get('secondary_confidence') or 0.0
+
+        if val != winner and isinstance(val, int):
+            stage_evidence[val] += primary_conf * secondary_weight
+            stage_conf_sum[val] += primary_conf
+            stage_conf_n[val] += 1
+
+        if secondary_s is not None and secondary_s != winner and isinstance(secondary_s, int):
+            stage_evidence[secondary_s] += secondary_c * secondary_weight
+            stage_conf_sum[secondary_s] += secondary_c
+            stage_conf_n[secondary_s] += 1
+
+    if not stage_evidence:
+        return None, None
+
+    best_stage, best_evidence = max(stage_evidence.items(), key=lambda x: x[1])
+    if best_evidence < presence_threshold:
+        return None, None
+
+    n = stage_conf_n[best_stage]
+    s_conf = stage_conf_sum[best_stage] / n if n > 0 else None
+    return best_stage, s_conf
+
+
 def vote_single_label(
     parsed_runs: List[Optional[Dict]],
     rater_ids: Optional[List[str]] = None,
+    secondary_weight: float = 0.6,
+    presence_threshold: float = 0.5,
 ) -> Dict[str, Any]:
     """
     Aggregate N raters' single-label ballots into one consensus result.
@@ -153,6 +204,8 @@ def vote_single_label(
             'primary_confidence': 0.0,
             'secondary_stage': None,
             'secondary_confidence': None,
+            'secondary_agreement_level': None,
+            'secondary_agreement_fraction': None,
             'justification': '',
             'consensus_vote': None,
             'agreement_level': AGREEMENT_NONE,
@@ -207,6 +260,14 @@ def vote_single_label(
     justification = ''
     secondary_stage: Optional[int] = None
     secondary_confidence: Optional[float] = None
+    secondary_agreement_level: Optional[str] = None
+    secondary_agreement_fraction: Optional[float] = None
+
+    # Count raters (across all ballots) that assigned any secondary.
+    n_with_secondary = sum(
+        1 for _, _, _, run in ballots
+        if run.get('vote') == 'CODED' and run.get('secondary_stage') is not None
+    )
 
     if winner is not None:
         agreeing = [b for b in ballots if b[1] == winner]
@@ -218,28 +279,31 @@ def vote_single_label(
                 justification = j
                 break
 
-        # Secondary: most common non-null secondary among agreeing raters.
-        sec_vals = [run.get('secondary_stage') for _, _, _, run in agreeing
-                    if run.get('secondary_stage') is not None]
-        if sec_vals:
-            sec_counts = Counter(sec_vals)
-            top_sec_count = sec_counts.most_common(1)[0][1]
-            # If multiple secondaries tied, pick the one with higher mean conf.
-            sec_candidates = [s for s, c in sec_counts.items() if c == top_sec_count]
-            if len(sec_candidates) > 1:
-                def sec_avg_conf(s):
-                    cs = [run.get('secondary_confidence') or 0.0
-                          for _, _, _, run in agreeing
-                          if run.get('secondary_stage') == s]
-                    return sum(cs) / len(cs) if cs else 0.0
-                secondary_stage = max(sec_candidates, key=sec_avg_conf)
+        # Secondary: evidence pooling across ALL raters (agreeing + dissenting).
+        if winner != ABSTAIN:
+            secondary_stage, secondary_confidence = _evidence_secondary(
+                ballots, winner, secondary_weight, presence_threshold
+            )
+
+        # Secondary agreement level: how many agreeing raters also assigned a secondary?
+        if n_with_secondary > 0:
+            n_agreeing_with_secondary = sum(
+                1 for _, _, _, run in agreeing
+                if run.get('secondary_stage') is not None
+            )
+            secondary_agreement_fraction = (
+                n_agreeing_with_secondary / len(agreeing) if agreeing else 0.0
+            )
+            if n_agreeing_with_secondary == len(agreeing):
+                secondary_agreement_level = 'unanimous'
+            elif n_agreeing_with_secondary > len(agreeing) / 2:
+                secondary_agreement_level = 'majority'
             else:
-                secondary_stage = sec_candidates[0]
-            sec_confs = [run.get('secondary_confidence') for _, _, _, run in agreeing
-                         if run.get('secondary_stage') == secondary_stage
-                         and run.get('secondary_confidence') is not None]
-            if sec_confs:
-                secondary_confidence = sum(sec_confs) / len(sec_confs)
+                secondary_agreement_level = 'partial'
+    elif n_with_secondary > 0:
+        # Split vote but some raters still assigned secondaries.
+        secondary_agreement_level = 'split'
+        secondary_agreement_fraction = n_with_secondary / n_ballots if n_ballots else 0.0
 
     # primary_stage in the returned dict is the int theme id, or None
     # when consensus is ABSTAIN or there is no majority. Downstream
@@ -259,6 +323,8 @@ def vote_single_label(
         'primary_confidence': primary_confidence,
         'secondary_stage': secondary_stage,
         'secondary_confidence': secondary_confidence,
+        'secondary_agreement_level': secondary_agreement_level,
+        'secondary_agreement_fraction': secondary_agreement_fraction,
         'justification': justification,
         'consensus_vote': consensus_vote,
         'agreement_level': agreement_level,

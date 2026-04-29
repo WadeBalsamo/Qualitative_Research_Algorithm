@@ -29,7 +29,7 @@ from classification_tools.llm_classifier import (
     LLMCodebookClassifier,
 )
 from classification_tools.response_parser import parse_all_results
-from constructs.theme_schema import ThemeFramework
+from theme_framework.theme_schema import ThemeFramework
 
 from .config import PipelineConfig
 from .transcript_ingestion import (
@@ -41,10 +41,12 @@ from .transcript_ingestion import (
 )
 from .llm_segmentation import LLMSegmentationRefiner
 from .process_logger import ProcessLogger
-from .dataset_assembly import (
+from .assembly import (
     assemble_master_dataset,
     export_theme_definitions,
     export_content_validity_test_set,
+    export_content_validity_human_worksheet,
+    export_content_validity_definition_key,
     export_coded_transcript,
     export_per_transcript_stats,
     export_cumulative_report,
@@ -365,11 +367,22 @@ def run_full_pipeline(
         content_validity_items,
         os.path.join(_cv_dir, 'content_validity_test_set.jsonl'),
     )
+    export_content_validity_human_worksheet(
+        content_validity_items,
+        framework,
+        output_dir,
+    )
+    export_content_validity_definition_key(
+        framework,
+        output_dir,
+    )
 
     observer.on_stage_complete(
         "Construct Operationalization",
         f"Built {len(content_validity_items)} content validity test items; "
-        "exported theme_definitions.json and content_validity_test_set.jsonl",
+        "exported content_validity_test_set.jsonl, "
+        "content_validity_human_worksheet.txt, "
+        "and content_validity_definition_key.txt",
     )
 
     # ------------------------------------------------------------------

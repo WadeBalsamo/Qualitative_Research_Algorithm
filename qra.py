@@ -60,7 +60,7 @@ def _add_common_args(parser: argparse.ArgumentParser):
     # Framework & codebook
     parser.add_argument(
         '--framework', default=None,
-        help='Theme framework: "vamr" (default) or path to custom JSON',
+        help='Theme framework: "vammr" (default) or path to custom JSON',
     )
     parser.add_argument(
         '--codebook', default=None,
@@ -125,14 +125,13 @@ def _add_common_args(parser: argparse.ArgumentParser):
 
 def _load_framework(framework_arg):
     """Load a ThemeFramework from preset name or JSON path."""
-    if framework_arg is None or framework_arg == 'vamr':
-        from constructs.vamr import get_vamr_framework
-        return get_vamr_framework()
-
+    if framework_arg is None or framework_arg == 'vammr':
+        from theme_framework.vammr import get_vammr_framework
+        return get_vammr_framework()
     # Custom JSON path
     with open(framework_arg) as f:
         fw_data = json.load(f)
-    from constructs.theme_schema import ThemeFramework, ThemeDefinition
+    from theme_framework.theme_schema import ThemeFramework, ThemeDefinition
     themes = []
     for t in fw_data.get('themes', []):
         themes.append(ThemeDefinition(
@@ -323,7 +322,7 @@ def cmd_setup(args):
     if _prompt_yes_no_simple("Run pipeline now?", True):
         config = build_config_from_wizard_data(result['config_data'])
         framework_spec = result['config_data'].get('framework', {})
-        framework = _load_framework(framework_spec.get('custom_path') or framework_spec.get('preset', 'vamr'))
+        framework = _load_framework(framework_spec.get('custom_path') or framework_spec.get('preset', 'vammr'))
 
         codebook = None
         if config.run_codebook_classifier:
@@ -343,7 +342,7 @@ def cmd_run(args):
         with open(args.config) as f:
             file_data = json.load(f)
         fw = file_data.get('framework', {})
-        framework_arg = fw.get('custom_path') or fw.get('preset', 'vamr')
+        framework_arg = fw.get('custom_path') or fw.get('preset', 'vammr')
     framework = _load_framework(framework_arg)
 
     # Load codebook
@@ -392,7 +391,7 @@ def cmd_analyze(args):
 def cmd_testsets(args):
     """Generate validation test set worksheets from existing pipeline output."""
     import glob
-    from process.dataset_assembly import export_validation_testsets
+    from process.assembly import export_validation_testsets
     from process import output_paths as _paths
 
     output_dir = args.output_dir
@@ -423,7 +422,7 @@ def cmd_testsets(args):
         with open(args.config) as f:
             fw_data = json.load(f)
         fw = fw_data.get('framework', {})
-        framework_arg = fw.get('custom_path') or fw.get('preset', 'vamr')
+        framework_arg = fw.get('custom_path') or fw.get('preset', 'vammr')
     framework = _load_framework(framework_arg)
 
     # Determine codebook status
@@ -739,7 +738,7 @@ Examples:
     )
     testsets_parser.add_argument(
         '--framework', default=None,
-        help='Theme framework: "vamr" (default) or path to custom JSON',
+        help='Theme framework: "vammr" (default) or path to custom JSON',
     )
     testsets_parser.add_argument(
         '--n-sets', type=int, default=2,

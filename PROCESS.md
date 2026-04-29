@@ -8,11 +8,11 @@ This document describes the complete logical flow of the QRA pipeline: how data 
 
 ## Overview
 
-QRA is a machine-assisted computational pipeline for analyzing psychotherapy session transcripts from mindfulness-based interventions. It operationalizes two complementary phenomenological frameworks—VA-MR (Vigilance–Avoidance–Metacognition–Reappraisal) and VCE (Varieties of Contemplative Experience)—into an automated classification system that can produce defensible qualitative analysis within days rather than weeks.
+QRA is a machine-assisted computational pipeline for analyzing psychotherapy session transcripts from mindfulness-based interventions. It operationalizes two complementary phenomenological frameworks—VAMMR (Vigilance–Avoidance–Mindfulness–Metacognition–Reappraisal) and VCE (Varieties of Contemplative Experience)—into an automated classification system that can produce defensible qualitative analysis within days rather than weeks.
 
 The pipeline has two philosophically distinct purposes running simultaneously:
 
-1. **Classification**: Assign every participant utterance in every transcript a VA-MR stage label (and optionally a set of VCE phenomenology codes). This produces a coded dataset suitable for statistical analysis.
+1. **Classification**: Assign every participant utterance in every transcript a VAMMR stage label (and optionally a set of VCE phenomenology codes). This produces a coded dataset suitable for statistical analysis.
 
 2. **Validation**: Generate the artifacts a human researcher needs to audit, verify, and calibrate the machine-assigned labels—blind-coding worksheets, interrater reliability metrics, cross-framework lift statistics, and flagged items.
 
@@ -64,7 +64,7 @@ Subtitle-format files with speaker-prefixed caption blocks. The filename stem is
 
 **What it does:** Converts the raw sentence stream from each transcript into a list of semantically coherent *segments*—multi-sentence units of meaning that become the atomic unit of classification throughout the rest of the pipeline.
 
-**Why segmentation is necessary:** Individual sentences from an ASR transcript are too short and fragmentary to classify reliably. A single VA-MR stage is typically expressed over several sentences. Grouping sentences into coherent chunks gives the LLM enough context to make a defensible classification and gives the human coder enough text to verify it.
+**Why segmentation is necessary:** Individual sentences from an ASR transcript are too short and fragmentary to classify reliably. A single VAMMR stage is typically expressed over several sentences. Grouping sentences into coherent chunks gives the LLM enough context to make a defensible classification and gives the human coder enough text to verify it.
 
 **The segmentation algorithm** (`process/transcript_ingestion.py`, class `ConversationalSegmenter`):
 
@@ -114,14 +114,15 @@ The speaker anonymization key (`07_meta/speaker_anonymization_key.json`) is writ
 
 **What it does:** Loads the framework definitions and generates the *content validity test set*—a curated set of items that can be used to evaluate whether the classifier covers the intended construct space before and after any refinements.
 
-**The VA-MR framework** (`constructs/vamr.py`) defines four stages as `ThemeDefinition` objects:
+**The VAMMR framework** (`theme_framework/vammr.py`) defines five stages as `ThemeDefinition` objects:
 
 | ID | Key | Name |
 |----|-----|------|
 | 0 | `vigilance` | Pain Vigilance and Attention Dysregulation |
 | 1 | `avoidance` | Attention Regulation applied to Experiential Avoidance |
-| 2 | `metacognition` | Metacognitive Awareness and Observing Stance |
-| 3 | `reappraisal` | Experiential Reappraisal and Sensory Deconstruction |
+| 2 | `mindfulness` | Mindful Attention and Sustained Somatic Presence |
+| 3 | `metacognition` | Metacognitive Awareness and Observing Stance |
+| 4 | `reappraisal` | Experiential Reappraisal and Sensory Deconstruction |
 
 Each `ThemeDefinition` contains:
 - `definition`: a full phenomenological description
@@ -141,13 +142,13 @@ Each `ThemeDefinition` contains:
 
 ### Stage 3: Zero-Shot LLM Theme Classification
 
-**What it does:** For every participant segment, asks an LLM to classify it into one of the four VA-MR stages. Multiple independent classification passes are run and then aggregated into a consensus label with an interrater reliability score.
+**What it does:** For every participant segment, asks an LLM to classify it into one of the five VAMMR stages. Multiple independent classification passes are run and then aggregated into a consensus label with an interrater reliability score.
 
 #### 3A. Prompt construction
 
 For each segment, a prompt is assembled from:
 
-1. **Framework description.** The name and full definition of each of the four stages, plus their exemplar utterances. This is the "codebook" provided to the LLM as a zero-shot classifier.
+1. **Framework description.** The name and full definition of each of the five stages, plus their exemplar utterances. This is the "codebook" provided to the LLM as a zero-shot classifier.
 
 2. **Context preamble (optional).** The 2–3 sentences immediately preceding the segment in the transcript, drawn from both participant and therapist turns. This is capped at 300 words to avoid bloating the prompt. Context is crucial for disambiguation: an utterance like "Yes, I can feel that separation" means completely different things depending on what the therapist just said.
 
@@ -163,9 +164,9 @@ For each segment, a prompt is assembled from:
      "justification": "<brief explanation>"
    }
    ```
-   A `null` `primary_stage` is a valid response—it means the LLM judges the utterance to be irrelevant to the VA-MR framework (e.g., logistical small talk). This becomes an ABSTAIN ballot.
+   A `null` `primary_stage` is a valid response—it means the LLM judges the utterance to be irrelevant to the VAMMR framework (e.g., logistical small talk). This becomes an ABSTAIN ballot.
 
-5. **Theme order randomization.** If temperature > 0, the order in which the four stage definitions appear in the prompt is randomized between runs. This prevents the LLM from defaulting to the first or last option and reduces systematic position bias.
+5. **Theme order randomization.** If temperature > 0, the order in which the five stage definitions appear in the prompt is randomized between runs. This prevents the LLM from defaulting to the first or last option and reduces systematic position bias.
 
 #### 3B. Multi-run / multi-model classification
 
@@ -197,7 +198,7 @@ Each run produces a *ballot*: a parsed JSON response with `vote` = `CODED`, `ABS
 6. **Needs review.** Any segment with a `split` or `none` agreement level is marked `needs_review = True`. These are automatically included in the human review worksheet.
 
 **Fields populated on each `Segment` object after Stage 3:**
-- `primary_stage` (int 0–3, or None if ABSTAIN/split)
+- `primary_stage` (int 0–4, or None if ABSTAIN/split)
 - `secondary_stage` (int or None)
 - `llm_confidence_primary` (float, mean confidence of agreeing raters)
 - `llm_confidence_secondary` (float or None)
@@ -215,7 +216,7 @@ Each run produces a *ballot*: a parsed JSON response with `vote` = `CODED`, `ABS
 
 ### Stage 3b: Codebook Classification (Optional)
 
-**What it does:** Applies the 59-code VCE phenomenology codebook to each participant segment using a *two-method ensemble*: embedding similarity and LLM classification. The VCE codes describe specific phenomenological experiences (e.g., "Meta-Cognition," "Boundary Changes," "Pain") that can co-occur within a single segment. Unlike the VA-MR stage classification (which assigns one primary label), this is **multi-label** classification.
+**What it does:** Applies the 59-code VCE phenomenology codebook to each participant segment using a *two-method ensemble*: embedding similarity and LLM classification. The VCE codes describe specific phenomenological experiences (e.g., "Meta-Cognition," "Boundary Changes," "Pain") that can co-occur within a single segment. Unlike the VAMMR stage classification (which assigns one primary label), this is **multi-label** classification.
 
 #### The VCE Codebook
 
@@ -286,20 +287,20 @@ For multi-label voting, a code is included in the consensus only if a **strict m
 
 ### Stage 4: Cross-Validation (Theme ↔ Codebook)
 
-**What it does:** Tests whether the VA-MR stages and VCE codes are empirically consistent—i.e., whether the phenomenological phenomena described by each VA-MR stage actually tend to co-occur with the VCE codes that theory predicts they should.
+**What it does:** Tests whether the VAMMR stages and VCE codes are empirically consistent—i.e., whether the phenomenological phenomena described by each VAMMR stage actually tend to co-occur with the VCE codes that theory predicts they should.
 
 **This is the computational mutual constraints check.** If the two frameworks are independently tracking the same underlying phenomenological reality, their outputs should correlate in theoretically predictable ways. If they don't, it may indicate prompt engineering artifacts, construct underspecification, or genuine theoretical misalignment.
 
 **Computation** (`process/cross_validation.py`):
 
-1. **Filter** to segments that have both a VA-MR label and at least one VCE code.
+1. **Filter** to segments that have both a VAMMR label and at least one VCE code.
 
 2. **Base rates.** For each VCE code, compute its overall frequency across all dually-labeled segments:
    ```
    base_rate(code) = count(code) / total_segments
    ```
 
-3. **Theme-specific rates.** For each VA-MR stage, compute how often each code appears within that stage's segments:
+3. **Theme-specific rates.** For each VAMMR stage, compute how often each code appears within that stage's segments:
    ```
    rate(code | theme) = count(code in theme) / count(theme)
    ```
@@ -315,6 +316,7 @@ For multi-label voting, a code is included in the consensus only if a **strict m
 **Theoretical predictions being tested:**
 - Vigilance → high lift for Fear, Anxiety, Pain, Agitation
 - Avoidance → high lift for Affective Flattening, Emotional Detachment
+- Mindfulness → high lift for Attention, Change in Duration of Experience, Somatic Relaxation or Calming
 - Metacognition → high lift for Meta-Cognition, Clarity, Narrative Self Changes
 - Reappraisal → high lift for Positive Affect, Worldview Changes, Self-Other Boundaries
 
@@ -330,7 +332,7 @@ For multi-label voting, a code is included in the consensus only if a **strict m
 
 **Balanced evaluation set** (`classification_tools/validation.py`, `create_balanced_evaluation_set()`):
 - Only participant segments with a primary label are eligible
-- Equal numbers are sampled from each VA-MR stage (stratified)
+- Equal numbers are sampled from each VAMMR stage (stratified)
 - Cross-session sampling: the set avoids taking two segments from the same session (distributes the coding burden evenly across the corpus)
 - Default size: `n_per_class` items per stage
 
@@ -383,7 +385,7 @@ total_segments_in_session — segment count for this session
 speaker                 — 'participant' or 'therapist'
 text                    — full segment text
 word_count              — word count
-primary_stage           — VA-MR stage (0–3) or null
+primary_stage           — VAMMR stage (0–4) or null
 secondary_stage         — runner-up stage or null
 llm_confidence_primary  — mean confidence of agreeing raters (0.0–1.0)
 llm_confidence_secondary — secondary stage confidence or null
@@ -427,7 +429,7 @@ label_confidence_tier   — 'high' | 'medium' | 'low'
 *Session header:*
 - Session ID, participant IDs, trial, duration, total segment count
 - Rater roster (identifiers for each LLM used)
-- Theme distribution table: for each VA-MR stage, count of segments assigned to it, percentage of classified segments, and mean confidence score
+- Theme distribution table: for each VAMMR stage, count of segments assigned to it, percentage of classified segments, and mean confidence score
 - Codebook distribution table (if VCE enabled): for each code, total applications and mean confidence
 - Interrater reliability summary: percent agreement (unanimous), percent agreement (pairwise), Fleiss' kappa, Krippendorff's alpha, count of flagged segments
 
@@ -465,7 +467,7 @@ label_confidence_tier   — 'high' | 'medium' | 'low'
 - `human_classification_testset_worksheet_N.txt`: Blind-coding worksheet (no AI labels)
 - `AI_classification_testset_worksheet_N.txt`: Same segments with AI labels shown (for side-by-side comparison)
 
-**How generated:** A stratified random sample of `fraction_per_set` (default 10%) of participant segments, balanced across VA-MR stages. Multiple independent sets can be generated. These are used for formal reliability studies where a second researcher codes independently and then the two codings are compared against each other and against the AI.
+**How generated:** A stratified random sample of `fraction_per_set` (default 10%) of participant segments, balanced across VAMMR stages. Multiple independent sets can be generated. These are used for formal reliability studies where a second researcher codes independently and then the two codings are compared against each other and against the AI.
 
 #### 7e. Per-Transcript Statistics (`04_analysis_data/session_stats/`)
 
@@ -498,7 +500,7 @@ label_confidence_tier   — 'high' | 'medium' | 'low'
 
 **File:** `theme_classification.jsonl`
 
-**What it is:** A supervised training dataset for fine-tuning a text classifier on the VA-MR task. Only includes segments with `label_confidence_tier` of `high` or `medium` (low-confidence labels are excluded). Format: `{"text": "...", "label": 2, "label_name": "Metacognition"}`.
+**What it is:** A supervised training dataset for fine-tuning a text classifier on the VAMMR task. Only includes segments with `label_confidence_tier` of `high` or `medium` (low-confidence labels are excluded). Format: `{"text": "...", "label": 3, "label_name": "Metacognition"}`.
 
 **File:** `codebook_multilabel.jsonl`
 
@@ -519,7 +521,7 @@ Mapping from real speaker names to anonymized IDs and roles:
 ```
 
 **File:** `theme_definitions.json`
-The full VA-MR framework as JSON. Used by `qra analyze` to reconstruct the framework object without the Python source.
+The full VAMMR framework as JSON. Used by `qra analyze` to reconstruct the framework object without the Python source.
 
 **File:** `codebook_definitions.json`
 The full VCE codebook as JSON (if codebook classification was run).
@@ -559,11 +561,11 @@ Longitudinal trajectory for one participant across all their sessions:
 - Stage progression trend (is the participant moving toward more advanced stages?)
 - Codebook code frequency evolution across sessions
 
-#### 8c. Per-Construct Reports (`02_human_reports/per_construct/`)
+#### 8c. Per-Theme Reports (`02_human_reports/per_theme/`)
 
-**File:** `construct_{stage_key}.json`
+**File:** `theme_{stage_key}.json`
 
-For each VA-MR stage:
+For each VAMMR stage:
 - All segments across the full corpus that were assigned this stage, sorted by confidence
 - The top 10 most characteristic segments (highest confidence)
 - The most common codebook co-occurrences
@@ -597,7 +599,7 @@ One row per classified segment. Columns: `session_id`, `participant_id`, `sessio
 
 **File:** `codebook_cooccurrence_matrix.csv`
 
-One row per VA-MR stage × VCE code. Columns: `stage_name`, `code_id`, `count`, `rate`, `base_rate`, `lift`.
+One row per VAMMR stage × VCE code. Columns: `stage_name`, `code_id`, `count`, `rate`, `base_rate`, `lift`.
 
 **Use:** Heatmaps of the cross-framework cooccurrence pattern.
 
@@ -613,13 +615,13 @@ A cohort-level summary aggregated across all participants and all sessions:
 
 #### 8f. Session Stage Progression (`04_analysis_data/session_stage_progression.csv`)
 
-**What it is:** A transition matrix capturing how VA-MR stage labels flow within and between sessions.
+**What it is:** A transition matrix capturing how VAMMR stage labels flow within and between sessions.
 
-**How derived:** For each pair of consecutive classified participant segments within a session, the transition is recorded: what stage came before, what stage came after. The output is a count and rate matrix (4×4 for VA-MR) plus:
-- `forward_transitions`: percentage of transitions that move to a higher-numbered stage (Vigilance→Avoidance, Avoidance→Metacognition, Metacognition→Reappraisal)
+**How derived:** For each pair of consecutive classified participant segments within a session, the transition is recorded: what stage came before, what stage came after. The output is a count and rate matrix (5×5 for VAMMR) plus:
+- `forward_transitions`: percentage of transitions that move to a higher-numbered stage (Vigilance→Avoidance, Avoidance→Mindfulness, Mindfulness→Metacognition, Metacognition→Reappraisal)
 - `backward_transitions`: percentage moving to a lower stage
 - `lateral_transitions`: percentage staying at the same stage
-- `adjacency_index`: mean absolute difference between consecutive stages (0 = all same, 3 = maximum jumps)
+- `adjacency_index`: mean absolute difference between consecutive stages (0 = all same, 4 = maximum jumps)
 
 #### 8g. Figures (`03_figures/`)
 
@@ -637,15 +639,15 @@ A comprehensive session-by-session narrative report. For each session: stage dis
 
 **File:** `stage_report_{stage_key}.txt`
 
-For each VA-MR stage: all exemplar quotes from across the corpus, organized by session and participant, with confidence scores. The primary reference document for construct validity review.
+For each VAMMR stage: all exemplar quotes from across the corpus, organized by session and participant, with confidence scores. The primary reference document for construct validity review.
 
 **File:** `transition_explanation.txt`
 
-A narrative account of every notable stage transition in the corpus. For each transition where the participant moved from one VA-MR stage to another, the therapist's intervening dialogue is surfaced. This answers: *what was the therapist saying in the moments before the participant shifted to Metacognition?* If the therapist cue is long (above a configurable token threshold), an LLM summarizes it. The resulting document is the primary artifact for analyzing therapist technique.
+A narrative account of every notable stage transition in the corpus. For each transition where the participant moved from one VAMMR stage to another, the therapist's intervening dialogue is surfaced. This answers: *what was the therapist saying in the moments before the participant shifted to Mindfulness or Metacognition?* If the therapist cue is long (above a configurable token threshold), an LLM summarizes it. The resulting document is the primary artifact for analyzing therapist technique.
 
 **File:** `therapist_cues_report.txt`
 
-A structured analysis of therapist cues organized by the participant stage transition they preceded. Groups cues by type (e.g., all cues preceding Vigilance→Metacognition transitions together) to surface patterns in therapeutic language that are associated with stage advancement.
+A structured analysis of therapist cues organized by the participant stage transition they preceded. Groups cues by type (e.g., all cues preceding Avoidance→Mindfulness transitions together) to surface patterns in therapeutic language that are associated with stage advancement.
 
 **File:** `longitudinal_report.txt`
 
@@ -670,8 +672,8 @@ A cohort-level narrative covering: mean stage distributions across all sessions,
 │   │   └── session_{session_id}.json        # Deep session analysis (see Stage 8a)
 │   ├── per_participant/
 │   │   └── participant_{pid}.json           # Longitudinal trajectory (see Stage 8b)
-│   ├── per_construct/
-│   │   ├── construct_{stage_key}.json       # Per-stage exemplar corpus (see Stage 8c)
+│   ├── per_theme/
+│   │   ├── theme_{stage_key}.json           # Per-stage exemplar corpus (see Stage 8c)
 │   │   └── codebook_exemplars.txt           # VCE code examples (see Stage 8c)
 │   ├── session_report.txt                   # Narrative session-by-session report (Stage 8h)
 │   ├── stage_report_{stage_key}.txt         # Per-stage exemplar text report (Stage 8h)
@@ -709,7 +711,7 @@ A cohort-level narrative covering: mean stage distributions across all sessions,
 ├── 06_training_data/
 │   ├── master_segments.jsonl               # Master dataset (Stage 6)
 │   ├── master_segments.csv                 # Same, CSV format
-│   ├── theme_classification.jsonl          # VA-MR training data (Stage 7g)
+│   ├── theme_classification.jsonl          # VAMMR training data (Stage 7g)
 │   └── codebook_multilabel.jsonl           # VCE multi-label training data (Stage 7g)
 │
 └── 07_meta/
@@ -729,8 +731,8 @@ A cohort-level narrative covering: mean stage distributions across all sessions,
 
 This section provides a direct reference for the specific numeric values that appear in reports and what computation produced them.
 
-### `primary_stage` (int 0–3)
-The VA-MR stage assigned by majority vote across all LLM runs. Value 0 = Vigilance, 1 = Avoidance, 2 = Metacognition, 3 = Reappraisal. Null if all raters abstained or voted in a split.
+### `primary_stage` (int 0–4)
+The VAMMR stage assigned by majority vote across all LLM runs. Value 0 = Vigilance, 1 = Avoidance, 2 = Mindfulness, 3 = Metacognition, 4 = Reappraisal. Null if all raters abstained or voted in a split.
 
 ### `llm_confidence_primary` (float 0–1)
 The **mean** confidence reported by the LLM raters who voted for the winning stage. If three raters were used and two voted for Metacognition with confidences 0.88 and 0.91, `llm_confidence_primary = (0.88 + 0.91) / 2 = 0.895`. Raters who voted for a different stage or abstained do not contribute to this average.
@@ -758,7 +760,7 @@ The ratio of observed code frequency within a theme to the code's base frequency
 The label used for all downstream analysis. Source priority: adjudicated > human consensus > LLM. At the start of a study (before any human coding), all final labels are `llm_zero_shot`. As human coding is completed and entered, the labels for coded segments upgrade to `human_consensus` (if the human agreed with the LLM) or `adjudicated` (if a human expert resolved a disagreement).
 
 ### Stage distribution percentages
-`percentage = count(stage) / n_classified * 100`. The denominator excludes segments where `final_label` is null (ABSTAIN or split). So percentages always sum to 100% across the four stages.
+`percentage = count(stage) / n_classified * 100`. The denominator excludes segments where `final_label` is null (ABSTAIN or split). So percentages always sum to 100% across the five stages.
 
 ### Progression trend
 A participant's "forward progression" score is: mean(Reappraisal fraction in sessions 2+) − mean(Reappraisal fraction in sessions 1+). Positive values indicate increasing Reappraisal engagement over the course of the intervention. This is descriptive only—the pipeline produces no inferential statistics.
@@ -807,7 +809,7 @@ Therapist segments are interleaved into the timeline so the analysis module can 
 Dismissing a segment as irrelevant to the framework is a substantive judgment, not a failure to respond. Including ABSTAIN in the vote count means that a unanimous ABSTAIN result (all three raters agreed the segment is irrelevant) is treated as high-confidence unclassifiable, whereas a split between ABSTAIN and a stage label correctly flags the segment for human review.
 
 **Why is the Avoidance stage often less represented?**
-VA-MR stage 1 (Avoidance) represents a transitional state—participants have developed attentional control but are still using it for suppression rather than investigation. This state may be briefer or less verbally elaborated than Vigilance (which involves much distress talk) or Metacognition (which involves much reflective observation). Lower Avoidance counts in a corpus may be clinically meaningful, not a classification artifact.
+VAMMR stage 1 (Avoidance) represents a transitional state—participants have developed attentional control but are still using it for suppression rather than investigation. This state may be briefer or less verbally elaborated than Vigilance (which involves much distress talk) or Metacognition (which involves much reflective observation). Lower Avoidance counts in a corpus may be clinically meaningful, not a classification artifact.
 
 **Why use lift rather than raw co-occurrence for cross-validation?**
 Raw co-occurrence counts are dominated by frequent codes and mask associations with rarer phenomena. Lift normalizes by base rate, so a code that appears in 5% of the corpus and in 15% of Reappraisal segments shows a lift of 3.0—a strong signal that would be invisible in raw counts.

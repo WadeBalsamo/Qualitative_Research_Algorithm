@@ -320,7 +320,7 @@ For multi-model interrater reliability, you can optionally specify checker model
 
 Choose your classification framework:
 
-- **`vamr`**: Default VA-MR framework (Vigilance, Avoidance, Metacognition, Reappraisal)
+- **`vammr`**: Default VAMMR framework (Vigilance, Avoidance, Mindfulness, Metacognition, Reappraisal)
 - **`custom`**: Load a custom JSON framework file
 
 Custom framework JSON schema:
@@ -421,7 +421,7 @@ Choose whether to automatically run the analysis module after the pipeline compl
 
 - Per-participant longitudinal reports
 - Per-session summaries with prototypical exemplars
-- Per-construct (stage + codebook) analyses
+- Per-theme (stage + codebook) analyses
 - Graph-ready CSVs for R/Python visualization
 - Longitudinal summary and transition explanation
 
@@ -521,7 +521,7 @@ Saves the complete configuration to `07_meta/qra_config.json` in the output dire
     "min_agreement": 0.75
   },
   "framework": {
-    "preset": "vamr"
+    "preset": "vammr"
   }
 }
 ```
