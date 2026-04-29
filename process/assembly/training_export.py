@@ -5,7 +5,7 @@ import os
 from typing import List, Dict
 
 from classification_tools.data_structures import Segment
-from constructs.theme_schema import ThemeFramework
+from theme_framework.theme_schema import ThemeFramework
 from .. import output_paths as _paths
 
 

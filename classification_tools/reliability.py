@@ -211,9 +211,28 @@ def ballots_from_segments(segments) -> List[List[Any]]:
     return matrix
 
 
+def secondary_ballots_from_segments(segments) -> List[List[Any]]:
+    """Extract a secondary-label ballot matrix from a list of Segments.
+
+    Each row is one segment; each entry is the rater's secondary_stage (int)
+    or None (rater gave no secondary). Rows where no rater assigned a secondary
+    are excluded — they don't contribute to secondary agreement measurement.
+    """
+    matrix: List[List[Any]] = []
+    for seg in segments:
+        votes = getattr(seg, 'rater_votes', None)
+        if not votes:
+            continue
+        row = [rv.get('secondary_stage') for rv in votes]
+        if any(v is not None for v in row):
+            matrix.append(row)
+    return matrix
+
+
 def compute_reliability(segments) -> Dict[str, Any]:
-    """Convenience wrapper: one call returns all three metrics + metadata."""
+    """Convenience wrapper: one call returns all metrics + metadata."""
     matrix = ballots_from_segments(segments)
+    sec_matrix = secondary_ballots_from_segments(segments)
     n_segments = len(matrix)
     rater_ids: List[str] = []
     for seg in segments:
@@ -222,6 +241,9 @@ def compute_reliability(segments) -> Dict[str, Any]:
             rater_ids = list(rids)
 
     agreement = percent_agreement(matrix)
+
+    sec_agreement = percent_agreement(sec_matrix) if sec_matrix else {}
+
     return {
         'n_segments': n_segments,
         'rater_ids': rater_ids,
@@ -230,4 +252,8 @@ def compute_reliability(segments) -> Dict[str, Any]:
         'percent_agreement_pairwise': agreement['pairwise'],
         'fleiss_kappa': fleiss_kappa(matrix),
         'krippendorff_alpha_nominal': krippendorff_alpha(matrix, 'nominal'),
+        'n_segments_with_secondary': len(sec_matrix),
+        'secondary_percent_agreement': sec_agreement.get('pairwise') if sec_matrix else None,
+        'secondary_fleiss_kappa': fleiss_kappa(sec_matrix) if sec_matrix else None,
+        'secondary_krippendorff_alpha': krippendorff_alpha(sec_matrix, 'nominal') if sec_matrix else None,
     }

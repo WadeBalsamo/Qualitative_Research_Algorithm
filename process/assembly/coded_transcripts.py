@@ -63,6 +63,7 @@ def export_coded_transcript(
     # ---------------- Session header aggregates ----------------
     theme_counts: Counter = Counter()
     theme_confs: Dict[int, List[float]] = defaultdict(list)
+    secondary_counts: Counter = Counter()
     code_counts: Counter = Counter()
     code_confs: Dict[str, List[float]] = defaultdict(list)
     unclassified = 0
@@ -78,6 +79,8 @@ def export_coded_transcript(
             unclassified += 1
             if getattr(seg, 'consensus_vote', None) == 'ABSTAIN':
                 abstentions += 1
+        if seg.secondary_stage is not None:
+            secondary_counts[seg.secondary_stage] += 1
         if getattr(seg, 'needs_review', False):
             needs_review += 1
 
@@ -144,6 +147,17 @@ def export_coded_transcript(
                              f"{mean_c:>9.3f}\n")
                 fh.write("\n")
 
+            # Secondary code distribution
+            if secondary_counts:
+                total_secondary = sum(secondary_counts.values())
+                fh.write(f"SECONDARY CODES  ({total_secondary} dual-coded segments)\n")
+                fh.write("-" * 78 + "\n")
+                for stage, cnt in sorted(secondary_counts.items(), key=lambda x: -x[1]):
+                    name = _theme_name(stage)
+                    pct = 100.0 * cnt / total_secondary
+                    fh.write(f"  {name:<28} {cnt:>6}  {pct:>4.1f}%\n")
+                fh.write("\n")
+
             # Codebook distribution
             if code_counts:
                 fh.write(f"CODEBOOK DISTRIBUTION  ({sum(code_counts.values())} "
@@ -175,6 +189,18 @@ def export_coded_transcript(
                 fh.write(f"  Flagged for review:   {needs_review}\n")
                 if abstentions:
                     fh.write(f"  Consensus abstentions: {abstentions}\n")
+                n_sec_irr = irr_stats.get('n_segments_with_secondary', 0)
+                if n_sec_irr:
+                    spa = irr_stats.get('secondary_percent_agreement')
+                    sfk = irr_stats.get('secondary_fleiss_kappa')
+                    ska = irr_stats.get('secondary_krippendorff_alpha')
+                    spa_s = f"{spa:.3f}" if isinstance(spa, (int, float)) else "n/a"
+                    sfk_s = f"{sfk:.3f}" if isinstance(sfk, (int, float)) else "n/a"
+                    ska_s = f"{ska:.3f}" if isinstance(ska, (int, float)) else "n/a"
+                    fh.write(f"  Secondary IRR  ({n_sec_irr} segs w/ ≥1 secondary rater):\n")
+                    fh.write(f"    Pairwise agreement:   {spa_s}\n")
+                    fh.write(f"    Fleiss' kappa:        {sfk_s}\n")
+                    fh.write(f"    Krippendorff's alpha: {ska_s}\n")
                 fh.write("\n")
 
         # ---------------- Per-segment detail ----------------
@@ -237,8 +263,16 @@ def export_coded_transcript(
                 fh.write(f"  Mean confidence: "
                          f"{_fmt_conf(seg.llm_confidence_primary)}\n")
                 if seg.secondary_stage is not None:
-                    fh.write(f"  Secondary: {_theme_name(seg.secondary_stage)} "
-                             f"(conf {_fmt_conf(seg.llm_confidence_secondary)})\n")
+                    sal = getattr(seg, 'secondary_agreement_level', None)
+                    saf = getattr(seg, 'secondary_agreement_fraction', None)
+                    sec_line = (
+                        f"  Secondary: {_theme_name(seg.secondary_stage)} "
+                        f"(conf {_fmt_conf(seg.llm_confidence_secondary)})"
+                    )
+                    if sal is not None:
+                        saf_s = f"{saf:.2f}" if saf is not None else "?"
+                        sec_line += f"  [{sal}, {saf_s}]"
+                    fh.write(sec_line + "\n")
                 all_justs = [
                     rv.get('justification', '') or ''
                     for rv in (getattr(seg, 'rater_votes', None) or [])

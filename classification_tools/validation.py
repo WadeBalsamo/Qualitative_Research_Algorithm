@@ -71,6 +71,23 @@ def create_balanced_evaluation_set(
 
         balanced_segments.append(sampled)
 
+    # Dual-coded stratum: segments with a secondary label are the most ambiguous
+    # and highest-value candidates for human review.
+    if 'secondary_stage' in segments_df.columns:
+        dual_coded = segments_df[
+            segments_df[label_column].notna() & segments_df['secondary_stage'].notna()
+        ]
+        if len(dual_coded) > 0:
+            if len(dual_coded) > n_per_class:
+                dual_sampled = dual_coded.sample(n=n_per_class, random_state=random_state)
+            else:
+                dual_sampled = dual_coded
+            balanced_segments.append(dual_sampled)
+            print(
+                f"  Dual-coded stratum: {len(dual_sampled)} segments "
+                f"(of {len(dual_coded)} available)"
+            )
+
     evaluation_set = pd.concat(balanced_segments).sample(
         frac=1, random_state=random_state
     ).reset_index(drop=True)

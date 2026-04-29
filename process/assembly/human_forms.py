@@ -3,11 +3,172 @@
 import os
 import textwrap
 from collections import defaultdict
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from classification_tools.data_structures import Segment
 from .. import output_paths as _paths
 from ._shared import _ms_to_hms, _fmt_conf, _theme_name_from
+
+_W = 78  # column width used across all human-readable forms
+
+
+def export_content_validity_human_worksheet(
+    test_items: List[Dict],
+    framework,
+    run_dir: str,
+) -> str:
+    """
+    Write a blind-coding worksheet for the content validity test set.
+
+    Items are shown without the expected stage so human raters can code
+    independently. Difficulty tier is disclosed so raters can calibrate
+    effort. Mirrors the format of human_classification_*.txt.
+
+    Returns the written file path.
+    """
+    import datetime as _dt
+
+    stage_labels = '?'
+    if framework is not None:
+        stage_labels = ', '.join(
+            f"{t.theme_id}={t.short_name}" for t in framework.themes
+        )
+
+    validation_dir = _paths.validation_dir(run_dir)
+    os.makedirs(validation_dir, exist_ok=True)
+    out_path = os.path.join(validation_dir, 'content_validity_human_worksheet.txt')
+
+    with open(out_path, 'w', encoding='utf-8') as fh:
+        fh.write('=' * _W + '\n')
+        fh.write('CONTENT VALIDITY TEST SET — HUMAN CODING WORKSHEET\n')
+        fh.write('=' * _W + '\n')
+        fh.write(
+            f"Generated: {_dt.datetime.utcnow().strftime('%Y-%m-%d')}   "
+            f"Items: {len(test_items)}\n"
+        )
+        fh.write(
+            'Purpose: Rate each item independently. '
+            'Use the definition key for reference.\n\n'
+        )
+        fh.write('INSTRUCTIONS\n')
+        fh.write('-' * _W + '\n')
+        fh.write(f'  Stage labels: {stage_labels}\n\n')
+        fh.write('  Difficulty tiers:\n')
+        fh.write('    clear       — prototypical utterances; expected stage is evident\n')
+        fh.write('    subtle      — items requiring careful reading and inference\n')
+        fh.write('    adversarial — items that may superficially resemble another stage\n\n')
+        fh.write('  For each item record the primary stage and a brief rationale.\n')
+        fh.write('  A secondary stage is optional when two stages are clearly present.\n\n')
+
+        for item in test_items:
+            item_id = item.get('test_item_id', '?')
+            text = item.get('text', '')
+            difficulty = item.get('difficulty', '?')
+
+            fh.write('=' * _W + '\n')
+            fh.write(f'[ITEM {item_id}]  Tier: {difficulty}\n')
+            fh.write('-' * _W + '\n')
+            for line in textwrap.wrap(
+                f'"{text}"', width=_W - 2,
+                initial_indent='  ', subsequent_indent='  ',
+            ) or ['  ']:
+                fh.write(line + '\n')
+            fh.write('\n')
+            fh.write('  Stage: ___   Secondary (optional): ___\n')
+            fh.write('  Rationale: ' + '_' * 60 + '\n')
+            fh.write('  ' + '_' * 72 + '\n')
+            fh.write('\n')
+
+    return out_path
+
+
+def export_content_validity_definition_key(
+    framework,
+    run_dir: str,
+) -> Optional[str]:
+    """
+    Write a human-readable construct definition key for use alongside the
+    content validity worksheet. Shows each stage's definition, prototypical
+    features, distinguishing criterion, and calibration exemplars.
+
+    Returns the written file path, or None if framework is None.
+    """
+    import datetime as _dt
+
+    if framework is None:
+        return None
+
+    validation_dir = _paths.validation_dir(run_dir)
+    os.makedirs(validation_dir, exist_ok=True)
+    out_path = os.path.join(validation_dir, 'content_validity_definition_key.txt')
+
+    with open(out_path, 'w', encoding='utf-8') as fh:
+        fh.write('=' * _W + '\n')
+        fh.write('CONSTRUCT DEFINITION KEY\n')
+        fh.write(f'Framework: {framework.name}   Version: {framework.version}\n')
+        fh.write(f'Generated: {_dt.datetime.utcnow().strftime("%Y-%m-%d")}\n')
+        fh.write('=' * _W + '\n\n')
+        fh.write(
+            'Use this key when completing the content validity human coding worksheet.\n'
+            'Each stage is defined by its core construct, prototypical features,\n'
+            'key distinction from adjacent stages, and calibration exemplars.\n'
+            'The worksheet items are different from the exemplars listed here.\n\n'
+        )
+
+        for theme in sorted(framework.themes, key=lambda t: t.theme_id):
+            fh.write('=' * _W + '\n')
+            fh.write(f'[STAGE {theme.theme_id}]  {theme.name.upper()}\n')
+            fh.write('-' * _W + '\n')
+
+            # Definition
+            for line in textwrap.wrap(
+                theme.definition, width=_W - 2,
+                initial_indent='  ', subsequent_indent='  ',
+            ):
+                fh.write(line + '\n')
+            fh.write('\n')
+
+            # Prototypical features
+            if theme.prototypical_features:
+                fh.write('  Prototypical features:\n')
+                for feat in theme.prototypical_features:
+                    for line in textwrap.wrap(
+                        feat, width=_W - 6,
+                        initial_indent='    • ', subsequent_indent='      ',
+                    ):
+                        fh.write(line + '\n')
+                fh.write('\n')
+
+            # Distinguishing criterion
+            if theme.distinguishing_criteria:
+                fh.write('  Key distinction:\n')
+                for line in textwrap.wrap(
+                    theme.distinguishing_criteria, width=_W - 4,
+                    initial_indent='    ', subsequent_indent='    ',
+                ):
+                    fh.write(line + '\n')
+                fh.write('\n')
+
+            # Calibration exemplars (clear tier only; not the worksheet items)
+            exemplars = (theme.exemplar_utterances or [])[:4]
+            if exemplars:
+                fh.write(
+                    '  Calibration exemplars '
+                    '(for orientation — not present in the worksheet):\n'
+                )
+                for ex in exemplars:
+                    for line in textwrap.wrap(
+                        f'"{ex}"', width=_W - 6,
+                        initial_indent='    – ', subsequent_indent='      ',
+                    ):
+                        fh.write(line + '\n')
+                fh.write('\n')
+
+        fh.write('=' * _W + '\n')
+        fh.write('END OF DEFINITION KEY\n')
+        fh.write('=' * _W + '\n')
+
+    return out_path
 
 
 def export_human_classification_forms(

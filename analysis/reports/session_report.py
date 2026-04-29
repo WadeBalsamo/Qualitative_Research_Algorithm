@@ -145,7 +145,7 @@ def generate_comprehensive_session_report(
 
     content = '\n'.join(lines)
     os.makedirs(_paths.human_reports_dir(output_dir), exist_ok=True)
-    path = os.path.join(_paths.human_reports_dir(output_dir), 'comprehensive_theme_analysis.txt')
+    path = os.path.join(_paths.human_reports_dir(output_dir), 'stage_expressions.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(content)
     return path

@@ -166,6 +166,8 @@ class ConversationalSegmenter:
         except TypeError:
             # Older sentence-transformers without model_kwargs support
             self.embedding_model = SentenceTransformer(_model_id, trust_remote_code=True)
+        _device = getattr(self.embedding_model, 'device', 'unknown')
+        print(f"[segmenter] Loaded {_model_id!r} on {_device}")
         self._embedding_model_id = _model_id
         self.min_words = config.get('min_segment_words_conversational', 60)
         self.max_words = config.get('max_segment_words_conversational', 400)
@@ -233,6 +235,8 @@ class ConversationalSegmenter:
 
         # Keep unfiltered sentences for downstream context expansion
         original_sentences = list(sentences)
+        _sid = session_metadata.get('session_id', '?')
+        print(f"  [{_sid}] segmenting {len(sentences)} sentences")
 
         if self.plog:
             session_id = session_metadata.get('session_id', '?')
@@ -265,6 +269,7 @@ class ConversationalSegmenter:
             return empty if return_intermediates else []
 
         texts = [s['text'] for s in sentences]
+        print(f"  [{_sid}] encoding {len(texts)} sentences...")
         embeddings = self.embedding_model.encode(texts, normalize_embeddings=True)
 
         sim_curve = self._compute_similarity_curve(embeddings)
@@ -288,6 +293,8 @@ class ConversationalSegmenter:
 
         if self.plog:
             self.plog.log_segments("SEGMENTS AFTER BUILD+MERGE", segments)
+
+        print(f"  [{_sid}] {len(boundaries)} boundaries → {len(segments)} segments")
 
         if return_intermediates:
             return {

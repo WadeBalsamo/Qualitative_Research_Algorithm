@@ -1,11 +1,11 @@
 """
-analysis/construct.py
----------------------
-Per-construct reports: one per VA-MR stage and one per codebook code.
+analysis/theme.py
+-----------------
+Per-theme reports: one per VAMMR stage and one per codebook code.
 
 Stage reports show prevalence trends, per-participant breakdowns, and
 the most prototypical exemplars. Codebook code reports show co-occurrence
-with VA-MR stages and longitudinal prevalence.
+with VAMMR stages and longitudinal prevalence.
 """
 
 import json
@@ -52,20 +52,20 @@ def _longitudinal_slope(values_by_session: dict, session_order: list) -> float:
         return round(num / den, 4) if den != 0 else 0.0
 
 
-def generate_stage_report(
+def generate_theme_stage_report(
     df: pd.DataFrame,
     stage_id: int,
     framework: dict,
     output_dir: str,
 ) -> dict:
-    """Generate a construct report for a single VA-MR stage.
+    """Generate a theme report for a single VAMMR stage.
 
     Parameters
     ----------
     df : DataFrame
         Full participant dataset.
     stage_id : int
-        VA-MR stage ID (0–3).
+        VAMMR stage ID (0–4).
     framework : dict
         From loader.load_framework().
     output_dir : str
@@ -73,7 +73,7 @@ def generate_stage_report(
 
     Returns
     -------
-    Report dict (also written to reports/analysis/constructs/stage_{id}_{name}.json).
+    Report dict (also written to 02_human_reports/per_theme/stage_{id}_{name}.json).
     """
     stage_info = framework.get(stage_id, {'name': f'Stage {stage_id}', 'short_name': f'Stage {stage_id}'})
     stage_name_slug = re.sub(r'[^a-z0-9]+', '_', stage_info.get('short_name', '').lower()).strip('_')
@@ -165,7 +165,7 @@ def generate_stage_report(
     }
 
     from process import output_paths as _paths
-    out_dir = _paths.constructs_json_dir(output_dir)
+    out_dir = _paths.themes_json_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     fname = f'stage_{stage_id}_{stage_name_slug}.json'
     with open(os.path.join(out_dir, fname), 'w', encoding='utf-8') as f:
@@ -180,7 +180,7 @@ def generate_codebook_code_report(
     framework: dict,
     output_dir: str,
 ) -> dict:
-    """Generate a construct report for a single codebook code.
+    """Generate a report for a single codebook code.
 
     Parameters
     ----------
@@ -195,7 +195,7 @@ def generate_codebook_code_report(
 
     Returns
     -------
-    Report dict (also written to reports/analysis/constructs/codebook_{code_id}.json).
+    Report dict (also written to 02_human_reports/per_theme/codebook_{code_id}.json).
     """
     # Rows that contain this code
     code_df = df[df['codebook_labels_ensemble'].apply(
@@ -249,7 +249,7 @@ def generate_codebook_code_report(
     }
 
     from process import output_paths as _paths
-    out_dir = _paths.constructs_json_dir(output_dir)
+    out_dir = _paths.themes_json_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     safe_code_id = re.sub(r'[^a-z0-9_\-]', '_', code_id.lower())
     fname = f'codebook_{safe_code_id}.json'
@@ -259,7 +259,7 @@ def generate_codebook_code_report(
     return report
 
 
-def generate_all_construct_reports(
+def generate_all_theme_reports(
     df: pd.DataFrame,
     framework: dict,
     output_dir: str,
@@ -270,10 +270,10 @@ def generate_all_construct_reports(
     Skips codebook code reports if no codebook_labels_ensemble data is present.
     """
     stage_reports = []
-    # VA-MR stage reports
+    # VAMMR stage reports
     for stage_id in sorted(framework.keys()):
         try:
-            report = generate_stage_report(df, stage_id, framework, output_dir)
+            report = generate_theme_stage_report(df, stage_id, framework, output_dir)
             stage_reports.append(report)
         except Exception as e:
             print(f"  Warning: stage report failed for stage {stage_id}: {e}")
@@ -370,9 +370,9 @@ def generate_codebook_text_report(
     # Pre-compute per-code DataFrames and lift against all stages
     stage_ids = sorted(framework.keys())
 
-    constructs_dir = _paths.constructs_dir(output_dir)
-    os.makedirs(constructs_dir, exist_ok=True)
-    out_path = os.path.join(constructs_dir, 'codebook_exemplars.txt')
+    themes_dir = _paths.themes_dir(output_dir)
+    os.makedirs(themes_dir, exist_ok=True)
+    out_path = os.path.join(themes_dir, 'codebook_exemplars.txt')
 
     def _wrap(text, width=72, indent='  ', subsequent='  ') -> list:
         return textwrap.wrap(str(text or ''), width=width,

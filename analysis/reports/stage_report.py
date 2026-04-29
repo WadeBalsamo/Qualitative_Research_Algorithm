@@ -99,7 +99,7 @@ def generate_stage_text_report(
         lines.append('')
 
     content = '\n'.join(lines)
-    out_dir = _paths.constructs_dir(output_dir)
+    out_dir = _paths.themes_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f'stage_{slug}.txt')
     with open(path, 'w', encoding='utf-8') as f:

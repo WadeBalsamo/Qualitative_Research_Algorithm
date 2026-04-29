@@ -18,8 +18,8 @@ from .data_structures import Segment
 from .llm_client import LLMClient, LLMClientConfig, extract_json
 from .classification_loop import filter_participant_segments, classify_segments
 from .majority_vote import vote_single_label, vote_multi_label
-from constructs.theme_schema import ThemeFramework
-from constructs.config import ThemeClassificationConfig
+from theme_framework.theme_schema import ThemeFramework
+from theme_framework.config import ThemeClassificationConfig
 from codebook.codebook_schema import Codebook, CodeAssignment
 from codebook.config import LLMCodebookConfig
 
@@ -421,6 +421,12 @@ def classify_segments_zero_shot(
                      seg_index: int = 0) -> str:
         codebook_string = framework.to_prompt_string(
             randomize=config.randomize_codebook,
+            zero_shot=getattr(config, 'zero_shot_prompt', False),
+            n_exemplars=getattr(config, 'prompt_n_exemplars', None),
+            include_subtle=getattr(config, 'prompt_include_subtle', True),
+            n_subtle=getattr(config, 'prompt_n_subtle', None),
+            include_adversarial=getattr(config, 'prompt_include_adversarial', True),
+            n_adversarial=getattr(config, 'prompt_n_adversarial', None),
         )
         context_block = ''
         if all_segments and context_window > 0:
@@ -442,7 +448,12 @@ def classify_segments_zero_shot(
         # slot lines up with rater_ids by index.
         padded = list(parsed_runs) + [None] * (config.n_runs - len(parsed_runs))
         padded = padded[:config.n_runs]
-        consensus = vote_single_label(padded, rater_ids=rater_ids)
+        consensus = vote_single_label(
+            padded,
+            rater_ids=rater_ids,
+            secondary_weight=getattr(config, 'evidence_secondary_weight', 0.6),
+            presence_threshold=getattr(config, 'evidence_presence_threshold', 0.5),
+        )
         return {
             'rater_ids': rater_ids,
             'rater_votes': consensus['rater_votes'],

@@ -55,14 +55,14 @@ def participants_json_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '02_human_reports', 'per_participant')
 
 
-def constructs_dir(run_dir: str) -> str:
-    """Per-construct/stage text and JSON reports."""
-    return os.path.join(run_dir, '02_human_reports', 'per_construct')
+def themes_dir(run_dir: str) -> str:
+    """Per-theme/stage text and JSON reports."""
+    return os.path.join(run_dir, '02_human_reports', 'per_theme')
 
 
-def constructs_json_dir(run_dir: str) -> str:
-    """Per-construct/stage JSON files (same folder as constructs_dir)."""
-    return constructs_dir(run_dir)
+def themes_json_dir(run_dir: str) -> str:
+    """Per-theme/stage JSON files (same folder as themes_dir)."""
+    return themes_dir(run_dir)
 
 
 # ── Figures ───────────────────────────────────────────────────────────────

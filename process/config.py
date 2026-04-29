@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass, field, asdict, fields
 from typing import Dict, List, Optional
 
-from constructs.config import ThemeClassificationConfig
+from theme_framework.config import ThemeClassificationConfig
 from codebook.config import (
     EmbeddingClassifierConfig,
     LLMCodebookConfig,

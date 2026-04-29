@@ -1,6 +1,6 @@
 # QRA: Qualitative Research Algorithm
 
-A comprehensive LLM-based classification pipeline for analyzing therapeutic dialogue transcripts. QRA classifies dialogue segments into theme/stage categories (e.g., the VA-MR framework: Vigilance, Avoidance, Metacognition, Reappraisal) and optionally applies multi-label phenomenology codebook classification.
+A comprehensive LLM-based classification pipeline for analyzing therapeutic dialogue transcripts. QRA classifies dialogue segments into theme/stage categories (e.g., the VAMMR framework: Vigilance, Avoidance, Mindfulness, Metacognition, Reappraisal) and optionally applies multi-label phenomenology codebook classification.
 
 ## Overview
 
@@ -9,7 +9,7 @@ QRA is designed for qualitative research in psychotherapy and mindfulness-based 
 ### Key Capabilities
 
 - **Semantic Segmentation**: Embedding-based segmentation with adaptive thresholds, topic clustering, and optional LLM-assisted boundary refinement
-- **Theme Classification**: Zero-shot LLM classification into theoretical frameworks (e.g., VA-MR stages of contemplative transformation)
+- **Theme Classification**: Zero-shot LLM classification into theoretical frameworks (e.g., VAMMR stages of contemplative transformation)
 - **Codebook Classification**: Multi-label coding via embedding similarity + LLM zero-shot prompting, reconciled by ensemble
 - **Interrater Reliability**: Multi-model runs with consensus voting for cross-rater reliability metrics
 - **Validation Test Sets**: Stratified cross-session sampling for human blind-coding
@@ -82,7 +82,7 @@ QRA is designed for qualitative research in psychotherapy and mindfulness-based 
 ┌───────────────────────────▼─────────────────────────────────┐
 │  Stage 8: Results Analysis (Optional, --auto-analyze)       │
 │  - Per-participant longitudinal reports                     │
-│  - Per-session and per-construct analyses                   │
+│  - Per-session and per-theme analyses                       │
 │  - Graph-ready CSVs                                         │
 │  - Stage progression and transition explanation             │
 │  - Therapist cue response analysis                          │
@@ -183,9 +183,9 @@ python qra.py analyze --output-dir ./data/output/
 ```
 
 Runs post-hoc analysis on existing pipeline output to generate:
-- Per-participant longitudinal reports (VA-MR progression)
+- Per-participant longitudinal reports (VAMMR stage progression)
 - Per-session summaries with prototypical exemplars
-- Per-construct (stage + codebook) analyses
+- Per-theme (stage + codebook) analyses
 - Longitudinal text reports and transition explanations
 - Therapist cue response analysis
 - Graph-ready CSVs and visualization figures
@@ -233,7 +233,7 @@ Generates cross-session human coding and AI classification worksheets from an ex
 
 | Argument | Description |
 |----------|-------------|
-| `--framework` | Theme framework: `vamr` (default) or path to custom JSON |
+| `--framework` | Theme framework: `vammr` (default) or path to custom JSON |
 | `--codebook` | Codebook: `phenomenology` (default) or path to custom JSON |
 
 #### Classification Parameters
@@ -322,7 +322,7 @@ python qra.py run \
 
 ## Theme Frameworks
 
-### VA-MR (Vigilance-Avoidance Metacognition-Reappraisal)
+### VAMMR (Vigilance-Avoidance-Mindfulness-Metacognition-Reappraisal)
 
 The default framework for mindfulness-based interventions:
 
@@ -330,8 +330,9 @@ The default framework for mindfulness-based interventions:
 |-------|-----|-------------|
 | **0** | Vigilance | Pain hypervigilance and attention dysregulation |
 | **1** | Avoidance | Attention control deployed for experiential avoidance |
-| **2** | Metacognition | Observing mental processes without identification |
-| **3** | Reappraisal | Fundamental reinterpretation of sensory experience |
+| **2** | Mindfulness | Sustained volitional attention staying with present somatic experience |
+| **3** | Metacognition | Observing mental processes without identification |
+| **4** | Reappraisal | Fundamental reinterpretation of sensory experience |
 
 ### Custom Frameworks
 
@@ -396,8 +397,8 @@ output_dir/
 │   │   └── session_<id>.json             # Per-session analysis reports
 │   ├── per_participant/
 │   │   └── participant_<id>.json         # Per-participant longitudinal reports
-│   └── per_construct/
-│       ├── construct_<stage>.json        # Per-stage analysis
+│   └── per_theme/
+│       ├── theme_<stage>.json            # Per-stage analysis
 │       └── codebook_exemplars.txt        # Codebook exemplar report
 │
 ├── 03_figures/
@@ -546,12 +547,13 @@ class PipelineConfig:
 | `model_loader.py` | HuggingFace model downloading and loading |
 | `classification_loop.py` | Classification loop with checkpointing |
 
-### Constructs (`constructs/`)
+### Theme Framework (`theme_framework/`)
 
 | File | Description |
 |------|-------------|
 | `theme_schema.py` | `ThemeFramework` and `ThemeDefinition` dataclasses |
-| `vamr.py` | VA-MR framework definitions (default) |
+| `vammr.py` | VAMMR framework definitions (default) |
+| `vamr.py` | Legacy VA-MR framework (4-stage, archived — not used by default) |
 | `config.py` | `ThemeClassificationConfig` dataclass |
 
 ### Codebook (`codebook/`)
@@ -589,7 +591,7 @@ class PipelineConfig:
 | `loader.py` | Load master JSONL and framework from output directory |
 | `participant.py` | Per-participant report generation |
 | `session.py` | Per-session analysis |
-| `construct.py` | Per-construct (stage + code) analyses |
+| `theme.py` | Per-theme (VAMMR stage + code) analyses |
 | `stage_progression.py` | Session-level stage progression computation |
 | `longitudinal.py` | Longitudinal summary generation |
 | `figure_data.py` | Export graph-ready CSV datasets |
@@ -664,6 +666,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- VA-MR framework based on research by [Wexler, Balsamo et al.]
+- VAMMR framework based on research by [Wexler, Balsamo et al.]
 - Powered by LLMs from OpenRouter, Replicate, HuggingFace, Ollama, and LM Studio
 - Embeddings powered by sentence-transformers and Qwen models

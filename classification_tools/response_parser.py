@@ -122,6 +122,8 @@ def parse_all_results(
             seg.llm_confidence_primary = consensus.get('primary_confidence', 0.0)
             seg.llm_confidence_secondary = consensus.get('secondary_confidence')
             seg.llm_justification = consensus.get('justification', '')
+            seg.secondary_agreement_level = consensus.get('secondary_agreement_level')
+            seg.secondary_agreement_fraction = consensus.get('secondary_agreement_fraction')
             counts['classified'] += 1
             continue
 

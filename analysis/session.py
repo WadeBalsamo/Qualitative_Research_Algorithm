@@ -18,7 +18,7 @@ from .exemplars import select_prototypical_exemplars, format_exemplar
 from .loader import sort_session_ids
 
 
-def _build_transition_matrix(stage_sequence: list, n_stages: int = 4) -> dict:
+def _build_transition_matrix(stage_sequence: list, n_stages: int = 5) -> dict:
     """Build a from→to transition count matrix from an ordered stage sequence.
 
     Returns nested dict: {str(from_stage): {str(to_stage): int}}.

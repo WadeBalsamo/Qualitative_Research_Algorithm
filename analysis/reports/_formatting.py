@@ -14,24 +14,36 @@ def _pct(value: float) -> str:
 
 
 def _wrap_quote(text: str, indent: int = 9, max_width: int = 80) -> str:
-    """Wrap a quoted text to max_width, indenting continuation lines."""
+    """Wrap a quoted text to max_width, indenting continuation lines.
+
+    Existing line breaks in the incoming text are preserved, and the function
+    never truncates any words or reasoning content.
+    """
     if not text:
         return ' ' * indent + '""'
-    words = text.split()
+
+    prefix = ' ' * indent + '"'
+    continuation_prefix = ' ' * (indent + 1)
     lines = []
-    current = ' ' * indent + '"'
-    prefix_len = indent + 1
-    for word in words:
-        if len(current) + len(word) + 1 > max_width:
-            lines.append(current)
-            current = ' ' * (prefix_len) + word
-        else:
-            if current == ' ' * indent + '"':
-                current += word
+
+    for raw_line in text.replace('\r\n', '\n').split('\n'):
+        if not raw_line.strip():
+            lines.append(prefix + raw_line.strip() + '"')
+            continue
+
+        current = prefix
+        for word in raw_line.split():
+            if len(current) + len(word) + 1 > max_width:
+                lines.append(current)
+                current = continuation_prefix + word
             else:
-                current += ' ' + word
-    current += '"'
-    lines.append(current)
+                if current == prefix:
+                    current += word
+                else:
+                    current += ' ' + word
+        current += '"'
+        lines.append(current)
+
     return '\n'.join(lines)
 
 
@@ -66,14 +78,18 @@ def _collect_therapist_cue(
 
 
 def _summarize_cue(text: str, llm_client, max_words: int):
-    """Summarize therapist cue text to ≤ max_words words. Returns (text, was_summarized)."""
+    """Summarize therapist cue text while preserving the full original content.
+
+    Returns (text, was_summarized). This helper avoids silent truncation on
+    failures or when LLM access is unavailable.
+    """
     if not text:
         return text or '', False
     words = text.split()
     if len(words) <= max_words:
         return text, False
     if llm_client is None:
-        return ' '.join(words[:max_words]), False
+        return text, False
     prompt = (
         f"Summarize the following therapist dialogue in {max_words} words or fewer, "
         "preserving the key therapeutic moves and intent.\n\n"
@@ -84,21 +100,17 @@ def _summarize_cue(text: str, llm_client, max_words: int):
         result, _ = llm_client.request(prompt)
         if result:
             result = result.strip()
-            result_words = result.split()
-            if len(result_words) > max_words:
-                result = ' '.join(result_words[:max_words])
             return result, True
     except Exception:
         pass
-    return ' '.join(words[:max_words]), False
+    return text, False
 
 
 def _summarize_participant_text(text: str, llm_client, max_words: int):
-    """Summarize participant psychotherapy disclosure to ≤ max_words words.
+    """Summarize participant psychotherapy disclosure while preserving the full original content.
 
-    Returns (text, was_summarized). Prompt is tailored to preserve emotional
-    themes, presenting concerns, and stage-of-change indicators rather than
-    therapeutic technique language.
+    Returns (text, was_summarized). This helper avoids silent truncation on
+    failures or when LLM access is unavailable.
     """
     if not text:
         return text or '', False
@@ -106,7 +118,7 @@ def _summarize_participant_text(text: str, llm_client, max_words: int):
     if len(words) <= max_words:
         return text, False
     if llm_client is None:
-        return ' '.join(words[:max_words]), False
+        return text, False
     prompt = (
         f"Summarize the following participant disclosures from a psychotherapy session "
         f"in {max_words} words or fewer. Preserve key emotional themes, presenting "
@@ -118,10 +130,7 @@ def _summarize_participant_text(text: str, llm_client, max_words: int):
         result, _ = llm_client.request(prompt)
         if result:
             result = result.strip()
-            result_words = result.split()
-            if len(result_words) > max_words:
-                result = ' '.join(result_words[:max_words])
             return result, True
     except Exception:
         pass
-    return ' '.join(words[:max_words]), False
+    return text, False

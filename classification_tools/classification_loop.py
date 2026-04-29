@@ -23,12 +23,13 @@ from .llm_client import LLMClient
 
 T = TypeVar('T')
 
-# Stage mapping: index to name (VA-MR framework)
+# Stage mapping: index to name (VAMMR framework — display only, not classification logic)
 STAGE_NAMES = {
     0: 'Vigilance',
     1: 'Avoidance',
-    2: 'Metacognition',
-    3: 'Reappraisal',
+    2: 'Mindfulness',
+    3: 'Metacognition',
+    4: 'Reappraisal',
 }
 
 

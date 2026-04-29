@@ -6,6 +6,9 @@ VA-MR (Vigilance-Avoidance Metacognition-Reappraisal) theme framework.
 Defines the four stages of contemplative transformation used to classify
 therapeutic dialogue.
 
+Deprecated: use get_vammr_framework() from vammr.py for the current
+five-stage VAMMR framework. This module is retained for backward
+compatibility with existing config files that specify "preset": "vamr".
 """
 
 from .theme_schema import ThemeFramework, ThemeDefinition
