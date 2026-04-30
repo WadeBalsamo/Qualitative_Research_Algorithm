@@ -171,6 +171,99 @@ def export_content_validity_definition_key(
     return out_path
 
 
+def export_content_validity_answer_key(
+    test_items: List[Dict],
+    framework,
+    run_dir: str,
+) -> str:
+    """
+    Write the answer key for the content validity human coding worksheet.
+
+    Shows each item's text with its expected stage revealed. Mirrors the
+    human_classification_*.txt format but with Stage pre-filled. Intended
+    for post-hoc comparison only — complete the worksheet before consulting
+    this document.
+
+    Returns the written file path.
+    """
+    import datetime as _dt
+
+    id_to_name: dict = {}
+    stage_labels: str = '?'
+    if framework is not None:
+        id_to_name = {t.theme_id: t.short_name for t in framework.themes}
+        stage_labels = ', '.join(
+            f"{t.theme_id}={t.short_name}" for t in framework.themes
+        )
+
+    validation_dir = _paths.validation_dir(run_dir)
+    os.makedirs(validation_dir, exist_ok=True)
+    out_path = os.path.join(validation_dir, 'content_validity_answer_key.txt')
+
+    with open(out_path, 'w', encoding='utf-8') as fh:
+        fh.write('=' * _W + '\n')
+        fh.write('CONTENT VALIDITY TEST SET — ANSWER KEY\n')
+        fh.write('=' * _W + '\n')
+        if framework is not None:
+            fh.write(
+                f'Framework: {framework.name}   Version: {framework.version}   '
+                f'Items: {len(test_items)}\n'
+            )
+        fh.write(f'Generated: {_dt.date.today().isoformat()}\n')
+        fh.write('=' * _W + '\n\n')
+        fh.write(
+            'IMPORTANT: Complete the human coding worksheet independently\n'
+            'before consulting this document. The expected stage for each item\n'
+            'is revealed below for post-hoc comparison and calibration only.\n\n'
+        )
+        fh.write('STAGE LABELS\n')
+        fh.write('-' * _W + '\n')
+        fh.write(f'  {stage_labels}\n\n')
+        fh.write('  Difficulty tiers:\n')
+        fh.write('    clear       — prototypical utterances; stage is clearly present\n')
+        fh.write('    subtle      — requires careful reading; stage is present but muted\n')
+        fh.write(
+            '    adversarial — superficially resembles a different stage; '
+            'expected stage\n'
+            '                  is still correct despite surface-level misdirection\n\n'
+        )
+
+        # Group by difficulty tier for readability
+        tier_order = ['clear', 'subtle', 'adversarial']
+        by_tier: Dict[str, List[Dict]] = {t: [] for t in tier_order}
+        for item in test_items:
+            by_tier.setdefault(item.get('difficulty', 'clear'), []).append(item)
+
+        for tier in tier_order:
+            tier_items = by_tier.get(tier, [])
+            if not tier_items:
+                continue
+            fh.write('=' * _W + '\n')
+            fh.write(f'TIER: {tier.upper()}\n')
+            fh.write('=' * _W + '\n\n')
+
+            for item in tier_items:
+                item_id = item.get('test_item_id', '?')
+                expected = item.get('expected_stage')
+                stage_name = id_to_name.get(expected, str(expected)) if expected is not None else '?'
+                text = item.get('text', '')
+
+                fh.write('=' * _W + '\n')
+                fh.write(
+                    f'[ITEM {item_id}]  '
+                    f'Expected: {expected} — {stage_name}\n'
+                )
+                fh.write('-' * _W + '\n')
+                for line in textwrap.wrap(
+                    f'"{text}"', width=_W - 2,
+                    initial_indent='  ', subsequent_indent='  ',
+                ) or ['  ']:
+                    fh.write(line + '\n')
+                fh.write('\n')
+
+    return out_path
+
+
 def export_human_classification_forms(
     segments: List[Segment],
     framework,

@@ -17,8 +17,10 @@ from typing import Optional
 class ProcessLogger:
     """Logs segmentation steps and LLM I/O to a text file."""
 
-    def __init__(self, log_path: Optional[str] = None):
+    def __init__(self, log_path: Optional[str] = None, llm_log_path: Optional[str] = None):
         self._fh = None
+        self._llm_fh = None
+
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             self._fh = open(log_path, 'w', encoding='utf-8')
@@ -26,16 +28,40 @@ class ProcessLogger:
             self._write(f"Started: {datetime.datetime.utcnow().isoformat()}Z")
             self._write("=" * 80)
 
+        if llm_log_path:
+            os.makedirs(os.path.dirname(llm_log_path), exist_ok=True)
+            self._llm_fh = open(llm_log_path, 'a', encoding='utf-8')
+            self._write_llm(f"QRA LLM Prompts Log — Started: {datetime.datetime.utcnow().isoformat()}Z")
+            self._write_llm("=" * 80)
+
     def _write(self, text: str = ''):
         if self._fh:
             print(text, file=self._fh, flush=True)
 
+    def _write_llm(self, text: str = ''):
+        if self._llm_fh:
+            print(text, file=self._llm_fh, flush=True)
+
     def close(self):
+        """Close the segmentation log only. The LLM prompts log stays open."""
         if self._fh:
             self._write()
             self._write(f"Finished: {datetime.datetime.utcnow().isoformat()}Z")
             self._fh.close()
             self._fh = None
+
+    def close_llm_log(self):
+        """Close the LLM prompts log."""
+        if self._llm_fh:
+            self._write_llm()
+            self._write_llm(f"LLM log closed: {datetime.datetime.utcnow().isoformat()}Z")
+            self._llm_fh.close()
+            self._llm_fh = None
+
+    def close_all(self):
+        """Close both the segmentation log and the LLM prompts log."""
+        self.close()
+        self.close_llm_log()
 
     # ------------------------------------------------------------------
     # Section headers
@@ -118,6 +144,12 @@ class ProcessLogger:
             self._write(line)
         self._write("└" + "─" * 70)
 
+        self._write_llm()
+        self._write_llm(f"┌─ {label} {'─' * max(0, 67 - len(label))}")
+        for line in textwrap.wrap(prompt, width=76, initial_indent='│   ', subsequent_indent='│   '):
+            self._write_llm(line)
+        self._write_llm("└" + "─" * 70)
+
     def log_llm_response(self, response_text: str, reasoning: str = ''):
         """Log the full LLM response including chain-of-thought reasoning tokens."""
         self._write()
@@ -132,6 +164,18 @@ class ProcessLogger:
         for line in resp.splitlines():
             self._write(f"│   {line}")
         self._write("└" + "─" * 70)
+
+        self._write_llm()
+        self._write_llm(f"┌─ LLM RESPONSE {'─' * 55}")
+        if reasoning:
+            self._write_llm("│ REASONING (chain-of-thought):")
+            for line in reasoning.splitlines():
+                self._write_llm(f"│   {line}")
+            self._write_llm("│")
+        self._write_llm("│ RESPONSE (unparsed):")
+        for line in resp.splitlines():
+            self._write_llm(f"│   {line}")
+        self._write_llm("└" + "─" * 70)
 
     def log_llm_call(self, call_type: str, prompt: str, response: str, decision: str = ''):
         """Log a full LLM prompt and response (legacy helper kept for compatibility)."""
