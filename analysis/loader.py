@@ -19,7 +19,7 @@ from process import output_paths as _paths
 
 def find_master_csv(output_dir: str) -> str:
     """Return path to master_segments.csv, searching new then legacy locations."""
-    # New layout: 06_training_data/master_segments.csv
+    # New layout: 02_meta/training_data/master_segments.csv
     new_path = os.path.join(_paths.master_segments_dir(output_dir), 'master_segments.csv')
     if os.path.isfile(new_path):
         return new_path
@@ -158,6 +158,7 @@ def load_framework(output_dir: str) -> dict:
     """
     for candidate in (
         os.path.join(_paths.meta_dir(output_dir), 'theme_definitions.json'),
+        os.path.join(_paths.auditable_logs_dir(output_dir), 'theme_definitions.json'),
         os.path.join(output_dir, 'meta', 'theme_definitions.json'),
         os.path.join(output_dir, 'theme_definitions.json'),
     ):

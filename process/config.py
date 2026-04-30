@@ -98,6 +98,20 @@ class TherapistCueConfig:
 
 
 @dataclass
+class SessionSummariesConfig:
+    """LLM summaries of therapist language per session, stored as JSON + txt."""
+    enabled: bool = True
+    max_words_per_session: int = 500
+
+
+@dataclass
+class ParticipantSummariesConfig:
+    """LLM summaries of each participant's own language per session, shown in participant reports."""
+    enabled: bool = True
+    max_words_per_session: int = 300
+
+
+@dataclass
 class PipelineConfig:
     """Top-level pipeline configuration."""
     # Input
@@ -122,6 +136,8 @@ class PipelineConfig:
     test_sets: TestSetConfig = field(default_factory=TestSetConfig)
     confidence_tiers: ConfidenceTierConfig = field(default_factory=ConfidenceTierConfig)
     therapist_cues: TherapistCueConfig = field(default_factory=TherapistCueConfig)
+    session_summaries: SessionSummariesConfig = field(default_factory=SessionSummariesConfig)
+    participant_summaries: ParticipantSummariesConfig = field(default_factory=ParticipantSummariesConfig)
 
     # Resume from checkpoint
     resume_from: Optional[str] = None
@@ -168,6 +184,8 @@ class PipelineConfig:
             'test_sets': TestSetConfig,
             'confidence_tiers': ConfidenceTierConfig,
             'therapist_cues': TherapistCueConfig,
+            'session_summaries': SessionSummariesConfig,
+            'participant_summaries': ParticipantSummariesConfig,
         }
 
         kwargs = {}

@@ -12,7 +12,7 @@ import os
 import traceback
 
 
-def run_analysis(output_dir: str, verbose: bool = True) -> dict:
+def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None) -> dict:
     """Execute the full results analysis on an existing pipeline output directory.
 
     Reads master_segment_dataset.csv and theme_definitions.json from output_dir.
@@ -44,6 +44,9 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
         generate_transition_explanation,
         generate_therapist_cues_report,
         generate_longitudinal_text_report,
+        generate_all_session_txt_reports,
+        generate_all_participant_txt_reports,
+        generate_session_summaries,
     )
     from process import output_paths as _paths
 
@@ -57,6 +60,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     therapist_cue_config = None
     llm_client = None
     _pipeline_config = None
+    _analysis_plog = None  # ProcessLogger for LLM prompts captured during analysis
 
     for _cfg_path in (
         os.path.join(_paths.meta_dir(output_dir), 'qra_config.json'),
@@ -73,28 +77,45 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
                 pass
             break
 
+    session_summaries_config = None
+    participant_summaries_config = None
+
     if _pipeline_config is not None:
         _tc_cfg = _therapist_cue_config_raw = _pipeline_config.therapist_cues
         if _tc_cfg.enabled:
             therapist_cue_config = _tc_cfg
+        session_summaries_config = getattr(_pipeline_config, 'session_summaries', None)
+        participant_summaries_config = getattr(_pipeline_config, 'participant_summaries', None)
+
+        _needs_llm = (
+            _tc_cfg.enabled
+            or (session_summaries_config and session_summaries_config.enabled)
+            or (participant_summaries_config and participant_summaries_config.enabled)
+        )
+        if _needs_llm:
             try:
                 from classification_tools.llm_client import LLMClient, LLMClientConfig
                 _tc = _pipeline_config.theme_classification
-                if _tc and _tc.model:
+                _summ_model = getattr(_tc, 'summarization_model', 'nvidia/nemotron-3-nano-4b') or _tc.model
+                if _tc and _summ_model:
                     _llm_cfg = LLMClientConfig(
                         backend=_tc.backend,
                         api_key=_tc.api_key,
                         replicate_api_token=_tc.replicate_api_token,
-                        model=_tc.model,
-                        models=[_tc.model],
+                        model=_summ_model,
+                        models=[_summ_model],
                         temperature=_tc.temperature,
                         lmstudio_base_url=getattr(_tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
                     )
                     llm_client = LLMClient(_llm_cfg)
+                    if llm_log_path:
+                        from process.process_logger import ProcessLogger
+                        _analysis_plog = ProcessLogger(llm_log_path=llm_log_path)
+                        llm_client.config.process_logger = _analysis_plog
             except Exception as _e:
-                log(f"Warning: could not initialize LLM for cue response: {_e}")
+                log(f"Warning: could not initialize LLM for analysis reports: {_e}")
     else:
-        log("Note: no pipeline config found in output_dir — therapist cue summarization skipped.")
+        log("Note: no pipeline config found in output_dir — LLM-backed report summarization skipped.")
 
     # ----------------------------------------------------------------
     # 1. Load data
@@ -140,6 +161,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     for _d in (
         _paths.sessions_json_dir(output_dir),
         _paths.participants_json_dir(output_dir),
+        _paths.themes_json_dir(output_dir),
         _paths.themes_dir(output_dir),
         _paths.graphing_dir(output_dir),
         _paths.figures_dir(output_dir),
@@ -201,7 +223,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
             for fname in os.listdir(_cjdir):
                 if fname.endswith('.json'):
                     files_generated.append(os.path.join(_cjdir, fname))
-        log(f"    Theme reports written to 02_human_reports/per_theme/.")
+        log(f"    Theme reports written to 03_analysis_data/per_theme/.")
     except Exception as e:
         print(f"  Warning: theme reports failed: {e}")
         if verbose:
@@ -211,7 +233,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
         ref_path = generate_codebook_text_report(df, framework, output_dir)
         if ref_path:
             files_generated.append(ref_path)
-            log("    Codebook exemplars: 02_human_reports/per_theme/codebook_exemplars.txt")
+            log("    Codebook exemplars: 06_reports/per_theme/codebook_exemplars.txt")
     except Exception as e:
         print(f"  Warning: codebook exemplars report failed: {e}")
         if verbose:
@@ -224,7 +246,7 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
     try:
         csv_paths = export_all_graphing_datasets(df, framework, output_dir)
         files_generated.extend(csv_paths)
-        log(f"    {len(csv_paths)} CSV files written to 04_analysis_data/graphing/.")
+        log(f"    {len(csv_paths)} CSV files written to 03_analysis_data/graphing/.")
     except Exception as e:
         print(f"  Warning: graphing exports failed: {e}")
         if verbose:
@@ -316,6 +338,45 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
         if path:
             txt_paths.append(path)
 
+        # Session summaries (computed once, stored as JSON + txt, reused below)
+        session_summaries = {}
+        if session_summaries_config and session_summaries_config.enabled:
+            try:
+                session_summaries = generate_session_summaries(
+                    df_all if df_all is not None else df,
+                    [r['session_id'] for r in session_reports if r.get('session_id')],
+                    output_dir,
+                    llm_client=llm_client,
+                    max_words=session_summaries_config.max_words_per_session,
+                )
+                from process import output_paths as _paths2
+                _ssum_dir = _paths2.human_reports_dir(output_dir)
+                txt_paths.append(os.path.join(_ssum_dir, 'session_summaries.json'))
+                txt_paths.append(os.path.join(_ssum_dir, 'session_summaries.txt'))
+                log(f"    Session summaries generated for {len(session_summaries)} sessions.")
+            except Exception as _e:
+                print(f"  Warning: session summaries generation failed: {_e}")
+                if verbose:
+                    traceback.print_exc()
+
+        # Per-session .txt files
+        session_txt_paths = generate_all_session_txt_reports(
+            df, session_reports, framework, output_dir,
+            llm_client=llm_client,
+            therapist_cue_config=therapist_cue_config,
+            df_all=df_all,
+            session_summaries=session_summaries,
+        )
+        txt_paths.extend(session_txt_paths)
+
+        # Per-participant .txt files
+        participant_txt_paths = generate_all_participant_txt_reports(
+            df, participant_reports, framework, output_dir,
+            llm_client=llm_client,
+            participant_summaries_config=participant_summaries_config,
+        )
+        txt_paths.extend(participant_txt_paths)
+
         files_generated.extend(txt_paths)
         log(f"    {len(txt_paths)} text reports written.")
     except Exception as e:
@@ -328,6 +389,9 @@ def run_analysis(output_dir: str, verbose: bool = True) -> dict:
         write_index(output_dir)
     except Exception:
         pass
+
+    if _analysis_plog is not None:
+        _analysis_plog.close_llm_log()
 
     return {
         'output_dir': output_dir,

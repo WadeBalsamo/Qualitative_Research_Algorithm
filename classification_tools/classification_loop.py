@@ -128,18 +128,16 @@ def classify_segments(
     # Prepare live status file
     status_path = None
     if output_dir:
-        status_path = os.path.join(
-            output_dir,
-            f'{file_prefix}_status{f"_{model_tag}" if model_tag else ""}_{timestamp}.txt',
-        )
-        with open(status_path, 'w') as sf:
-            sf.write(f"LLM Classification Status Log\n")
+        status_path = os.path.join(output_dir, 'llm_classification_log.txt')
+        with open(status_path, 'a') as sf:
+            sf.write(f"\n{'=' * 80}\n")
+            sf.write(f"Classification Run: {file_prefix}\n")
             sf.write(f"Started: {datetime.datetime.utcnow().isoformat()}Z\n")
             sf.write(f"Total segments: {total}\n")
             if use_per_run_models:
                 sf.write(f"Mode: model-first ({n_runs} models, 1 sweep each)\n")
             sf.write("=" * 80 + "\n\n")
-        print(f"  Live status log: {os.path.basename(status_path)}")
+        print(f"  Live status log: llm_classification_log.txt")
 
     # Model-first path: process all segments with each model before switching
     if use_per_run_models:
@@ -364,8 +362,10 @@ def _save_runs_checkpoint(
     timestamp: str,
 ) -> None:
     """Write per-run intermediate results for the model-first path."""
+    checkpoint_dir = os.path.join(output_dir, 'checkpoints')
+    os.makedirs(checkpoint_dir, exist_ok=True)
     tag = f"_{model_tag}" if model_tag else ''
-    path = os.path.join(output_dir, f'{file_prefix}{tag}_{timestamp}_runs.json')
+    path = os.path.join(checkpoint_dir, f'{file_prefix}{tag}_{timestamp}_runs.json')
     payload = {
         "_meta": {
             "format": "model_first_v1",
@@ -411,8 +411,10 @@ def _save_checkpoint(
     serialize_fn: Optional[Callable[[Any], Any]] = None,
 ):
     """Write intermediate results to a JSON checkpoint file."""
+    checkpoint_dir = os.path.join(output_dir, 'checkpoints')
+    os.makedirs(checkpoint_dir, exist_ok=True)
     tag = f"_{model_tag}" if model_tag else ''
-    path = os.path.join(output_dir, f'{file_prefix}{tag}_{timestamp}.json')
+    path = os.path.join(checkpoint_dir, f'{file_prefix}{tag}_{timestamp}.json')
 
     if serialize_fn is not None:
         serializable = {

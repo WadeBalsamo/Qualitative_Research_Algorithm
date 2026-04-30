@@ -15,6 +15,7 @@ from typing import List, Optional
 class ThemeClassificationConfig:
     """Parameters for zero-shot LLM theme classification."""
     model: str = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'  # Primary model (used when models list is empty)
+    summarization_model: str = 'nvidia/nemotron-3-nano-4b'  # Lighter model for cue/session/participant report summaries
     models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
     # Per-run model assignment: when len == n_runs, run[i] uses per_run_models[i].
     # This improves interrater reliability by making each run an independent rater.
@@ -43,3 +44,5 @@ class ThemeClassificationConfig:
     # Evidence-based secondary vote reconciliation
     evidence_secondary_weight: float = 0.6  # Weight applied to secondary/dissenting votes
     evidence_presence_threshold: float = 0.5  # Min pooled evidence score for secondary label
+    # Merging short segments: set to 0 to disable (e.g. for content-validity test runs)
+    min_classifiable_words: int = 10

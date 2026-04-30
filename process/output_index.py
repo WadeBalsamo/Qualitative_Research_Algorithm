@@ -10,16 +10,15 @@ from . import output_paths as _paths
 
 _FOLDER_LABELS = {
     '01_transcripts':   'Coded transcripts',
-    '02_human_reports': 'Human-readable reports',
-    '03_figures':       'Analysis figures (PNG)',
-    '04_analysis_data': 'Machine-readable data',
-    '05_validation':    'Validation artifacts',
-    '06_training_data': 'Training / master data',
-    '07_meta':          'Provenance & configuration',
+    '02_meta':          'Provenance & configuration',
+    '03_analysis_data': 'Machine-readable data',
+    '04_validation':    'Validation artifacts',
+    '05_figures':       'Analysis figures (PNG)',
+    '06_reports':       'Human-readable reports',
 }
 
 _SKIP_NAMES = {'00_index.txt'}
-_SKIP_DIRS  = {'__pycache__', 'llm_raw', 'codebook_raw'}
+_SKIP_DIRS  = {'__pycache__', 'auditable_logs', 'codebook_raw'}
 
 
 def _fmt_size(n_bytes: int) -> str:

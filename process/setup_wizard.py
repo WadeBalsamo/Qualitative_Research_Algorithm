@@ -26,6 +26,8 @@ from .config import (
     TestSetConfig,
     ConfidenceTierConfig,
     TherapistCueConfig,
+    SessionSummariesConfig,
+    ParticipantSummariesConfig,
 )
 from .transcript_ingestion import scan_speakers
 
@@ -33,6 +35,8 @@ from .transcript_ingestion import scan_speakers
 # ---------------------------------------------------------------------------
 # Preset definitions
 # ---------------------------------------------------------------------------
+
+_DEFAULT_SUMMARIZATION_MODEL = 'nvidia/nemotron-3-nano-4b'
 
 _PRESET_SMALL = {
     'label': 'Small / Test',
@@ -43,11 +47,13 @@ _PRESET_SMALL = {
         '    Run 1: nvidia/nemotron-3-nano-4b  (primary)\n'
         '    Run 2: google/gemma-4-e2b\n'
         '    Run 3: qwen/qwen3-8b\n'
+        '  Summarization model    : nvidia/nemotron-3-nano-4b\n'
         '  Framework              : VAMMR\n'
         '  Codebook classification: disabled'
     ),
     'segmentation_embedding_model': 'all-MiniLM-L6-v2',
     'primary_model': 'nvidia/nemotron-3-nano-4b',
+    'summarization_model': _DEFAULT_SUMMARIZATION_MODEL,
     'per_run_models': [
         'nvidia/nemotron-3-nano-4b',
         'google/gemma-4-e2b',
@@ -68,11 +74,13 @@ _PRESET_PRODUCTION = {
         '    Run 1: qwen/qwen3-next-80b  (primary)\n'
         '    Run 2: google/gemma-4-31b\n'
         '    Run 3: nvidia/nemotron-3-super\n'
+        '  Summarization model    : nvidia/nemotron-3-nano-4b\n'
         '  Framework              : VAMMR\n'
         '  Codebook classification: disabled'
     ),
     'segmentation_embedding_model': 'Qwen/Qwen3-Embedding-8B',
     'primary_model': 'qwen/qwen3-next-80b',
+    'summarization_model': _DEFAULT_SUMMARIZATION_MODEL,
     'per_run_models': [
         'qwen/qwen3-next-80b',
         'google/gemma-4-31b',
@@ -217,6 +225,7 @@ class SetupWizard:
         self._step_10_testsets()
         self._step_11_analysis()
         self._step_11b_therapist_cues()
+        self._step_11c_report_summaries()
         config_path = self._step_12_save()
 
         return {
@@ -461,6 +470,7 @@ class SetupWizard:
         self.config_data['theme_classification'] = {
             'backend': 'lmstudio',
             'model': preset['primary_model'],
+            'summarization_model': preset['summarization_model'],
             'lmstudio_base_url': lmstudio_url,
             'n_runs': preset['n_runs'],
             'temperature': preset['temperature'],
@@ -507,6 +517,7 @@ class SetupWizard:
         for i, m in enumerate(preset['per_run_models']):
             label = ' (primary)' if i == 0 else f' (checker {i})'
             print(f"      Run {i + 1}: {m}{label}")
+        print(f"    Summarization model    : {preset['summarization_model']}")
         print(f"    Codebook classification: disabled")
         print(f"    Confidence thresholds  : high ≥ 0.8, medium ≥ 0.6")
         print()
@@ -676,16 +687,25 @@ class SetupWizard:
                 "Primary model (used for segmentation refinement and classification run 1)",
                 'nvidia/nemotron-3-super',
             )
+            summ_model = _prompt(
+                "Summarization model (for cue/session/participant report summaries)",
+                _DEFAULT_SUMMARIZATION_MODEL,
+            )
             print(f"    LM Studio backend: {lmstudio_url}")
             self.config_data['theme_classification'] = {
                 'backend': 'lmstudio',
                 'model': model,
+                'summarization_model': summ_model,
                 'lmstudio_base_url': lmstudio_url,
             }
             print()
             return
 
         model = _prompt("Model ID", 'openai/gpt-4o')
+        summ_model = _prompt(
+            "Summarization model (for cue/session/participant report summaries)",
+            _DEFAULT_SUMMARIZATION_MODEL,
+        )
 
         if backend == 'openrouter':
             env_key = os.environ.get('OPENROUTER_API_KEY', '')
@@ -710,6 +730,7 @@ class SetupWizard:
         self.config_data['theme_classification'] = {
             'backend': backend,
             'model': model,
+            'summarization_model': summ_model,
         }
         if models:
             self.config_data['theme_classification']['models'] = models
@@ -1123,6 +1144,46 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
+    # Step 11c: Session & participant summary reports
+    # -----------------------------------------------------------------
+
+    def _step_11c_report_summaries(self):
+        print("--- Step 11c/12: Session & Participant Summary Reports ---")
+        print("    The analysis module can generate LLM-written narrative summaries")
+        print("    using the summarization model configured in Step 4.")
+        print()
+        print("    SESSION SUMMARIES")
+        print("    Summarize therapist language for each session into a single narrative.")
+        print("    Written to 06_reports/session_summaries.json and session_summaries.txt.")
+        print("    Also displayed in each per-session .txt report.")
+        print()
+        enable_ss = _prompt_yes_no("Enable session summaries?", True)
+        if enable_ss:
+            max_ss = _prompt_int("Max words per session summary", 500)
+            self.config_data['session_summaries'] = {
+                'enabled': True,
+                'max_words_per_session': max_ss,
+            }
+        else:
+            self.config_data['session_summaries'] = {'enabled': False}
+        print()
+
+        print("    PARTICIPANT SUMMARIES")
+        print("    Summarize each participant's own language per session in their")
+        print("    longitudinal .txt report (in addition to the best exemplar quote).")
+        print()
+        enable_ps = _prompt_yes_no("Enable participant summaries?", True)
+        if enable_ps:
+            max_ps = _prompt_int("Max words per participant session summary", 300)
+            self.config_data['participant_summaries'] = {
+                'enabled': True,
+                'max_words_per_session': max_ps,
+            }
+        else:
+            self.config_data['participant_summaries'] = {'enabled': False}
+        print()
+
+    # -----------------------------------------------------------------
     # Step 12: Save & run
     # -----------------------------------------------------------------
 
@@ -1194,6 +1255,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         theme_classification=ThemeClassificationConfig(
             backend=backend,
             model=tc.get('model', 'openai/gpt-4o'),
+            summarization_model=tc.get('summarization_model', 'nvidia/nemotron-3-nano-4b'),
             models=tc.get('models', []),
             per_run_models=tc.get('per_run_models', []),
             n_runs=tc.get('n_runs', 3),
@@ -1229,6 +1291,14 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         therapist_cues=TherapistCueConfig(
             **{k: v for k, v in data.get('therapist_cues', {}).items()
                if k in ('enabled', 'max_length_per_cue', 'max_length_of_average_cue_responses')}
+        ),
+        session_summaries=SessionSummariesConfig(
+            **{k: v for k, v in data.get('session_summaries', {}).items()
+               if k in ('enabled', 'max_words_per_session')}
+        ),
+        participant_summaries=ParticipantSummariesConfig(
+            **{k: v for k, v in data.get('participant_summaries', {}).items()
+               if k in ('enabled', 'max_words_per_session')}
         ),
     )
 

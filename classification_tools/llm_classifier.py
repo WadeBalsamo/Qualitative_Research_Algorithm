@@ -406,7 +406,7 @@ def classify_segments_zero_shot(
     prompt_template = THEME_PROMPT_TEMPLATE
 
     # Merge trivially short segments into their neighbors before classification
-    MIN_CLASSIFIABLE_WORDS = 10
+    MIN_CLASSIFIABLE_WORDS = getattr(config, 'min_classifiable_words', 10)
     before_count = len(target_segments)
     target_segments = _merge_short_segments(target_segments, MIN_CLASSIFIABLE_WORDS)
     merged_count = before_count - len(target_segments)

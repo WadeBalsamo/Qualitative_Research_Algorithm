@@ -44,9 +44,11 @@ from .process_logger import ProcessLogger
 from .assembly import (
     assemble_master_dataset,
     export_theme_definitions,
+    export_theme_definitions_txt,
     export_content_validity_test_set,
     export_content_validity_human_worksheet,
     export_content_validity_definition_key,
+    export_content_validity_answer_key,
     export_coded_transcript,
     export_per_transcript_stats,
     export_cumulative_report,
@@ -150,8 +152,11 @@ def run_full_pipeline(
     _verbose = getattr(config.segmentation, 'verbose_segmentation', False)
     meta_dir = _paths.meta_dir(output_dir)
     os.makedirs(meta_dir, exist_ok=True)
-    _plog_path = os.path.join(meta_dir, 'process_log.txt') if _verbose else None
-    plog = ProcessLogger(_plog_path)
+    _auditable_dir = _paths.auditable_logs_dir(output_dir)
+    os.makedirs(_auditable_dir, exist_ok=True)
+    _plog_path = os.path.join(_auditable_dir, 'segmentation_process_log.txt') if _verbose else None
+    _llm_log_path = _paths.llm_prompts_path(output_dir)
+    plog = ProcessLogger(_plog_path, llm_log_path=_llm_log_path)
 
     # Load speaker anonymization key, with priority: meta/ > imported config
     speaker_key_path = os.path.join(meta_dir, 'speaker_anonymization_key.json')
@@ -359,7 +364,12 @@ def run_full_pipeline(
     content_validity_items = create_content_validity_test_set(framework)
     export_theme_definitions(
         framework,
-        os.path.join(meta_dir, 'theme_definitions.json'),
+        os.path.join(_paths.auditable_logs_dir(output_dir), 'theme_definitions.json'),
+    )
+    export_theme_definitions_txt(
+        framework,
+        config.theme_classification,
+        _paths.theme_definitions_txt_path(output_dir),
     )
     _cv_dir = _paths.content_validity_dir(output_dir)
     os.makedirs(_cv_dir, exist_ok=True)
@@ -376,13 +386,19 @@ def run_full_pipeline(
         framework,
         output_dir,
     )
+    export_content_validity_answer_key(
+        content_validity_items,
+        framework,
+        output_dir,
+    )
 
     observer.on_stage_complete(
         "Construct Operationalization",
         f"Built {len(content_validity_items)} content validity test items; "
         "exported content_validity_test_set.jsonl, "
         "content_validity_human_worksheet.txt, "
-        "and content_validity_definition_key.txt",
+        "content_validity_definition_key.txt, "
+        "and content_validity_answer_key.txt",
     )
 
     # ------------------------------------------------------------------
@@ -395,7 +411,7 @@ def run_full_pipeline(
         )
 
         theme_config = config.theme_classification
-        theme_config.output_dir = _paths.llm_raw_dir(output_dir)
+        theme_config.output_dir = _paths.auditable_logs_dir(output_dir)
 
         segments_to_classify = _apply_speaker_filter(all_segments, config.speaker_filter)
         n_filtered = len(all_segments) - len(segments_to_classify)
@@ -677,9 +693,10 @@ def run_full_pipeline(
     }
     with open(speaker_key_path, 'w') as _f:
         json.dump(speaker_key, _f, indent=2)
+    _write_anonymization_key_txt(speaker_key, _paths.anonymization_key_txt_path(output_dir))
     observer.on_stage_progress(
         "Report Generation",
-        "  Speaker anonymization key: 07_meta/speaker_anonymization_key.json",
+        "  Speaker anonymization key: 02_meta/speaker_anonymization_key.json + anonymization_key.txt",
     )
 
     # Build a lightweight LLM client for rationale summarization (reuses theme config)
@@ -696,6 +713,7 @@ def run_full_pipeline(
                 lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
                 ollama_host=getattr(tc, 'ollama_host', '0.0.0.0'),
                 ollama_port=getattr(tc, 'ollama_port', 11434),
+                process_logger=plog,
             ))
         except Exception:
             _sum_client = None
@@ -716,14 +734,14 @@ def run_full_pipeline(
     export_human_classification_forms(all_segments, framework, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        "  Human classification forms: 05_validation/human_classification_<session>.txt",
+        "  Human classification forms: 04_validation/human_classification_<session>.txt",
     )
 
     # Dataset-wide flagged-for-review report
     export_flagged_for_review(all_segments, framework, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        "  Flagged for review: 05_validation/flagged_for_review.txt",
+        "  Flagged for review: 04_validation/flagged_for_review.txt",
     )
 
     # Cross-session validation test sets
@@ -740,28 +758,28 @@ def run_full_pipeline(
         )
         observer.on_stage_progress(
             "Report Generation",
-            "  Validation test sets: 05_validation/testsets/[human|AI]_classification_testset_worksheet_#.txt",
+            "  Validation test sets: 04_validation/testsets/[human|AI]_classification_testset_worksheet_#.txt",
         )
 
     # Per-transcript stats (one JSON per session)
     export_per_transcript_stats(master_df, framework, codebook, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        "  Per-transcript stats: 04_analysis_data/session_stats/stats_<session>.json",
+        "  Per-transcript stats: 03_analysis_data/session_stats/stats_<session>.json",
     )
 
     # Cumulative report across all transcripts
     export_cumulative_report(master_df, framework, codebook, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        "  Cumulative report: 04_analysis_data/cumulative_report.json",
+        "  Cumulative report: 03_analysis_data/cumulative_report.json",
     )
 
     # BERT training data export
     export_training_data(all_segments, framework, codebook, output_dir)
     observer.on_stage_progress(
         "Report Generation",
-        "  Training data: 06_training_data/theme_classification.jsonl + codebook_multilabel.jsonl",
+        "  Training data: 02_meta/training_data/theme_classification.jsonl + codebook_multilabel.jsonl",
     )
 
     observer.on_stage_complete(
@@ -785,11 +803,11 @@ def run_full_pipeline(
             from analysis.runner import run_analysis
             observer.on_stage_start("Results Analysis", "8",
                                     explanation_key='results_analysis')
-            analysis_result = run_analysis(output_dir, verbose=False)
+            analysis_result = run_analysis(output_dir, verbose=False, llm_log_path=_llm_log_path)
             observer.on_stage_complete(
                 "Results Analysis",
                 f"Analysis complete: {len(analysis_result['files_generated'])} files "
-                f"written to 02_human_reports/ and 04_analysis_data/",
+                f"written to 06_reports/ and 03_analysis_data/",
             )
         except ImportError:
             pass  # analysis module not available — skip silently
@@ -804,10 +822,44 @@ def run_full_pipeline(
     except Exception:
         pass
 
+    # Close LLM prompts log after all pipeline stages (including auto-analyze) complete.
+    plog.close_llm_log()
+
     return master_df
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _write_anonymization_key_txt(speaker_key: dict, output_path: str) -> None:
+    """Write a human-readable table of speaker anonymization mappings."""
+    import datetime as _dt
+
+    col_orig = max((len(k) for k in speaker_key), default=14)
+    col_orig = max(col_orig, len('Original Label'))
+    col_role = max((len(v.get('role', '')) for v in speaker_key.values()), default=4)
+    col_role = max(col_role, len('Role'))
+    col_anon = max((len(v.get('anonymized_id', '')) for v in speaker_key.values()), default=13)
+    col_anon = max(col_anon, len('Anonymized ID'))
+
+    sep = f"  {'-' * col_orig}  {'-' * col_role}  {'-' * col_anon}"
+    header = f"  {'Original Label':<{col_orig}}  {'Role':<{col_role}}  {'Anonymized ID':<{col_anon}}"
+
+    lines = [
+        'SPEAKER ANONYMIZATION KEY',
+        f'Generated: {_dt.datetime.utcnow().strftime("%Y-%m-%d")}',
+        '',
+        header,
+        sep,
+    ]
+    for original, entry in sorted(speaker_key.items(), key=lambda x: x[1].get('anonymized_id', '')):
+        role = entry.get('role', '')
+        anon_id = entry.get('anonymized_id', '')
+        lines.append(f"  {original:<{col_orig}}  {role:<{col_role}}  {anon_id:<{col_anon}}")
+    lines.append('')
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')
 
