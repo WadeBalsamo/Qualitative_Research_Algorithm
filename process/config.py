@@ -98,6 +98,50 @@ class TherapistCueConfig:
 
 
 @dataclass
+class PurerCueConfig:
+    """Settings for cue-unit PURER classification (Stage 3c).
+
+    PURER is classified at the *cue-block* level — one label per therapist
+    response between two consecutive participant turns — rather than classifying
+    every individual therapist segment in isolation.
+
+    By default, PURER uses a single model for classification to ensure robustness,
+    with no multi-run validation required. This simplifies implementation and 
+    avoids the complexity of inter-rater reliability checks that aren't needed
+    for this use case.
+
+    skip_lesson_content : bool
+        When True, skip PURER classification on cue blocks whose therapist
+        text exceeds ``max_lesson_words``.  These are long didactic stretches
+        (psychoeducation, guided meditation scripts) that are therapist-to-group
+        monologues rather than direct responses to a specific participant turn.
+
+    max_lesson_words : int
+        Word threshold for lesson-content detection.  A cue block with more
+        words than this is assumed to be a lesson segment rather than an
+        interactive cue.  Relevant only when ``skip_lesson_content=True``.
+
+    therapist_max_gap_seconds : float
+        Gap threshold used when aggregating therapist sentences into cue-level
+        blocks.  Overrides the participant segmentation ``max_gap_seconds``.
+        Set higher (default 120 s) to avoid splitting within guided meditation
+        pauses or psychoeducation delivery.
+
+    max_context_words : int
+        Word budget for the conversational context preamble included with each
+        PURER cue classification prompt.  Uses the same ``_build_context_block``
+        logic and ``CONTEXT_PREAMBLE`` format as participant VAAMR classification,
+        but with a wider window driven by ``purer_classification.context_window_segments``
+        (default 6, vs 2 for VAAMR).  Increase this if therapist cue text is long
+        and preceding exchanges are being truncated too aggressively.
+    """
+    skip_lesson_content: bool = True
+    max_lesson_words: int = 400
+    therapist_max_gap_seconds: float = 120.0
+    max_context_words: int = 1000
+
+
+@dataclass
 class SessionSummariesConfig:
     """LLM summaries of therapist language per session, stored as JSON + txt."""
     enabled: bool = True
@@ -124,11 +168,15 @@ class PipelineConfig:
     # Feature flags
     run_theme_labeler: bool = True
     run_codebook_classifier: bool = False
+    run_purer_labeler: bool = True
 
     # Sub-configs
     segmentation: SegmentationConfig = field(default_factory=SegmentationConfig)
     speaker_filter: SpeakerFilterConfig = field(default_factory=SpeakerFilterConfig)
     theme_classification: ThemeClassificationConfig = field(default_factory=ThemeClassificationConfig)
+    purer_classification: ThemeClassificationConfig = field(
+        default_factory=lambda: ThemeClassificationConfig(context_window_segments=6)
+    )
     codebook_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
     codebook_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
     codebook_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
@@ -136,6 +184,7 @@ class PipelineConfig:
     test_sets: TestSetConfig = field(default_factory=TestSetConfig)
     confidence_tiers: ConfidenceTierConfig = field(default_factory=ConfidenceTierConfig)
     therapist_cues: TherapistCueConfig = field(default_factory=TherapistCueConfig)
+    purer_cue: PurerCueConfig = field(default_factory=PurerCueConfig)
     session_summaries: SessionSummariesConfig = field(default_factory=SessionSummariesConfig)
     participant_summaries: ParticipantSummariesConfig = field(default_factory=ParticipantSummariesConfig)
 
@@ -177,6 +226,7 @@ class PipelineConfig:
             'segmentation': SegmentationConfig,
             'speaker_filter': SpeakerFilterConfig,
             'theme_classification': ThemeClassificationConfig,
+            'purer_classification': ThemeClassificationConfig,
             'codebook_embedding': EmbeddingClassifierConfig,
             'codebook_llm': LLMCodebookConfig,
             'codebook_ensemble': EnsembleConfig,
@@ -184,6 +234,7 @@ class PipelineConfig:
             'test_sets': TestSetConfig,
             'confidence_tiers': ConfidenceTierConfig,
             'therapist_cues': TherapistCueConfig,
+            'purer_cue': PurerCueConfig,
             'session_summaries': SessionSummariesConfig,
             'participant_summaries': ParticipantSummariesConfig,
         }

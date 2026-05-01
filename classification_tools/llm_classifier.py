@@ -35,7 +35,7 @@ THEME_PROMPT_TEMPLATE = """You are a qualitative researcher trained in the \
 
 {codebook_string}
 
-{context_block}Classify the following participant utterance according to these {num_themes} \
+{context_block}Classify the following {utterance_role} utterance according to these {num_themes} \
 themes. The utterance starts and ends with ```.
 
 Utterance:
@@ -69,6 +69,48 @@ CONTEXT_PREAMBLE = """For context, here is the preceding conversational exchange
 
 """
 
+# ---------------------------------------------------------------------------
+# PURER cue-unit prompt (therapist response to a specific participant turn)
+# ---------------------------------------------------------------------------
+
+PURER_CUE_PROMPT_TEMPLATE = """You are a qualitative researcher trained in the \
+{framework_name} framework for analyzing therapist guided-inquiry moves in \
+Mindfulness-Oriented Recovery Enhancement (MORE) sessions.
+
+{codebook_string}
+
+{context_block}The participant made the following statement:
+PARTICIPANT:
+```
+{from_participant_text}
+```
+
+The therapist then responded. Classify the PRIMARY {framework_name} move in \
+the therapist's full response below. The response may contain multiple moves — \
+identify which is primary, and which (if any) is clearly secondary.
+
+THERAPIST RESPONSE:
+```
+{text}
+```
+
+Provide your classification as JSON with these exact fields:
+{{
+    "primary_stage": "<construct name or null>",
+    "primary_confidence": <float 0-1>,
+    "secondary_stage": "<construct name or null>",
+    "secondary_confidence": <float 0-1 or null>,
+    "justification": "<brief explanation referencing specific language from the THERAPIST RESPONSE>"
+}}
+
+Rules:
+- Assign exactly one primary construct, or null if no {framework_name} construct applies
+- Assign a secondary construct ONLY when a second move is clearly distinct and present
+- Justification MUST cite specific words or phrases from the THERAPIST RESPONSE, not the participant
+- Do NOT provide any text outside the JSON
+
+JSON:"""
+
 
 # ---------------------------------------------------------------------------
 # Context window helper
@@ -81,14 +123,21 @@ def _build_context_block(
     all_segments: List[Segment],
     current_index: int,
     window_size: int,
+    max_words: int = None,
 ) -> str:
     """
     Build a context preamble from preceding segments.
 
     Returns an empty string if window_size is 0 or no preceding segments exist.
+
+    max_words overrides MAX_CONTEXT_WORDS when provided, allowing callers
+    (e.g. PURER cue classification) to use a larger word budget without
+    changing the global default used for participant VAMMR classification.
     """
     if window_size <= 0 or current_index <= 0:
         return ''
+
+    budget = max_words if max_words is not None else MAX_CONTEXT_WORDS
 
     context_parts = []
     total_words = 0
@@ -97,9 +146,8 @@ def _build_context_block(
     for seg in all_segments[start:current_index]:
         seg_text = seg.text.strip()
         seg_words = len(seg_text.split())
-        if total_words + seg_words > MAX_CONTEXT_WORDS:
-            # Truncate this segment to fit budget
-            remaining = MAX_CONTEXT_WORDS - total_words
+        if total_words + seg_words > budget:
+            remaining = budget - total_words
             if remaining > 0:
                 words = seg_text.split()
                 context_parts.append(' '.join(words[-remaining:]) + ' [...]')
@@ -112,6 +160,153 @@ def _build_context_block(
 
     preceding_text = '\n\n'.join(context_parts)
     return CONTEXT_PREAMBLE.format(preceding_context=preceding_text)
+
+
+# ---------------------------------------------------------------------------
+# Cue-unit PURER classification
+# ---------------------------------------------------------------------------
+
+def classify_purer_cue_units(
+    cue_units: List[Dict],
+    framework: 'ThemeFramework',
+    config: 'ThemeClassificationConfig',
+    resume_from: Optional[str] = None,
+    process_logger=None,
+) -> Tuple[Dict, Dict]:
+    """
+    Classify PURER cue units — one classification per therapist cue block.
+
+    Parameters
+    ----------
+    cue_units : list of dicts, each with keys:
+        ``segment``        — synthetic Segment whose text is the concatenated cue
+        ``from_segment``   — the participant FROM Segment the therapist is responding to
+        ``exchange_context`` — pre-built exchange context string (from _build_purer_context_block)
+    framework : ThemeFramework
+        The PURER framework.
+    config : ThemeClassificationConfig
+        Same config object used for VAMMR classification.
+
+    Returns
+    -------
+    (results_all, metadata_all)
+        results_all maps cue segment_id → consensus vote dict.
+    """
+    if not cue_units:
+        return {}, {}
+
+    name_to_id = framework.build_name_to_id_map()
+
+    per_run_models = list(getattr(config, 'per_run_models', None) or [])
+    multi_models   = list(getattr(config, 'models', None) or [])
+
+    if not per_run_models and len(multi_models) >= 2:
+        per_run_models = list(multi_models)
+        config.n_runs = len(per_run_models)
+
+    use_per_run_models = (
+        len(per_run_models) == config.n_runs and len(per_run_models) >= 2
+    )
+
+    if not use_per_run_models and config.n_runs > 1:
+        # Degrade to single-run rather than crashing when per_run_models is absent.
+        config.n_runs = 1
+
+    llm_config = LLMClientConfig(
+        backend=config.backend,
+        api_key=config.api_key,
+        replicate_api_token=config.replicate_api_token,
+        model=config.model,
+        models=multi_models or [config.model],
+        temperature=config.temperature,
+        max_new_tokens=config.max_new_tokens,
+        ollama_host=getattr(config, 'ollama_host', '0.0.0.0'),
+        ollama_port=getattr(config, 'ollama_port', 11434),
+        lmstudio_base_url=getattr(config, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+        process_logger=process_logger,
+    )
+    client = LLMClient(llm_config)
+
+    if use_per_run_models:
+        rater_ids = list(per_run_models)
+    else:
+        rater_ids = [f'{config.model}#run_{i + 1}' for i in range(config.n_runs)]
+
+    os.makedirs(config.output_dir, exist_ok=True)
+    model_clean = config.model.replace('/', '_')
+
+    # Build lookup: segment_id → cue_unit dict for use inside build_prompt
+    cue_lookup = {cu['segment'].segment_id: cu for cu in cue_units}
+    target_segments = [cu['segment'] for cu in cue_units]
+
+    def build_prompt(segment: Segment, run: int,
+                     all_segs: List[Segment] = None,
+                     seg_index: int = 0) -> str:
+        cu = cue_lookup[segment.segment_id]
+        from_text    = cu['from_segment'].text.strip() if cu.get('from_segment') else ''
+        context_blk  = cu.get('context_block', '')
+        codebook_string = framework.to_prompt_string(
+            randomize=config.randomize_codebook,
+            zero_shot=getattr(config, 'zero_shot_prompt', False),
+            n_exemplars=getattr(config, 'prompt_n_exemplars', None),
+            include_subtle=getattr(config, 'prompt_include_subtle', True),
+            n_subtle=getattr(config, 'prompt_n_subtle', None),
+            include_adversarial=getattr(config, 'prompt_include_adversarial', True),
+            n_adversarial=getattr(config, 'prompt_n_adversarial', None),
+        )
+        return PURER_CUE_PROMPT_TEMPLATE.format(
+            framework_name=framework.name,
+            framework_description=framework.description,
+            codebook_string=codebook_string,
+            num_themes=framework.num_themes,
+            context_block=context_blk,
+            from_participant_text=from_text,
+            text=segment.text,
+        )
+
+    def parse_response(result_text: str) -> Optional[Dict]:
+        return _parse_single_run(result_text, name_to_id)
+
+    def merge_runs(parsed_runs: List[Optional[Dict]]) -> Dict:
+        padded = list(parsed_runs) + [None] * (config.n_runs - len(parsed_runs))
+        padded = padded[:config.n_runs]
+        consensus = vote_single_label(
+            padded,
+            rater_ids=rater_ids,
+            secondary_weight=getattr(config, 'evidence_secondary_weight', 0.6),
+            presence_threshold=getattr(config, 'evidence_presence_threshold', 0.5),
+        )
+        return {
+            'rater_ids': rater_ids,
+            'rater_votes': consensus['rater_votes'],
+            'consensus': consensus,
+        }
+
+    raw_results = classify_segments(
+        segments=target_segments,
+        client=client,
+        n_runs=config.n_runs,
+        build_prompt=build_prompt,
+        parse_response=parse_response,
+        merge_runs=merge_runs,
+        output_dir=config.output_dir,
+        save_interval=config.save_interval,
+        resume_from=resume_from,
+        file_prefix='purer_cue_results',
+        model_tag=model_clean,
+        per_run_models=per_run_models if use_per_run_models else None,
+    )
+
+    metadata_all: Dict[str, Any] = {}
+    for cu in cue_units:
+        sid = cu['segment'].segment_id
+        metadata_all[sid] = {
+            'segment_id': sid,
+            'text': cu['segment'].text,
+            'from_segment_id': cu['from_segment'].segment_id if cu.get('from_segment') else '',
+        }
+
+    return raw_results, metadata_all
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +519,7 @@ def classify_segments_zero_shot(
     config: ThemeClassificationConfig,
     resume_from: Optional[str] = None,
     process_logger=None,
+    utterance_role: str = 'participant',
 ) -> Tuple[Dict, Dict]:
     """
     Zero-shot classification of transcript segments using a ThemeFramework.
@@ -402,7 +598,10 @@ def classify_segments_zero_shot(
     os.makedirs(config.output_dir, exist_ok=True)
     model_clean = config.model.replace('/', '_')
 
-    target_segments = filter_participant_segments(segments)
+    # Callers are responsible for pre-filtering to the correct speaker role.
+    # Stage 3 (VAMMR) passes participant-only segments via _apply_speaker_filter.
+    # Stage 3c (PURER) passes therapist-only segments explicitly.
+    target_segments = list(segments)
     prompt_template = THEME_PROMPT_TEMPLATE
 
     # Merge trivially short segments into their neighbors before classification
@@ -438,6 +637,7 @@ def classify_segments_zero_shot(
             num_themes=framework.num_themes,
             text=segment.text,
             context_block=context_block,
+            utterance_role=utterance_role,
         )
 
     def parse_response(result_text: str) -> Optional[Dict]:

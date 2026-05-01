@@ -10,7 +10,8 @@ from ..stage_progression import compute_state_transition_matrix, compute_cross_s
 from process import output_paths as _paths
 from ._formatting import (
     _bar, _pct, _wrap_quote, _collect_therapist_cue, _summarize_cue,
-    _summarize_participant_text,
+    _summarize_participant_text, _collect_cue_block_purer_profile,
+    _format_purer_profile, _PURER_SHORT, _PURER_NAME,
 )
 
 
@@ -191,6 +192,52 @@ def _cross_session_example(df: pd.DataFrame, pid: str, sessions: list,
             'confidence': float(row.get('llm_confidence_primary', 0) or 0)}
 
 
+def _build_purer_transition_profiles(df_participant: pd.DataFrame, df_all: pd.DataFrame) -> dict:
+    """Return {(from_stage, to_stage): aggregated_purer_profile} for all within-session transitions.
+
+    Iterates all participant-to-participant transitions and collects the PURER
+    label distribution for each cue block, aggregated per (from_stage, to_stage).
+    Only non-self transitions are included. Returns {} if df_all is None or lacks
+    PURER columns.
+    """
+    if df_all is None or 'purer_primary' not in df_all.columns:
+        return {}
+
+    has_times = 'end_time_ms' in df_participant.columns and 'start_time_ms' in df_participant.columns
+    agg: dict = {}
+
+    for (pid, sid), group in df_participant.groupby(['participant_id', 'session_id']):
+        if 'speaker' in group.columns:
+            group = group[group['speaker'] != 'therapist']
+        group = group[group['final_label'].notna()].sort_values('segment_index')
+        if len(group) < 2:
+            continue
+        try:
+            labels = group['final_label'].astype(int).tolist()
+        except (ValueError, TypeError):
+            continue
+        end_times = group['end_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
+        start_times = group['start_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
+
+        for i in range(len(labels) - 1):
+            fr, to = labels[i], labels[i + 1]
+            if fr == to:
+                continue
+            profile = _collect_cue_block_purer_profile(
+                df_all, sid, end_times[i], start_times[i + 1],
+                include_secondary=True,
+            )
+            if not profile:
+                continue
+            key = (fr, to)
+            if key not in agg:
+                agg[key] = {}
+            for k, v in profile.items():
+                agg[key][k] = agg[key].get(k, 0) + v
+
+    return agg
+
+
 # ── Public report functions ────────────────────────────────────────────────────
 
 def generate_transition_explanation(
@@ -247,6 +294,38 @@ def generate_transition_explanation(
         lines.append(f'  {stage_names[fr]:<20} → {stage_names[to]:<20} {cnt:>4}x  [{direction}]')
     lines.append('')
 
+    # ── PURER × transition correlation table ──
+    _purer_profiles = _build_purer_transition_profiles(df, df_all if df_all is not None else df)
+    if _purer_profiles:
+        lines.append('PURER × TRANSITION CORRELATION  (within-session, non-self transitions)')
+        lines.append('─' * 70)
+        lines.append(
+            'PURER move distribution across all mediated cue blocks per transition type.\n'
+            'Primary and secondary PURER labels are both counted (secondary contributes\n'
+            'one count per cue block). Construct key: P=Phenomenology  U=Utilization\n'
+            'R=Reframing  E=Education  R2=Reinforcement\n'
+        )
+        non_self_pairs = [(cnt, fr, to) for cnt, fr, to in pairs if fr != to]
+        any_purer = False
+        for cnt, fr, to in non_self_pairs:
+            profile = _purer_profiles.get((fr, to), {})
+            if not profile:
+                continue
+            any_purer = True
+            total = sum(profile.values())
+            direction = 'forward' if to > fr else 'backward'
+            sorted_p = sorted(profile.items(), key=lambda x: -x[1])
+            purer_str = '  '.join(
+                f'{_PURER_SHORT.get(k, str(k))}×{v} ({100 * v // total}%)'
+                for k, v in sorted_p
+            )
+            fr_name = stage_names[fr]
+            to_name = stage_names[to]
+            lines.append(f'  {fr_name:<20} → {to_name:<20} [{direction}]:  {purer_str}')
+        if not any_purer:
+            lines.append('  [no PURER labels found for any transition]')
+        lines.append('')
+
     # Example quotes for all non-self transitions — one per (cohort, session), max 5 per pair
     non_self = [(cnt, fr, to) for cnt, fr, to in pairs if fr != to]
     if non_self:
@@ -266,17 +345,19 @@ def generate_transition_explanation(
                 )
                 # Collect cue first to determine if we should skip this example
                 _cue_raw = None
+                _cue_df = df_all if df_all is not None else df
                 if _show_cue:
                     _cue_raw = _collect_therapist_cue(
-                        df_all if df_all is not None else df,
+                        _cue_df,
                         ex['session_id'],
                         ex.get('from_end_ms', 0),
                         ex.get('to_start_ms', 0),
+                        annotate_purer=True,
                     )
                     # Skip examples with no cue when cue collection is enabled
                     if not _cue_raw:
                         continue
-                
+
                 lines.append(
                     f'  [{ex["participant_id"]}  {ex["session_id"]}  '
                     f'seg{ex["from_seg_idx"]:04d}→seg{ex["to_seg_idx"]:04d}]'
@@ -292,8 +373,15 @@ def generate_transition_explanation(
                     )
                     _cue_words = len(_cue_text.split())
                     _marker = ', summarized' if _was_summarized else ''
+                    _purer_profile = _collect_cue_block_purer_profile(
+                        _cue_df, ex['session_id'],
+                        ex.get('from_end_ms', 0), ex.get('to_start_ms', 0),
+                        include_secondary=True,
+                    )
+                    _purer_str = _format_purer_profile(_purer_profile)
+                    _purer_part = f' | PURER: {_purer_str}' if _purer_str else ''
                     lines.append(
-                        f'     CUE: [therapist, {_cue_words} words{_marker}] '
+                        f'     CUE: [therapist, {_cue_words} words{_marker}{_purer_part}] '
                         + _wrap_quote(_cue_text.strip(), indent=12).lstrip()
                     )
                 lines.append(
@@ -431,11 +519,19 @@ def generate_therapist_cues_report(
             fr, to = labels[i], labels[i + 1]
             if fr == to:
                 continue
-            cue = _collect_therapist_cue(_cue_df, sid, end_times[i], start_times[i + 1])
+            cue = _collect_therapist_cue(
+                _cue_df, sid, end_times[i], start_times[i + 1],
+                annotate_purer=True,
+            )
+            purer_profile = _collect_cue_block_purer_profile(
+                _cue_df, sid, end_times[i], start_times[i + 1],
+                include_secondary=True,
+            )
             transitions[(fr, to)].append((
                 str(texts[i]).strip(),
                 cue,
                 str(texts[i + 1]).strip(),
+                purer_profile,   # {construct_id: count} or {}
             ))
             total += 1
             if to > fr:
@@ -459,6 +555,37 @@ def generate_therapist_cues_report(
         'synthesis of all observed examples (LLM-summarized when over the word cap).\n'
     )
 
+    # ── PURER × transition comparison summary ──
+    _has_any_purer = any(
+        any(e[3] for e in entries if len(e) > 3)
+        for entries in transitions.values()
+    )
+    if _has_any_purer:
+        lines.append('PURER × TRANSITION COMPARISON')
+        lines.append('─' * 60)
+        lines.append(
+            'PURER move distribution per transition type (primary + secondary labels).\n'
+            'P=Phenomenology  U=Utilization  R=Reframing  E=Education  R2=Reinforcement\n'
+        )
+        for (fr, to), entries in sorted_pairs:
+            fr_name = stage_names.get(fr, str(fr))
+            to_name = stage_names.get(to, str(to))
+            direction = 'forward' if to > fr else ('backward' if to < fr else 'lateral')
+            med_profiles = [e[3] for e in entries if e[1] and len(e) > 3 and e[3]]
+            if not med_profiles:
+                continue
+            pagg: dict = {}
+            for p in med_profiles:
+                for k, v in p.items():
+                    pagg[k] = pagg.get(k, 0) + v
+            ptotal = sum(pagg.values())
+            pstr = '  '.join(
+                f'{_PURER_SHORT.get(k, str(k))}×{v} ({100 * v // ptotal}%)'
+                for k, v in sorted(pagg.items(), key=lambda x: -x[1])
+            )
+            lines.append(f'  {fr_name:<20} → {to_name:<20} [{direction}]:  {pstr}')
+        lines.append('')
+
     for (fr, to), entries in sorted_pairs:
         try:
             n = len(entries)
@@ -467,10 +594,28 @@ def generate_therapist_cues_report(
             to_name = stage_names.get(to, str(to))
             n_empty_cues = sum(1 for e in entries if not e[1])
 
+            # Aggregate PURER profiles across mediated (non-empty) cue blocks
+            mediated_profiles = [e[3] for e in entries if e[1] and len(e) > 3]
+            purer_agg: dict = {}
+            for profile in mediated_profiles:
+                for k, v in profile.items():
+                    purer_agg[k] = purer_agg.get(k, 0) + v
+            purer_total = sum(purer_agg.values())
+
+            if purer_total > 0:
+                sorted_purer = sorted(purer_agg.items(), key=lambda x: -x[1])
+                purer_str = '  '.join(
+                    f'{_PURER_SHORT.get(k, str(k))}×{v} ({100*v//purer_total}%)'
+                    for k, v in sorted_purer
+                )
+                purer_note = f'PURER (mediated): {purer_str}'
+            else:
+                purer_note = 'PURER: [none labeled]'
+
             lines.append(f'── {fr_name} → {to_name}  (n={n}, [{direction}])')
             lines.append('─' * 60)
             lines.append(
-                f'  n = {n}  |  empty cues (no therapist speech between segments): {n_empty_cues}'
+                f'  n = {n}  |  empty cues: {n_empty_cues}  |  {purer_note}'
             )
             lines.append('')
 
@@ -480,7 +625,7 @@ def generate_therapist_cues_report(
             if cue_texts:
                 # Only summarize transitions that have a therapist cue.
                 from_texts = [e[0] for e in cue_entries if e[0]]
-                to_texts = [e[2] for e in cue_entries if e[2]]
+                to_texts   = [e[2] for e in cue_entries if e[2]]
 
                 agg_from = ' || '.join(from_texts)
                 agg_from, _ = _summarize_participant_text(agg_from, llm_client, max_agg)

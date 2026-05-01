@@ -78,6 +78,19 @@ class Segment:
     codebook_disagreements: Optional[List[str]] = None
     codebook_confidence: Optional[Dict[str, float]] = None
 
+    # PURER label fields (populated by Stage 3c; only set when speaker == 'therapist')
+    purer_primary: Optional[int] = None
+    purer_secondary: Optional[int] = None
+    purer_confidence_primary: Optional[float] = None
+    purer_confidence_secondary: Optional[float] = None
+    purer_justification: Optional[str] = None
+    purer_run_consistency: Optional[int] = None
+    purer_agreement_level: Optional[str] = None
+    purer_agreement_fraction: Optional[float] = None
+    purer_needs_review: bool = False
+    purer_rater_ids: Optional[List[str]] = None
+    purer_rater_votes: Optional[List[Dict]] = None
+
     # Validation fields (populated after human coding comparison)
     human_label: Optional[int] = None
     human_secondary_label: Optional[int] = None
