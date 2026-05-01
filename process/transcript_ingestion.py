@@ -322,7 +322,8 @@ class ConversationalSegmenter:
         return sentences
 
     def extract_therapist_segments(
-        self, sentences: List[Dict], metadata: Dict
+        self, sentences: List[Dict], metadata: Dict,
+        max_gap_seconds: float = None,
     ) -> List['Segment']:
         """Build Segment objects for excluded (therapist) speakers from raw sentences.
 
@@ -345,6 +346,8 @@ class ConversationalSegmenter:
         if not therapist_sents:
             return []
 
+        gap_threshold = max_gap_seconds if max_gap_seconds is not None else self.max_gap_seconds
+
         segments: List['Segment'] = []
         block: List[Dict] = [therapist_sents[0]]
 
@@ -352,7 +355,7 @@ class ConversationalSegmenter:
             prev = block[-1]
             speaker_changed = sent.get('speaker', '') != prev.get('speaker', '')
             gap = sent.get('start', 0) - prev.get('end', 0)
-            if speaker_changed or gap > self.max_gap_seconds:
+            if speaker_changed or gap > gap_threshold:
                 segments.append(self._therapist_block_to_segment(block, metadata, len(segments)))
                 block = [sent]
             else:

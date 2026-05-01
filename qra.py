@@ -60,7 +60,7 @@ def _add_common_args(parser: argparse.ArgumentParser):
     # Framework & codebook
     parser.add_argument(
         '--framework', default=None,
-        help='Theme framework: "vammr" (default) or path to custom JSON',
+        help='Theme framework: "vaamr" (default) or path to custom JSON',
     )
     parser.add_argument(
         '--codebook', default=None,
@@ -142,9 +142,13 @@ def _add_common_args(parser: argparse.ArgumentParser):
 
 def _load_framework(framework_arg):
     """Load a ThemeFramework from preset name or JSON path."""
-    if framework_arg is None or framework_arg == 'vammr':
-        from theme_framework.vammr import get_vammr_framework
-        return get_vammr_framework()
+    if framework_arg is None or framework_arg == 'vaamr':
+        from theme_framework.vaamr import get_vaamr_framework
+        return get_vaamr_framework()
+    if framework_arg == 'vammr':
+        raise ValueError(
+            'The "vammr" preset is deprecated. Use "vaamr" or a custom framework JSON.'
+        )
     # Custom JSON path
     with open(framework_arg) as f:
         fw_data = json.load(f)
@@ -312,12 +316,12 @@ def _flatten_wizard_config(data: dict) -> dict:
     # Pass through sub-config dicts directly
     for key in ('segmentation', 'speaker_filter', 'theme_classification', 'codebook_embedding',
                 'codebook_llm', 'codebook_ensemble', 'validation', 'confidence_tiers',
-                'test_sets'):
+                'test_sets', 'purer_classification', 'purer_cue'):
         if key in data:
             result[key] = data[key]
 
     # Copy top-level keys that are already flat
-    for key in ('resume_from', 'autoresearch_dir'):
+    for key in ('resume_from', 'autoresearch_dir', 'run_purer_labeler'):
         if key in data:
             result[key] = data[key]
 
@@ -339,7 +343,7 @@ def cmd_setup(args):
     if _prompt_yes_no_simple("Run pipeline now?", True):
         config = build_config_from_wizard_data(result['config_data'])
         framework_spec = result['config_data'].get('framework', {})
-        framework = _load_framework(framework_spec.get('custom_path') or framework_spec.get('preset', 'vammr'))
+        framework = _load_framework(framework_spec.get('custom_path') or framework_spec.get('preset', 'vaamr'))
 
         codebook = None
         if config.run_codebook_classifier:
@@ -363,7 +367,7 @@ def cmd_run(args):
         with open(args.config) as f:
             file_data = json.load(f)
         fw = file_data.get('framework', {})
-        framework_arg = fw.get('custom_path') or fw.get('preset', 'vammr')
+        framework_arg = fw.get('custom_path') or fw.get('preset', 'vaamr')
     framework = _load_framework(framework_arg)
 
     # Load codebook
@@ -910,7 +914,7 @@ def cmd_testsets(args):
         with open(args.config) as f:
             fw_data = json.load(f)
         fw = fw_data.get('framework', {})
-        framework_arg = fw.get('custom_path') or fw.get('preset', 'vammr')
+        framework_arg = fw.get('custom_path') or fw.get('preset', 'vaamr')
     framework = _load_framework(framework_arg)
 
     # Determine codebook status
@@ -1231,7 +1235,7 @@ Examples:
     )
     testsets_parser.add_argument(
         '--framework', default=None,
-        help='Theme framework: "vammr" (default) or path to custom JSON',
+        help='Theme framework: "vaamr" (default) or path to custom JSON',
     )
     testsets_parser.add_argument(
         '--n-sets', type=int, default=2,

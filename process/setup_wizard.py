@@ -16,7 +16,7 @@ import os
 from typing import Optional, List
 
 from theme_framework.theme_schema import ThemeFramework
-from theme_framework.vammr import get_vammr_framework
+from theme_framework.vaamr import get_vaamr_framework
 from theme_framework.config import ThemeClassificationConfig
 from codebook.config import EmbeddingClassifierConfig
 from .config import (
@@ -26,6 +26,7 @@ from .config import (
     TestSetConfig,
     ConfidenceTierConfig,
     TherapistCueConfig,
+    PurerCueConfig,
     SessionSummariesConfig,
     ParticipantSummariesConfig,
 )
@@ -47,12 +48,14 @@ _PRESET_SMALL = {
         '    Run 1: nvidia/nemotron-3-nano-4b  (primary)\n'
         '    Run 2: google/gemma-4-e2b\n'
         '    Run 3: qwen/qwen3-8b\n'
+        '  PURER classification   : nvidia/nemotron-3-nano-4b  (single-run)\n'
         '  Summarization model    : nvidia/nemotron-3-nano-4b\n'
-        '  Framework              : VAMMR\n'
+        '  Framework              : VAAMR\n'
         '  Codebook classification: disabled'
     ),
     'segmentation_embedding_model': 'all-MiniLM-L6-v2',
     'primary_model': 'nvidia/nemotron-3-nano-4b',
+    'purer_model': 'nvidia/nemotron-3-nano-4b',
     'summarization_model': _DEFAULT_SUMMARIZATION_MODEL,
     'per_run_models': [
         'nvidia/nemotron-3-nano-4b',
@@ -61,8 +64,8 @@ _PRESET_SMALL = {
     ],
     'n_runs': 3,
     'temperature': 0.1,
-    'framework': 'vammr',
-    'run_codebook_classifier': False,
+    'framework': 'vaamr',
+    'run_codebook_classifier': True,
 }
 
 _PRESET_PRODUCTION = {
@@ -74,12 +77,14 @@ _PRESET_PRODUCTION = {
         '    Run 1: qwen/qwen3-next-80b  (primary)\n'
         '    Run 2: google/gemma-4-31b\n'
         '    Run 3: nvidia/nemotron-3-super\n'
+        '  PURER classification   : nvidia/nemotron-3-super  (single-run)\n'
         '  Summarization model    : nvidia/nemotron-3-nano-4b\n'
-        '  Framework              : VAMMR\n'
+        '  Framework              : VAAMR\n'
         '  Codebook classification: disabled'
     ),
     'segmentation_embedding_model': 'Qwen/Qwen3-Embedding-8B',
     'primary_model': 'qwen/qwen3-next-80b',
+    'purer_model': 'nvidia/nemotron-3-super',
     'summarization_model': _DEFAULT_SUMMARIZATION_MODEL,
     'per_run_models': [
         'qwen/qwen3-next-80b',
@@ -88,7 +93,7 @@ _PRESET_PRODUCTION = {
     ],
     'n_runs': 3,
     'temperature': 0.1,
-    'framework': 'vammr',
+    'framework': 'vaamr',
     'run_codebook_classifier': False,
 }
 
@@ -389,29 +394,58 @@ class SetupWizard:
         if not therapists:
             print("    No therapists identified — all speakers treated as participants.")
 
-        exclude_from_classification = True
+        # Phase B: always exclude therapists from VAAMR participant classification.
         if therapists:
-            print()
-            print("    Therapist utterances can be excluded from classification")
-            print("    while still being used as conversational context.")
-            exclude_from_classification = _prompt_yes_no(
-                "Exclude therapist utterances from classification?", True
-            )
-
-        if therapists and exclude_from_classification:
-            print(f"    Therapists (excluded from classification): {therapists}")
+            print(f"    Therapists identified: {therapists}")
+            print("    Therapist segments will be excluded from VAAMR participant-stage")
+            print("    classification. They will be classified separately via PURER (see below).")
             self.config_data['speaker_filter'] = {
                 'mode': 'exclude',
                 'speakers': therapists,
             }
-        elif therapists:
-            print(f"    Therapists (included in classification): {therapists}")
-            self.config_data['speaker_filter'] = {
-                'mode': 'none',
-                'speakers': therapists,
-            }
         else:
             self.config_data['speaker_filter'] = {'mode': 'none', 'speakers': []}
+
+        # Phase C: PURER enable prompt + cue-unit options.
+        if therapists:
+            print()
+            print("--- PURER Therapist Classification ---")
+            print("    Classifies therapist guided-inquiry moves at the cue-block level:")
+            print("    one PURER label per therapist response between participant turns.")
+            print("      P  — Phenomenological    (step-by-step experience breakdown)")
+            print("      U  — Utilization          (prompting future real-world application)")
+            print("      R  — Reframing            (translating participant report to key concept)")
+            print("      E  — Education/Expectancy (psychoeducation and expectancy-setting)")
+            print("      R2 — Reinforcement        (selectively encouraging and affirming practice)")
+            print()
+            print("    Enables PURER × VAAMR cue-block influence analysis: which therapist")
+            print("    moves precede which participant stage transitions.")
+            print()
+            run_purer = _prompt_yes_no("Enable PURER classification for therapist dialogue?", True)
+            self.config_data['run_purer_labeler'] = run_purer
+            if run_purer:
+                print("    PURER classification enabled.")
+                print()
+                print("    PURER cue options:")
+                skip_lessons = _prompt_yes_no(
+                    "    Skip long didactic segments (lesson content, guided meditation scripts)?",
+                    True,
+                )
+                self.config_data.setdefault('purer_cue', {})
+                self.config_data['purer_cue']['skip_lesson_content'] = skip_lessons
+                if skip_lessons:
+                    max_words = _prompt_int(
+                        "    Max words before a cue is treated as lesson content", 400
+                    )
+                    self.config_data['purer_cue']['max_lesson_words'] = max_words
+                    print(f"    Cue blocks > {max_words} words will be skipped.")
+                print("    Context: uses the same conversational context logic as VAAMR")
+                print("    classification, with a wider window (purer_classification")
+                print("    context_window_segments, default 6 vs 2 for participants).")
+            else:
+                print("    Therapist dialogue will be stored without PURER labels.")
+        else:
+            self.config_data['run_purer_labeler'] = False
         print()
 
     def _prompt_therapist_selection(self, discovered: dict) -> List[str]:
@@ -466,8 +500,12 @@ class SetupWizard:
             print(f"      Run {i + 1}: {m}{label}")
         print()
 
+        purer_model = preset.get('purer_model', preset['primary_model'])
+        print(f"    PURER classification model: {purer_model}  (single-run, n_runs=1)")
+        print()
+
         lmstudio_url = _prompt("LM Studio server URL", 'http://10.0.0.58:1234/v1')
-        self.config_data['theme_classification'] = {
+        classification_config = {
             'backend': 'lmstudio',
             'model': preset['primary_model'],
             'summarization_model': preset['summarization_model'],
@@ -475,6 +513,17 @@ class SetupWizard:
             'n_runs': preset['n_runs'],
             'temperature': preset['temperature'],
             'per_run_models': preset['per_run_models'],
+        }
+        self.config_data['theme_classification'] = dict(classification_config)
+        # PURER uses a single NeMo model with n_runs=1 (no multi-run IRR needed)
+        self.config_data['purer_classification'] = {
+            'backend': 'lmstudio',
+            'model': purer_model,
+            'summarization_model': preset['summarization_model'],
+            'lmstudio_base_url': lmstudio_url,
+            'n_runs': 1,
+            'temperature': preset['temperature'],
+            'per_run_models': [],
         }
         print()
 
@@ -498,8 +547,8 @@ class SetupWizard:
         }
 
         # Framework
-        self.config_data['framework'] = {'preset': 'vammr'}
-        self.framework = get_vammr_framework()
+        self.config_data['framework'] = {'preset': 'vaamr'}
+        self.framework = get_vaamr_framework()
 
         # Feature flags
         self.config_data['pipeline']['run_codebook_classifier'] = False
@@ -510,13 +559,15 @@ class SetupWizard:
             'medium_min_confidence': 0.6,
         }
 
+        purer_model = preset.get('purer_model', preset['primary_model'])
         print(f"--- Applied {preset['label']} Preset ---")
         print(f"    Segmentation embedding : {preset['segmentation_embedding_model']}")
-        print(f"    Framework              : VAMMR ({self.framework.num_themes} themes)")
+        print(f"    Framework              : VAAMR ({self.framework.num_themes} themes)")
         print(f"    Classification runs    : {preset['n_runs']}")
         for i, m in enumerate(preset['per_run_models']):
             label = ' (primary)' if i == 0 else f' (checker {i})'
             print(f"      Run {i + 1}: {m}{label}")
+        print(f"    PURER model            : {purer_model}  (single-run, n_runs=1)")
         print(f"    Summarization model    : {preset['summarization_model']}")
         print(f"    Codebook classification: disabled")
         print(f"    Confidence thresholds  : high ≥ 0.8, medium ≥ 0.6")
@@ -745,15 +796,15 @@ class SetupWizard:
         print()
         print("    THEME FRAMEWORK")
         print("    Defines the coding scheme applied to each participant segment.")
-        print("    VAMMR (Values, Actions, Motivational states, Meaning-making,")
-        print("    and Regulatory processes) is the validated framework for this study.")
+        print("    VAAMR (Vigilance, Avoidance, Attention Regulation, Metacognition,")
+        print("    Reappraisal) is the validated framework for this study.")
         print("    A custom framework JSON can be used for other qualitative coding systems.")
         print()
-        choice = _prompt_choice("Framework", ['vammr', 'custom'], 'vammr')
+        choice = _prompt_choice("Framework", ['vaamr', 'custom'], 'vaamr')
 
-        if choice == 'vammr':
-            self.framework = get_vammr_framework()
-            self.config_data['framework'] = {'preset': 'vammr'}
+        if choice == 'vaamr':
+            self.framework = get_vaamr_framework()
+            self.config_data['framework'] = {'preset': 'vaamr'}
         else:
             path = _prompt("Path to custom framework JSON")
             self.config_data['framework'] = {'custom_path': path}
@@ -1034,6 +1085,11 @@ class SetupWizard:
             print("    independent ratings. Consider using distinct model families.")
 
         self.config_data['theme_classification']['per_run_models'] = per_run_models
+        # Propagate to PURER classification as default (user can override separately)
+        self.config_data.setdefault('purer_classification', {})
+        if not self.config_data['purer_classification'].get('per_run_models'):
+            self.config_data['purer_classification']['per_run_models'] = per_run_models
+            self.config_data['purer_classification']['n_runs'] = n_runs
         print(f"    Configured {n_runs} rater models:")
         for i, m in enumerate(per_run_models):
             label = " (primary)" if i == 0 else f" (checker {i})"
@@ -1211,6 +1267,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
 
     pipeline = data.get('pipeline', {})
     tc = data.get('theme_classification', {})
+    pc = data.get('purer_classification', {}) or tc
     cb_emb = data.get('codebook_embedding', {})
     ct = data.get('confidence_tiers', {})
     sf = data.get('speaker_filter', {})
@@ -1272,6 +1329,26 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             evidence_secondary_weight=tc.get('evidence_secondary_weight', 0.6),
             evidence_presence_threshold=tc.get('evidence_presence_threshold', 0.5),
         ),
+        purer_classification=ThemeClassificationConfig(
+            backend=backend,
+            model=pc.get('model', tc.get('model', 'openai/gpt-4o')),
+            summarization_model=pc.get('summarization_model', tc.get('summarization_model', 'nvidia/nemotron-3-nano-4b')),
+            models=pc.get('models', tc.get('models', [])),
+            per_run_models=pc.get('per_run_models', tc.get('per_run_models', [])),
+            n_runs=pc.get('n_runs', tc.get('n_runs', 3)),
+            temperature=pc.get('temperature', tc.get('temperature', 0.0)),
+            api_key=api_key,
+            replicate_api_token=replicate_token,
+            lmstudio_base_url=pc.get('lmstudio_base_url', tc.get('lmstudio_base_url', 'http://127.0.0.1:1234/')),
+            zero_shot_prompt=pc.get('zero_shot_prompt', tc.get('zero_shot_prompt', False)),
+            prompt_n_exemplars=pc.get('prompt_n_exemplars', tc.get('prompt_n_exemplars')),
+            prompt_include_subtle=pc.get('prompt_include_subtle', tc.get('prompt_include_subtle', True)),
+            prompt_n_subtle=pc.get('prompt_n_subtle', tc.get('prompt_n_subtle')),
+            prompt_include_adversarial=pc.get('prompt_include_adversarial', tc.get('prompt_include_adversarial', True)),
+            prompt_n_adversarial=pc.get('prompt_n_adversarial', tc.get('prompt_n_adversarial')),
+            evidence_secondary_weight=pc.get('evidence_secondary_weight', tc.get('evidence_secondary_weight', 0.6)),
+            evidence_presence_threshold=pc.get('evidence_presence_threshold', tc.get('evidence_presence_threshold', 0.5)),
+        ),
         codebook_embedding=EmbeddingClassifierConfig(
             two_pass=cb_emb.get('two_pass', True),
             embedding_model=cb_emb.get('embedding_model', 'Qwen/Qwen3-Embedding-8B'),
@@ -1291,6 +1368,11 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         therapist_cues=TherapistCueConfig(
             **{k: v for k, v in data.get('therapist_cues', {}).items()
                if k in ('enabled', 'max_length_per_cue', 'max_length_of_average_cue_responses')}
+        ),
+        purer_cue=PurerCueConfig(
+            **{k: v for k, v in data.get('purer_cue', {}).items()
+               if k in ('skip_lesson_content', 'max_lesson_words',
+                        'therapist_max_gap_seconds', 'max_context_words')}
         ),
         session_summaries=SessionSummariesConfig(
             **{k: v for k, v in data.get('session_summaries', {}).items()

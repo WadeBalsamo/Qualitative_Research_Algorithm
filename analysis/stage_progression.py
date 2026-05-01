@@ -2,8 +2,6 @@
 analysis/stage_progression.py
 -----------------------------
 Per-participant session stage progression and state transition analysis.
-
-Replaces the per-session-only logic previously in process/dataset_assembly.py
 with proper (participant_id, session_id) granularity.
 """
 
