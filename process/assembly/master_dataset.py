@@ -98,6 +98,22 @@ def assemble_master_dataset(
             'codebook_labels_llm': seg.codebook_labels_llm,
             'codebook_labels_ensemble': seg.codebook_labels_ensemble,
             'codebook_disagreements': seg.codebook_disagreements,
+            # PURER labels (therapist segments only; None for participant segments)
+            'purer_primary': getattr(seg, 'purer_primary', None),
+            'purer_secondary': getattr(seg, 'purer_secondary', None),
+            'purer_confidence_primary': getattr(seg, 'purer_confidence_primary', None),
+            'purer_confidence_secondary': getattr(seg, 'purer_confidence_secondary', None),
+            'purer_justification': getattr(seg, 'purer_justification', None),
+            'purer_run_consistency': getattr(seg, 'purer_run_consistency', None),
+            'purer_agreement_level': getattr(seg, 'purer_agreement_level', None),
+            'purer_agreement_fraction': getattr(seg, 'purer_agreement_fraction', None),
+            'purer_needs_review': getattr(seg, 'purer_needs_review', False),
+            'purer_rater_ids': (
+                json.dumps(v) if (v := getattr(seg, 'purer_rater_ids', None)) else None
+            ),
+            'purer_rater_votes': (
+                json.dumps(v) if (v := getattr(seg, 'purer_rater_votes', None)) else None
+            ),
             # Validation
             'human_label': seg.human_label,
             'human_secondary_label': seg.human_secondary_label,

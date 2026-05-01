@@ -166,3 +166,8 @@ def master_segments_dir(run_dir: str) -> str:
 def training_data_dir(run_dir: str) -> str:
     """BERT-ready JSONL training files and label_map.json."""
     return os.path.join(run_dir, '02_meta', 'training_data')
+
+
+def session_summaries_json_path(run_dir: str) -> str:
+    """Machine-readable session summaries JSON (analysis data, not reports)."""
+    return os.path.join(run_dir, '03_analysis_data', 'session_summaries.json')

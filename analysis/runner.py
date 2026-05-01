@@ -283,10 +283,12 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
     # ----------------------------------------------------------------
     log("[8/8] Generating analysis figures...")
     try:
-        from .figures import generate_all_figures
+        from .figures import generate_all_figures, generate_all_session_stage_timelines
         fig_paths = generate_all_figures(df, framework, output_dir)
         files_generated.extend(fig_paths)
-        log(f"    {len(fig_paths)} figures written.")
+        timeline_paths = generate_all_session_stage_timelines(df, framework, output_dir)
+        files_generated.extend(timeline_paths)
+        log(f"    {len(fig_paths) + len(timeline_paths)} figures written ({len(timeline_paths)} session timelines).")
     except Exception as e:
         print(f"  Warning: figure generation failed: {e}")
         if verbose:
@@ -350,9 +352,8 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                     max_words=session_summaries_config.max_words_per_session,
                 )
                 from process import output_paths as _paths2
-                _ssum_dir = _paths2.human_reports_dir(output_dir)
-                txt_paths.append(os.path.join(_ssum_dir, 'session_summaries.json'))
-                txt_paths.append(os.path.join(_ssum_dir, 'session_summaries.txt'))
+                txt_paths.append(_paths2.session_summaries_json_path(output_dir))
+                txt_paths.append(os.path.join(_paths2.human_reports_dir(output_dir), 'session_summaries.txt'))
                 log(f"    Session summaries generated for {len(session_summaries)} sessions.")
             except Exception as _e:
                 print(f"  Warning: session summaries generation failed: {_e}")
@@ -383,6 +384,50 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
         print(f"  Warning: text report generation failed: {e}")
         if verbose:
             traceback.print_exc()
+
+    # ----------------------------------------------------------------
+    # 10. PURER × VAMMR influence analysis (when PURER labels exist)
+    # ----------------------------------------------------------------
+    _has_purer = (
+        df_all is not None
+        and 'purer_primary' in df_all.columns
+        and df_all['purer_primary'].notna().any()
+    )
+    if df_all is not None:
+        try:
+            from .purer_analysis import run_purer_analysis
+            from .purer_figures import generate_purer_figures
+            log("[10/8] Running PURER × VAMMR cue-block influence analysis...")
+            purer_result = run_purer_analysis(df_all, output_dir, framework=framework)
+            files_generated.extend(purer_result.get('files_written', []))
+            n_blocks  = purer_result.get('n_cue_blocks', 0)
+            n_empty   = purer_result.get('n_empty', 0)
+            n_labeled = purer_result.get('purer_labeled', 0)
+
+            if n_labeled > 0:
+                log(
+                    f"    {n_blocks} cue blocks: {n_empty} empty, "
+                    f"{n_labeled} PURER-labeled."
+                )
+                try:
+                    fig_paths = generate_purer_figures(
+                        purer_result['influence'], framework, output_dir
+                    )
+                    files_generated.extend(fig_paths)
+                    log(f"    PURER figures: {[os.path.basename(p) for p in fig_paths]}")
+                except Exception as _fe:
+                    print(f"  Warning: PURER figures failed: {_fe}")
+                    if verbose:
+                        traceback.print_exc()
+            else:
+                log(
+                    f"    {n_blocks} cue blocks built ({n_empty} empty). "
+                    "No PURER labels yet — re-run pipeline with run_purer_labeler=True."
+                )
+        except Exception as e:
+            print(f"  Warning: PURER analysis failed: {e}")
+            if verbose:
+                traceback.print_exc()
 
     try:
         from process.output_index import write_index

@@ -28,7 +28,11 @@ from classification_tools.llm_classifier import (
     create_content_validity_test_set,
     LLMCodebookClassifier,
 )
-from classification_tools.response_parser import parse_all_results
+from classification_tools.response_parser import parse_all_results, parse_purer_results
+from classification_tools.llm_classifier import (
+    classify_purer_cue_units as _classify_purer_cue_units,
+    _build_context_block as _build_context_block_for_purer,
+)
 from theme_framework.theme_schema import ThemeFramework
 
 from .config import PipelineConfig
@@ -294,8 +298,11 @@ def run_full_pipeline(
 
         # Interleave therapist segments so _collect_therapist_cue() can find
         # them between participant segment indices in the master dataset.
+        # Use therapist_max_gap_seconds (from purer_cue config) so long pauses
+        # within guided meditation or psychoeducation don't create artificial splits.
+        _th_gap = getattr(getattr(config, 'purer_cue', None), 'therapist_max_gap_seconds', 120.0)
         therapist_segs = segmenter.extract_therapist_segments(
-            session_data['sentences'], metadata
+            session_data['sentences'], metadata, max_gap_seconds=_th_gap,
         )
         if therapist_segs:
             combined = sorted(segments + therapist_segs, key=lambda s: s.start_time_ms)
@@ -451,6 +458,250 @@ def run_full_pipeline(
         observer.on_stage_progress(
             "Zero-Shot LLM Theme Classification",
             "Skipping theme classification (run_theme_labeler=False)",
+        )
+
+    # ------------------------------------------------------------------
+    # Stage 3c: PURER Cue-Unit Classification (optional)
+    #
+    # Classifies therapist cue blocks — one PURER label per therapist
+    # response between two consecutive participant turns — rather than
+    # classifying every individual therapist segment in isolation.
+    #
+    # Workflow:
+    #   1. Identify all participant segments with VAMMR labels (Stage 3 done)
+    #   2. For each consecutive pair (from, to), collect all therapist segments
+    #      whose timestamps fall between them → one cue block
+    #   3. If skip_lesson_content=True and the cue text exceeds max_lesson_words
+    #      → skip (long didactic stretch, not an interactive response cue)
+    #   4. Build exchange context for each cue (N preceding back-and-forths)
+    #   5. Classify each cue block with PURER as a single unit
+    #   6. Write the resulting label back to all constituent therapist segments
+    # ------------------------------------------------------------------
+    _has_therapists = any(s.speaker == 'therapist' for s in all_segments)
+    if config.run_purer_labeler and _has_therapists:
+        observer.on_stage_start(
+            "PURER Cue-Unit Classification", "3c",
+            explanation_key='purer_classification',
+        )
+
+        from theme_framework.purer import get_purer_framework
+        purer_framework = get_purer_framework()
+
+        purer_cfg    = config.purer_classification
+        purer_cue    = getattr(config, 'purer_cue', None)
+        purer_cfg.output_dir = _paths.auditable_logs_dir(output_dir)
+
+        # Inherit backend/model/credentials from VAAMR when purer_cfg was not
+        # explicitly configured (e.g. old configs without purer_classification key).
+        tc = config.theme_classification
+        _purer_default_model = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'
+        if not purer_cfg.model or purer_cfg.model == _purer_default_model:
+            purer_cfg.model    = tc.model
+            purer_cfg.backend  = tc.backend
+            purer_cfg.api_key  = tc.api_key
+            purer_cfg.replicate_api_token = tc.replicate_api_token
+            purer_cfg.lmstudio_base_url   = getattr(tc, 'lmstudio_base_url',
+                                                     'http://127.0.0.1:1234/v1')
+            purer_cfg.temperature = tc.temperature
+        if not getattr(purer_cfg, 'per_run_models', None):
+            inherited = list(getattr(tc, 'per_run_models', []))
+            if inherited:
+                purer_cfg.per_run_models = inherited
+                purer_cfg.n_runs = len(inherited)
+            else:
+                # No multi-model setup: degrade to single-run
+                purer_cfg.n_runs = 1
+
+        skip_lessons      = getattr(purer_cue, 'skip_lesson_content', False)
+        max_lesson_words  = getattr(purer_cue, 'max_lesson_words', 400)
+        max_ctx_words     = getattr(purer_cue, 'max_context_words', 1000)
+        th_gap_secs       = getattr(purer_cue, 'therapist_max_gap_seconds', 120.0)
+        # Context window: how many preceding segments to include.
+        # Uses purer_classification.context_window_segments (default 6) rather
+        # than the hardcoded VAMMR default of 2, giving PURER wider conversational
+        # context through the same _build_context_block() logic.
+        ctx_window        = getattr(purer_cfg, 'context_window_segments', 6)
+
+        # Sort the interleaved list by start time for reliable context lookup
+        sorted_segs = sorted(all_segments, key=lambda s: s.start_time_ms)
+
+        # Build a fast segment_id → index map over the sorted list so we can
+        # call _build_context_block(sorted_segs, from_idx, ctx_window) cheaply.
+        seg_id_to_idx = {s.segment_id: i for i, s in enumerate(sorted_segs)}
+
+        # Gather participant segments that have VAMMR labels, grouped by session
+        from collections import defaultdict as _dd
+        segs_by_session: dict = _dd(list)
+        for s in sorted_segs:
+            if s.speaker == 'participant' and s.primary_stage is not None:
+                segs_by_session[s.session_id].append(s)
+
+        # Index therapist segments by session for fast range lookup
+        th_by_session: dict = _dd(list)
+        for s in sorted_segs:
+            if s.speaker == 'therapist':
+                th_by_session[s.session_id].append(s)
+
+        # Build cue units across all sessions
+        cue_units = []        # list of dicts passed to classify_purer_cue_units
+        cue_constituents = [] # parallel list: list of therapist Segments per cue
+
+        skipped_lessons = 0
+        skipped_empty   = 0
+
+        for session_id, p_segs in segs_by_session.items():
+            th_segs = th_by_session.get(session_id, [])
+            if not th_segs:
+                skipped_empty += len(p_segs) - 1
+                continue
+
+            for i in range(len(p_segs) - 1):
+                from_seg = p_segs[i]
+                to_seg   = p_segs[i + 1]
+
+                # Collect therapist segments whose timestamps fall in this window.
+                # Use the therapist_max_gap_seconds to collapse gaps within the
+                # window (sequential therapist sentences are already merged by
+                # extract_therapist_segments, so this is mostly for safety).
+                between = [
+                    t for t in th_segs
+                    if t.start_time_ms < to_seg.start_time_ms    # segment starts before window ends
+                    and t.end_time_ms > from_seg.end_time_ms      # segment ends after window starts
+                ]
+
+                if not between:
+                    skipped_empty += 1
+                    continue
+
+                # Concatenate all therapist turns in the window
+                cue_text = '\n'.join(t.text.strip() for t in between if t.text.strip())
+                cue_words = len(cue_text.split())
+
+                if skip_lessons and cue_words > max_lesson_words:
+                    skipped_lessons += 1
+                    continue
+
+                # Build conversational context using the same _build_context_block
+                # logic as VAMMR participant classification, but with the wider
+                # ctx_window and larger max_ctx_words configured for PURER.
+                from_idx = seg_id_to_idx.get(from_seg.segment_id, -1)
+                if from_idx >= 0:
+                    exchange_ctx = _build_context_block_for_purer(
+                        sorted_segs, from_idx,
+                        window_size=ctx_window,
+                        max_words=max_ctx_words,
+                    )
+                else:
+                    exchange_ctx = ''
+
+                # Create a synthetic Segment representing the whole cue block
+                synthetic_id = f'purer_cue_{from_seg.segment_id}_to_{to_seg.segment_id}'
+                synthetic = Segment(
+                    segment_id=synthetic_id,
+                    trial_id=from_seg.trial_id,
+                    session_id=session_id,
+                    session_number=from_seg.session_number,
+                    cohort_id=from_seg.cohort_id,
+                    speaker='therapist',
+                    text=cue_text,
+                    word_count=cue_words,
+                    start_time_ms=between[0].start_time_ms,
+                    end_time_ms=between[-1].end_time_ms,
+                )
+
+                cue_units.append({
+                    'segment':       synthetic,
+                    'from_segment':  from_seg,
+                    'to_segment':    to_seg,
+                    'context_block': exchange_ctx,
+                })
+                cue_constituents.append(between)
+
+        observer.on_stage_progress(
+            "PURER Cue-Unit Classification",
+            f"{len(cue_units)} cue blocks to classify  "
+            f"({skipped_empty} empty, {skipped_lessons} lesson-content skipped)",
+        )
+
+        if cue_units:
+            try:
+                purer_results, _ = _classify_purer_cue_units(
+                    cue_units=cue_units,
+                    framework=purer_framework,
+                    config=purer_cfg,
+                    resume_from=config.resume_from,
+                    process_logger=plog,
+                )
+            except Exception as _purer_err:
+                import traceback as _tb
+                _err_path = os.path.join(output_dir, 'purer_classification_error.txt')
+                with open(_err_path, 'w') as _ef:
+                    _ef.write(f"PURER Stage 3c failed: {_purer_err}\n\n")
+                    _ef.write(_tb.format_exc())
+                observer.on_stage_complete(
+                    "PURER Cue-Unit Classification",
+                    f"PURER FAILED — {_purer_err}. "
+                    f"Error written to purer_classification_error.txt. "
+                    "Pipeline continues with VAAMR results only.",
+                )
+                purer_results = {}
+
+            # Propagate the cue-level PURER label to every constituent
+            # therapist segment so that all downstream report code that reads
+            # purer_primary from individual segments continues to work.
+            total_propagated = 0
+            for cu, constituents in zip(cue_units, cue_constituents):
+                sid = cu['segment'].segment_id
+                result = purer_results.get(sid)
+                if not isinstance(result, dict):
+                    continue
+                consensus = result.get('consensus', {})
+                primary   = consensus.get('primary_stage')
+                if primary is None:
+                    continue
+                for th_seg in constituents:
+                    th_seg.purer_primary            = primary
+                    th_seg.purer_secondary          = consensus.get('secondary_stage')
+                    th_seg.purer_confidence_primary = consensus.get('primary_confidence', 0.0)
+                    th_seg.purer_confidence_secondary = consensus.get('secondary_confidence')
+                    th_seg.purer_justification      = consensus.get('justification', '')
+                    th_seg.purer_run_consistency    = consensus.get('n_agree', 0)
+                    th_seg.purer_agreement_level    = consensus.get('agreement_level')
+                    n_agree  = consensus.get('n_agree', 0)
+                    n_raters = consensus.get('n_raters', 1) or 1
+                    th_seg.purer_agreement_fraction = n_agree / n_raters
+                    th_seg.purer_needs_review       = bool(consensus.get('needs_review', False))
+                    th_seg.purer_rater_ids          = result.get('rater_ids') or []
+                    th_seg.purer_rater_votes        = result.get('rater_votes') or []
+                    total_propagated += 1
+
+            if purer_results:
+                n_classified = sum(
+                    1 for cu in cue_units
+                    if purer_results.get(cu['segment'].segment_id, {})
+                                 .get('consensus', {})
+                                 .get('primary_stage') is not None
+                )
+                observer.on_stage_complete(
+                    "PURER Cue-Unit Classification",
+                    f"PURER complete — {n_classified}/{len(cue_units)} cue blocks classified, "
+                    f"{total_propagated} constituent therapist segments labeled",
+                )
+        else:
+            observer.on_stage_complete(
+                "PURER Cue-Unit Classification",
+                "No cue blocks to classify (all cues empty or skipped)",
+            )
+
+    elif config.run_purer_labeler and not _has_therapists:
+        observer.on_stage_progress(
+            "PURER Cue-Unit Classification",
+            "Skipping PURER — no therapist speakers found in session data",
+        )
+    else:
+        observer.on_stage_progress(
+            "PURER Cue-Unit Classification",
+            "Skipping PURER classification (run_purer_labeler=False)",
         )
 
     # ------------------------------------------------------------------

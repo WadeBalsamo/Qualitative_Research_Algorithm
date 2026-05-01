@@ -53,14 +53,16 @@ def generate_session_summaries(
             summaries[sid] = text
 
     # ── Write JSON ────────────────────────────────────────────────────────────
-    out_dir = _paths.human_reports_dir(output_dir)
-    os.makedirs(out_dir, exist_ok=True)
+    json_dir = _paths.analysis_data_dir(output_dir)
+    os.makedirs(json_dir, exist_ok=True)
 
-    json_path = os.path.join(out_dir, 'session_summaries.json')
+    json_path = os.path.join(json_dir, 'session_summaries.json')
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(summaries, f, indent=2, ensure_ascii=False)
 
     # ── Write human-readable txt ──────────────────────────────────────────────
+    out_dir = _paths.human_reports_dir(output_dir)
+    os.makedirs(out_dir, exist_ok=True)
     lines = []
     lines.append('SESSION THERAPIST SUMMARIES')
     lines.append('=' * 60)
