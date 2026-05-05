@@ -72,12 +72,55 @@ class ValidationConfig:
 
 
 @dataclass
-class TestSetConfig:
-    """Parameters for cross-session validation test set generation."""
-    enabled: bool = True
-    n_sets: int = 2
+class TestSetSpec:
+    """Parameters for one kind of cross-session validation test set."""
+    enabled: bool = False
+    name: str = ""
+    n_sets: int = 1
     fraction_per_set: float = 0.10
     random_seed: int = 42
+
+
+@dataclass
+class TestSetsConfig:
+    """Multi-kind test set configuration (VAAMR, PURER, codebook)."""
+    vaamr: TestSetSpec = field(
+        default_factory=lambda: TestSetSpec(enabled=True, name='vaamr_testset')
+    )
+    purer: TestSetSpec = field(
+        default_factory=lambda: TestSetSpec(enabled=False, name='purer_testset')
+    )
+    codebook: TestSetSpec = field(
+        default_factory=lambda: TestSetSpec(enabled=False, name='codebook_testset')
+    )
+
+    def any_enabled(self) -> bool:
+        return self.vaamr.enabled or self.purer.enabled or self.codebook.enabled
+
+
+@dataclass
+class ContentValiditySpec:
+    """Parameters for one content-validity testset variant."""
+    enabled: bool = False
+    name: str = ""
+
+
+@dataclass
+class ContentValidityConfig:
+    """Multi-kind content-validity configuration."""
+    vaamr: ContentValiditySpec = field(
+        default_factory=lambda: ContentValiditySpec(enabled=True, name='cv_vaamr_v1')
+    )
+    purer: ContentValiditySpec = field(
+        default_factory=lambda: ContentValiditySpec(enabled=False, name='cv_purer_v1')
+    )
+
+    def any_enabled(self) -> bool:
+        return self.vaamr.enabled or self.purer.enabled
+
+
+# Phase 1 back-compat alias — remove with legacy_migration.py
+TestSetConfig = TestSetsConfig
 
 
 @dataclass
@@ -181,7 +224,8 @@ class PipelineConfig:
     codebook_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
     codebook_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
-    test_sets: TestSetConfig = field(default_factory=TestSetConfig)
+    test_sets: TestSetsConfig = field(default_factory=TestSetsConfig)
+    content_validity: ContentValidityConfig = field(default_factory=ContentValidityConfig)
     confidence_tiers: ConfidenceTierConfig = field(default_factory=ConfidenceTierConfig)
     therapist_cues: TherapistCueConfig = field(default_factory=TherapistCueConfig)
     purer_cue: PurerCueConfig = field(default_factory=PurerCueConfig)
@@ -231,7 +275,6 @@ class PipelineConfig:
             'codebook_llm': LLMCodebookConfig,
             'codebook_ensemble': EnsembleConfig,
             'validation': ValidationConfig,
-            'test_sets': TestSetConfig,
             'confidence_tiers': ConfidenceTierConfig,
             'therapist_cues': TherapistCueConfig,
             'purer_cue': PurerCueConfig,
@@ -245,7 +288,11 @@ class PipelineConfig:
         for key, value in data.items():
             if key not in valid_field_names:
                 continue
-            if key in sub_config_map and isinstance(value, dict):
+            if key == 'test_sets' and isinstance(value, dict):
+                kwargs['test_sets'] = _parse_test_sets_config(value)
+            elif key == 'content_validity' and isinstance(value, dict):
+                kwargs['content_validity'] = _parse_content_validity_config(value)
+            elif key in sub_config_map and isinstance(value, dict):
                 dc_cls = sub_config_map[key]
                 dc_fields = {f.name for f in fields(dc_cls)}
                 filtered = {k: v for k, v in value.items() if k in dc_fields}
@@ -263,6 +310,43 @@ class PipelineConfig:
             tc.replicate_api_token = os.environ.get('REPLICATE_API_TOKEN', '')
 
         return config
+
+
+def _parse_test_set_spec(d: dict) -> TestSetSpec:
+    spec_fields = {f.name for f in fields(TestSetSpec)}
+    return TestSetSpec(**{k: v for k, v in d.items() if k in spec_fields})
+
+
+def _parse_test_sets_config(d: dict) -> TestSetsConfig:
+    """Parse test_sets dict — handles both old flat format and new multi-kind format."""
+    # Old Phase 1 format: {'enabled': bool, 'n_sets': int, 'fraction_per_set': float, 'random_seed': int}
+    if 'enabled' in d or 'n_sets' in d:
+        vaamr = TestSetSpec(
+            enabled=d.get('enabled', True),
+            name='vaamr_testset',
+            n_sets=d.get('n_sets', 1),
+            fraction_per_set=d.get('fraction_per_set', 0.10),
+            random_seed=d.get('random_seed', 42),
+        )
+        return TestSetsConfig(vaamr=vaamr)
+    # New format: {'vaamr': {...}, 'purer': {...}, 'codebook': {...}}
+    return TestSetsConfig(
+        vaamr=_parse_test_set_spec(d.get('vaamr', {})) if d.get('vaamr') else TestSetSpec(enabled=True, name='vaamr_testset'),
+        purer=_parse_test_set_spec(d.get('purer', {})) if d.get('purer') else TestSetSpec(name='purer_testset'),
+        codebook=_parse_test_set_spec(d.get('codebook', {})) if d.get('codebook') else TestSetSpec(name='codebook_testset'),
+    )
+
+
+def _parse_content_validity_spec(d: dict) -> ContentValiditySpec:
+    spec_fields = {f.name for f in fields(ContentValiditySpec)}
+    return ContentValiditySpec(**{k: v for k, v in d.items() if k in spec_fields})
+
+
+def _parse_content_validity_config(d: dict) -> ContentValidityConfig:
+    return ContentValidityConfig(
+        vaamr=_parse_content_validity_spec(d.get('vaamr', {})) if d.get('vaamr') else ContentValiditySpec(enabled=True, name='cv_vaamr_v1'),
+        purer=_parse_content_validity_spec(d.get('purer', {})) if d.get('purer') else ContentValiditySpec(name='cv_purer_v1'),
+    )
 
 
 def _blank_secrets(d: dict):

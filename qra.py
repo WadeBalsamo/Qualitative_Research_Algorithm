@@ -881,30 +881,22 @@ def cmd_analyze(args):
 
 
 def cmd_testsets(args):
-    """Generate validation test set worksheets from existing pipeline output."""
-    import glob
-    from process.assembly import export_validation_testsets
-    from process import output_paths as _paths
+    """Generate or refresh validation test set worksheets from existing pipeline output."""
+    from process.assembly import generate_or_refresh_validation_testsets
+    from process import segments_io as _segments_io
 
     output_dir = args.output_dir
     if not os.path.isdir(output_dir):
         print(f"Error: output directory not found: {output_dir}")
         sys.exit(1)
 
-    # Find master JSONL in new layout, then fall back to legacy root location
-    _ms_dir = _paths.master_segments_dir(output_dir)
-    jsonl_files = sorted(glob.glob(os.path.join(_ms_dir, 'master_segments*.jsonl')))
-    if not jsonl_files:
-        jsonl_files = sorted(glob.glob(os.path.join(output_dir, 'master_segments_*.jsonl')))
-    if not jsonl_files:
-        print(f"Error: no master_segments*.jsonl found in {output_dir}")
-        print("Run the pipeline first: python qra.py run --config <config>")
+    print(f"\nLoading segments from: {output_dir}")
+    try:
+        segments = _segments_io.read_master_segments(output_dir)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
         sys.exit(1)
 
-    jsonl_path = jsonl_files[-1]
-    print(f"\nLoading segments from: {os.path.relpath(jsonl_path)}")
-
-    segments = _load_segments_from_jsonl(jsonl_path)
     participant_segs = [s for s in segments if s.speaker == 'participant']
     print(f"Loaded {len(segments)} segments ({len(participant_segs)} participant)")
 
@@ -924,8 +916,7 @@ def cmd_testsets(args):
             cfg_data = json.load(f)
         codebook_enabled = cfg_data.get('pipeline', {}).get('run_codebook_classifier', False)
 
-    # Generate
-    written = export_validation_testsets(
+    testset_dirs = generate_or_refresh_validation_testsets(
         segments,
         framework,
         output_dir,
@@ -935,101 +926,229 @@ def cmd_testsets(args):
         codebook_enabled=codebook_enabled,
     )
 
-    print(f"\nGenerated {len(written)} worksheet files:")
-    for p in written:
-        print(f"  {os.path.relpath(p, output_dir)}")
+    print(f"\nGenerated/refreshed {len(testset_dirs)} testset(s):")
+    for d in testset_dirs:
+        print(f"  {os.path.relpath(d, output_dir)}")
 
 
-def _load_segments_from_jsonl(jsonl_path: str):
-    """Reconstruct Segment objects from a master_segments JSONL file."""
-    import pandas as pd
-    from classification_tools.data_structures import Segment
+# =========================================================================
+# testset subcommand group (Phase 2)
+# =========================================================================
 
-    df = pd.read_json(jsonl_path, lines=True)
-    segments = []
+def _load_segments_from_output(output_dir: str):
+    """Load master segments from an existing pipeline output directory."""
+    from process import segments_io as _segments_io
+    if not os.path.isdir(output_dir):
+        print(f"Error: output directory not found: {output_dir}")
+        sys.exit(1)
+    try:
+        return _segments_io.read_master_segments(output_dir)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
-    def _int_or_none(val):
-        try:
-            return int(val) if val is not None and str(val) != 'nan' else None
-        except (ValueError, TypeError):
-            return None
 
-    def _float_or_none(val):
-        try:
-            return float(val) if val is not None and str(val) != 'nan' else None
-        except (ValueError, TypeError):
-            return None
+def cmd_testset_create(args):
+    """qra testset create — create a single named frozen testset."""
+    from process.assembly.human_forms import create_frozen_testset, _pool_purer, _pool_codebook
+    from process._freeze import FrozenArtifactError
 
-    def _list_or_none(val):
-        if val is None:
-            return None
-        if isinstance(val, list):
-            return val if val else None
-        return None
+    segments = _load_segments_from_output(args.output_dir)
+    framework = _load_framework(args.framework)
 
-    for _, row in df.iterrows():
-        # rater_ids and rater_votes are stored as JSON strings
-        rater_ids = None
-        if isinstance(row.get('rater_ids'), str):
-            try:
-                rater_ids = json.loads(row['rater_ids'])
-            except (json.JSONDecodeError, TypeError):
-                pass
+    kind = args.kind
+    # Validate pool is non-empty for kind
+    if kind == 'purer':
+        pool = _pool_purer(segments)
+        if not pool:
+            print("Error: no therapist segments with purer_primary labels found. "
+                  "Run qra run with PURER classifier enabled first.")
+            sys.exit(2)
+    elif kind == 'codebook':
+        pool = _pool_codebook(segments)
+        if not pool:
+            print("Error: no participant segments with codebook_labels_ensemble found. "
+                  "Run qra run with codebook classifier enabled first.")
+            sys.exit(2)
 
-        rater_votes = None
-        if isinstance(row.get('rater_votes'), str):
-            try:
-                rater_votes = json.loads(row['rater_votes'])
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        seg = Segment(
-            segment_id=str(row['segment_id']),
-            trial_id=str(row.get('trial_id', '')),
-            participant_id=str(row.get('participant_id', '')),
-            session_id=str(row['session_id']),
-            session_number=_int_or_none(row.get('session_number')) or 1,
-            cohort_id=_int_or_none(row.get('cohort_id')),
-            session_variant=str(row.get('session_variant', '') or ''),
-            segment_index=_int_or_none(row.get('segment_index')) or 0,
-            start_time_ms=_int_or_none(row.get('start_time_ms')) or 0,
-            end_time_ms=_int_or_none(row.get('end_time_ms')) or 0,
-            total_segments_in_session=_int_or_none(row.get('total_segments_in_session')) or 1,
-            speaker=str(row.get('speaker', '')),
-            text=str(row.get('text', '')),
-            word_count=_int_or_none(row.get('word_count')) or 0,
-            primary_stage=_int_or_none(row.get('primary_stage')),
-            secondary_stage=_int_or_none(row.get('secondary_stage')),
-            llm_confidence_primary=_float_or_none(row.get('llm_confidence_primary')),
-            llm_confidence_secondary=_float_or_none(row.get('llm_confidence_secondary')),
-            llm_justification=row.get('llm_justification'),
-            llm_run_consistency=_int_or_none(row.get('llm_run_consistency')),
-            rater_ids=rater_ids,
-            rater_votes=rater_votes,
-            agreement_level=str(row.get('agreement_level') or ''),
-            agreement_fraction=_float_or_none(row.get('agreement_fraction')),
-            needs_review=bool(row.get('needs_review', False)),
-            consensus_vote=row.get('consensus_vote'),
-            tie_broken_by_confidence=bool(row.get('tie_broken_by_confidence', False)),
-            codebook_labels_embedding=_list_or_none(row.get('codebook_labels_embedding')),
-            codebook_labels_llm=_list_or_none(row.get('codebook_labels_llm')),
-            codebook_labels_ensemble=_list_or_none(row.get('codebook_labels_ensemble')),
-            codebook_disagreements=_list_or_none(row.get('codebook_disagreements')),
-            codebook_confidence=None,
-            human_label=_int_or_none(row.get('human_label')),
-            human_secondary_label=_int_or_none(row.get('human_secondary_label')),
-            adjudicated_label=_int_or_none(row.get('adjudicated_label')),
-            in_human_coded_subset=bool(row.get('in_human_coded_subset', False)),
-            label_status=str(row.get('label_status', 'llm_only')),
-            final_label=_int_or_none(row.get('final_label')),
-            final_label_source=row.get('final_label_source'),
-            label_confidence_tier=row.get('label_confidence_tier'),
-            speakers_in_segment=None,
-            session_file=str(row.get('session_file', '')),
+    name = args.name or f'{kind}_testset'
+    try:
+        d = create_frozen_testset(
+            segments, framework, args.output_dir,
+            name=name, kind=kind, n_sets=1, set_index=1,
+            fraction_per_set=args.fraction, random_seed=args.seed,
+            codebook_enabled=(kind == 'codebook'),
+            force=args.force,
         )
-        segments.append(seg)
+        print(f"Created testset: {os.path.relpath(d, args.output_dir)}")
+    except FrozenArtifactError as e:
+        print(f"Error: {e}\n  Use --force to overwrite.")
+        sys.exit(2)
 
-    return segments
+
+def cmd_testset_refresh(args):
+    """qra testset refresh — refresh AI answer key(s) for frozen testsets."""
+    from process.assembly.human_forms import refresh_testset_answer_key
+    from process import output_paths as _paths
+
+    segments = _load_segments_from_output(args.output_dir)
+    segments_by_id = {s.segment_id: s for s in segments}
+    framework = _load_framework(getattr(args, 'framework', None))
+
+    testsets_root = _paths.testsets_dir(args.output_dir)
+    if not os.path.isdir(testsets_root):
+        print("No testsets directory found.")
+        sys.exit(0)
+
+    if getattr(args, 'name', None) and not args.all:
+        names = [args.name]
+    else:
+        names = sorted(
+            e.name for e in os.scandir(testsets_root)
+            if e.is_dir() and os.path.isfile(os.path.join(e.path, 'manifest.json'))
+        )
+
+    if not names:
+        print("No testsets found.")
+        return
+
+    for name in names:
+        try:
+            path = refresh_testset_answer_key(
+                segments_by_id, framework, args.output_dir, name,
+                codebook_enabled=False,
+            )
+            print(f"Refreshed: {os.path.relpath(path, args.output_dir)}")
+        except Exception as e:
+            print(f"Error refreshing {name!r}: {e}")
+
+
+def cmd_testset_list(args):
+    """qra testset list — list existing frozen testsets."""
+    from process import output_paths as _paths
+    import json as _json
+
+    testsets_root = _paths.testsets_dir(args.output_dir)
+    if not os.path.isdir(testsets_root):
+        print("No testsets found.")
+        return
+
+    rows = []
+    for entry in sorted(os.scandir(testsets_root), key=lambda e: e.name):
+        if not entry.is_dir():
+            continue
+        mp = os.path.join(entry.path, 'manifest.json')
+        if not os.path.isfile(mp):
+            continue
+        with open(mp) as f:
+            m = _json.load(f)
+        rows.append({
+            'name': m.get('name', entry.name),
+            'kind': m.get('kind', '?'),
+            'n_items': len(m.get('segment_ids', [])),
+            'created_at': m.get('created_at', '?')[:10],
+        })
+
+    if not rows:
+        print("No testsets found.")
+        return
+
+    print(f"{'Name':<30} {'Kind':<10} {'Items':>6} {'Created'}")
+    print('-' * 60)
+    for r in rows:
+        print(f"{r['name']:<30} {r['kind']:<10} {r['n_items']:>6}   {r['created_at']}")
+
+
+# =========================================================================
+# cv subcommand group (Phase 2)
+# =========================================================================
+
+def cmd_cv_create(args):
+    """qra cv create — create a content-validity testset."""
+    from process.assembly.content_validity import create_frozen_content_validity_testset
+    from process._freeze import FrozenArtifactError
+
+    kind = args.framework
+    if kind == 'codebook':
+        print("Error: codebook content-validity is not yet supported — "
+              "codebook codes have no exemplar utterances. Skipping.")
+        sys.exit(2)
+
+    if kind == 'purer':
+        from theme_framework.purer import get_purer_framework
+        framework = get_purer_framework()
+    else:
+        framework = _load_framework(None)  # vaamr
+
+    name = args.name or f'cv_{kind}_v1'
+    try:
+        d = create_frozen_content_validity_testset(
+            framework, args.output_dir,
+            name=name, kind=kind, force=args.force,
+        )
+        print(f"Created content-validity testset: {os.path.relpath(d, args.output_dir)}")
+    except FrozenArtifactError as e:
+        print(f"Error: {e}\n  Use --force to overwrite.")
+        sys.exit(2)
+    except NotImplementedError as e:
+        print(f"Error: {e}")
+        sys.exit(2)
+
+
+def cmd_cv_refresh(args):
+    """qra cv refresh — refresh AI answer key(s) for content-validity testsets."""
+    from process.assembly.content_validity import refresh_cv_answer_key
+    from process import output_paths as _paths
+
+    cv_root = _paths.cv_testsets_dir(args.output_dir)
+    if not os.path.isdir(cv_root):
+        print("No content-validity testsets found.")
+        sys.exit(0)
+
+    if getattr(args, 'name', None) and not args.all:
+        names = [args.name]
+    else:
+        names = sorted(
+            e.name for e in os.scandir(cv_root)
+            if e.is_dir() and os.path.isfile(os.path.join(e.path, 'manifest.json'))
+        )
+
+    if not names:
+        print("No content-validity testsets found.")
+        return
+
+    for name in names:
+        import json as _json
+        mp = _paths.cv_testset_manifest_path(args.output_dir, name)
+        with open(mp) as f:
+            m = _json.load(f)
+        kind = m.get('kind', 'vaamr')
+        if kind == 'purer':
+            from theme_framework.purer import get_purer_framework
+            framework = get_purer_framework()
+        else:
+            framework = _load_framework(None)
+        try:
+            path = refresh_cv_answer_key(args.output_dir, name, None, framework)
+            print(f"Refreshed: {os.path.relpath(path, args.output_dir)}")
+        except Exception as e:
+            print(f"Error refreshing {name!r}: {e}")
+
+
+def cmd_cv_list(args):
+    """qra cv list — list existing content-validity testsets."""
+    from process.assembly.content_validity import list_content_validity_testsets
+
+    results = list_content_validity_testsets(args.output_dir)
+    if not results:
+        print("No content-validity testsets found.")
+        return
+
+    print(f"{'Name':<30} {'Kind':<10} {'Items':>6} {'Framework':<15} {'Created'}")
+    print('-' * 70)
+    for r in results:
+        fw = r.get('framework', {}).get('name', '?')
+        print(f"{r['name']:<30} {r['kind']:<10} {r['n_items']:>6}   {fw:<15} {r['created_at'][:10]}")
 
 
 # =========================================================================
@@ -1213,46 +1332,65 @@ Examples:
         help='Path to pipeline output directory containing master_segment_dataset.csv',
     )
 
-    # ---- testsets ----
+    # ---- testsets (deprecated alias for testset refresh --all) ----
     testsets_parser = subparsers.add_parser(
         'testsets',
-        help='Generate validation test set worksheets from existing pipeline output',
+        help='[DEPRECATED] Use "testset refresh --all" instead',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description=(
-            'Loads master_segments_*.jsonl from OUTPUT_DIR and generates cross-session\n'
-            'human coding and AI classification worksheets for inter-rater reliability.'
-        ),
     )
-    testsets_parser.add_argument(
-        '--output-dir', '-o',
-        required=True,
-        help='Path to pipeline output directory (must contain master_segments_*.jsonl)',
+    testsets_parser.add_argument('--output-dir', '-o', required=True)
+    testsets_parser.add_argument('--config', '-c', default=None)
+    testsets_parser.add_argument('--framework', default=None)
+    testsets_parser.add_argument('--n-sets', type=int, default=2)
+    testsets_parser.add_argument('--fraction', type=float, default=0.10)
+    testsets_parser.add_argument('--seed', type=int, default=42)
+    testsets_parser.add_argument('--codebook-enabled', action='store_true')
+
+    # ---- testset (new subcommand group) ----
+    testset_parser = subparsers.add_parser(
+        'testset',
+        help='Manage frozen validation testsets (create / refresh / list)',
     )
-    testsets_parser.add_argument(
-        '--config', '-c',
-        default=None,
-        help='Path to config JSON (used to load framework and codebook settings)',
+    testset_sub = testset_parser.add_subparsers(dest='testset_command')
+
+    _ts_create = testset_sub.add_parser('create', help='Create a new frozen testset')
+    _ts_create.add_argument('--output-dir', '-o', required=True)
+    _ts_create.add_argument('--kind', required=True, choices=['vaamr', 'purer', 'codebook'])
+    _ts_create.add_argument('--name', default=None)
+    _ts_create.add_argument('--framework', default=None)
+    _ts_create.add_argument('--fraction', type=float, default=0.10)
+    _ts_create.add_argument('--seed', type=int, default=42)
+    _ts_create.add_argument('--force', action='store_true')
+
+    _ts_refresh = testset_sub.add_parser('refresh', help='Refresh AI answer key(s)')
+    _ts_refresh.add_argument('--output-dir', '-o', required=True)
+    _ts_refresh.add_argument('--name', default=None)
+    _ts_refresh.add_argument('--all', action='store_true')
+    _ts_refresh.add_argument('--framework', default=None)
+
+    _ts_list = testset_sub.add_parser('list', help='List existing frozen testsets')
+    _ts_list.add_argument('--output-dir', '-o', required=True)
+
+    # ---- cv (content-validity subcommand group) ----
+    cv_parser = subparsers.add_parser(
+        'cv',
+        help='Manage content-validity testsets (create / refresh / list)',
     )
-    testsets_parser.add_argument(
-        '--framework', default=None,
-        help='Theme framework: "vaamr" (default) or path to custom JSON',
-    )
-    testsets_parser.add_argument(
-        '--n-sets', type=int, default=2,
-        help='Number of test sets to generate (default: 2)',
-    )
-    testsets_parser.add_argument(
-        '--fraction', type=float, default=0.10,
-        help='Fraction of participant segments per set (default: 0.10)',
-    )
-    testsets_parser.add_argument(
-        '--seed', type=int, default=42,
-        help='Random seed for reproducibility (default: 42)',
-    )
-    testsets_parser.add_argument(
-        '--codebook-enabled', action='store_true',
-        help='Include codebook classification labels in AI worksheet',
-    )
+    cv_sub = cv_parser.add_subparsers(dest='cv_command')
+
+    _cv_create = cv_sub.add_parser('create', help='Create a content-validity testset')
+    _cv_create.add_argument('--output-dir', '-o', required=True)
+    _cv_create.add_argument('--framework', required=True, choices=['vaamr', 'purer', 'codebook'])
+    _cv_create.add_argument('--name', default=None)
+    _cv_create.add_argument('--force', action='store_true')
+
+    _cv_refresh = cv_sub.add_parser('refresh', help='Refresh AI answer key(s)')
+    _cv_refresh.add_argument('--output-dir', '-o', required=True)
+    _cv_refresh.add_argument('--name', default=None)
+    _cv_refresh.add_argument('--all', action='store_true')
+
+    _cv_list = cv_sub.add_parser('list', help='List content-validity testsets')
+    _cv_list.add_argument('--output-dir', '-o', required=True)
 
     args = parser.parse_args()
 
@@ -1268,7 +1406,31 @@ Examples:
         elif args.command == 'analyze':
             cmd_analyze(args)
         elif args.command == 'testsets':
+            import warnings
+            warnings.warn(
+                "'qra testsets' is deprecated — use 'qra testset refresh --all' instead.",
+                DeprecationWarning,
+                stacklevel=1,
+            )
             cmd_testsets(args)
+        elif args.command == 'testset':
+            if args.testset_command == 'create':
+                cmd_testset_create(args)
+            elif args.testset_command == 'refresh':
+                cmd_testset_refresh(args)
+            elif args.testset_command == 'list':
+                cmd_testset_list(args)
+            else:
+                testset_parser.print_help()
+        elif args.command == 'cv':
+            if args.cv_command == 'create':
+                cmd_cv_create(args)
+            elif args.cv_command == 'refresh':
+                cmd_cv_refresh(args)
+            elif args.cv_command == 'list':
+                cmd_cv_list(args)
+            else:
+                cv_parser.print_help()
     except KeyboardInterrupt:
         print("\n\nPipeline interrupted by user.")
         sys.exit(1)
