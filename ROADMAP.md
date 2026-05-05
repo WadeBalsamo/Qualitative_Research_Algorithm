@@ -8,9 +8,9 @@ This document tracks the research and engineering trajectory for the Qualitative
 
 The pipeline is validated on Move-MORE Cohorts 1 and 2:
 
-- **Participant-side**: VAMMR stage classification (zero-shot LLM, multi-run consensus, confidence tiering) ✓
+- **Participant-side**: VAAMR stage classification (zero-shot LLM, multi-run consensus, confidence tiering) ✓
 - **VCE codebook**: 59-code, 7-domain phenomenology classification (embedding + LLM ensemble) ✓
-- **Cross-validation**: VAMMR × VCE lift statistics testing theoretical stage-phenomenology predictions ✓
+- **Cross-validation**: VAAMR × VCE lift statistics testing theoretical stage-phenomenology predictions ✓
 - **Human validation infrastructure**: balanced evaluation set, blind-coding worksheets ✓
 - **Analysis reports**: session summaries, longitudinal trajectories, transition matrices, therapist cue-response ✓
 - **Therapist-side PURER classification**: Five PURER constructs operationalized and applied to therapist dialogue; cue-response analysis now includes PURER move distribution ✓
@@ -18,91 +18,7 @@ The pipeline is validated on Move-MORE Cohorts 1 and 2:
 **Not yet built:**
 - Supervised/fine-tuned classifiers
 - Graph-neural-network model of therapist-participant dynamics
-
----
-
-## Phase 1 — Complete the Dual-Framework Pipeline
-
-**Target: before Cohort 3 begins**
-
-### 1.1 PURER Codebook and Therapist Classification ✓ COMPLETED
-
-**Status:** Implemented and deployed on Cohorts 1–2; currently in early validation phase.
-
-**Implementation summary:**
-
-The PURER framework has been operationalized as `theme_framework/purer.py` with five `ThemeDefinition` objects corresponding to the five constructs:
-
-| Step | Definition | Status |
-|------|------------|--------|
-| **Phenomenology** | Open-ended inquiry into moment-to-moment meditative experience | Operationalized with exemplar, subtle, and adversarial utterances |
-| **Utilization** | Applying what was learned in session to daily-life pain coping | Operationalized with exemplar, subtle, and adversarial utterances |
-| **Reframing** | Offering alternative interpretations of pain or practice difficulty | Operationalized with exemplar, subtle, and adversarial utterances |
-| **Education/Expectancy** | Explaining neurobiological or psychological mechanisms | Operationalized with exemplar, subtle, and adversarial utterances |
-| **Reinforcement** | Positive acknowledgment of participant effort, progress, or insight | Operationalized with exemplar, subtle, and adversarial utterances |
-
-**Pipeline changes implemented:**
-- Stage 3c: PURER classification loop added to `process/orchestrator.py`, classifying therapist segments via the PURER framework
-- Segment data structures: `purer_*` fields added to track primary/secondary PURER label, confidence, justification, and agreement metrics
-- Dataset assembly: PURER labels included in `master_segments.jsonl` and exported CSV
-- Cross-validation: PURER → VAMMR influence table computes empirical lift showing which therapist moves precede which participant stage transitions
-- Analysis reports: cue-response report now characterizes therapist language by PURER move type at each stage transition
-
-**Current findings:**
-- PURER classification operational on Cohorts 1–2; cue-response analysis identifies PURER move distributions preceding forward, backward, and lateral stage transitions
-- Early validation suggests the Avoidance → Mindfulness transition is preceded disproportionately by Phenomenology and Reframing moves
-- Reinforcement appears concentrated after Reappraisal transitions (consolidation pattern)
-
-**Next steps for validation:**
-- Human rater validation of therapist segments (similar protocol to VAMMR, target: Krippendorff's α ≥ 0.70 for PURER)
-- Session-level therapist fidelity profiles comparing observed PURER move distribution against theoretical expectation
-- Validation against MORE Fidelity Measure (Hanley & Garland, 2021)
-
----
-
-### 1.1b PURER and VAMMR Validation: Expected Codes Pre-Specification, Avoidance-Barrier Report, and Permutation Control
-
-**Effort:** 1–2 days (three complementary engineering items)
-**Value:** operationalizes the Varela-style mutual-constraints test; provides the validation backbone for pre-registered hypothesis testing in Cohorts 3–4
-
-**Critical commitment:** These items must be completed before Cohort 3 begins to enable proper pre-specification of hypotheses. The methodology paper (methodology.md) makes explicit commitment to this timing.
-
-**What to build:**
-
-**Item A: `expected_codes` Data-Structure Pre-Specification**
-- Add `expected_codes: List[str]` field to `ThemeDefinition` in `theme_framework/theme_schema.py`
-- Populate in both `theme_framework/vammr.py` (with VCE codes predicted for each VAMMR stage per Section 3.3 of methodology.md) and `theme_framework/purer.py` (with VAMMR stage transitions predicted to follow each PURER move)
-- Update `process/cross_validation.py` to generate mechanical `predicted_codes`, `predicted_and_confirmed`, `predicted_and_absent`, `unpredicted_but_elevated` lists in cross-validation report
-- This restores falsifiable hypothesis-test structure and makes predictions verifiable from codebase alone, not just manuscript prose
-
-**Item B: Automated Avoidance-Barrier Report**
-- Create `avoidance_barrier_report()` function in `process/cross_validation.py` or as standalone analyzer
-- Computes: Avoidance prevalence by session number; Avoidance → Mindfulness transition rate (within-session and between-session); per-participant barrier-crossing classification (first session where Avoidance is no longer dominant stage)
-- Grounds clinically central analysis in automated output rather than manual synthesis from general transition report
-- Produces: `avoidance_barrier_analysis.json` with per-participant and per-session statistics
-
-**Item C: Shuffled-Stage Permutation Control for Lift Statistics**
-- Implement permutation test that breaks real assignment of segments to stages and recomputes lift distribution under random assignment
-- Addresses construct-overlap concern: when both VAMMR and VCE classifiers are LLMs on the same text, some co-occurrence arises from shared training-data patterns rather than genuine phenomenological structure
-- If high-lift associations appear under permutation, the apparent convergence is classifier co-dependency, not framework validation
-- Computationally trivial (requires no new classifications) and highly informative
-- Produces: permutation-control lift table for comparison against real-assignment table
-
-**Deliverable:** Updated codebase with `expected_codes` populated in both frameworks; automated avoidance-barrier report added to analysis pipeline; permutation-control methodology documented and results reported alongside cross-validation output.
-
----
-
-### 1.2 Windowed Context in Theme Classification
-
-**Effort:** 1–2 days
-**Value:** reduces false Reappraisal classifications in segments that echo session language without reflecting a genuine stage shift
-
-The `theme_classification.context_window_segments` config option and `_build_context_block` helper in `classification_tools/llm_classifier.py` already exist but default to 2 without end-to-end verification. Surface this as a first-class config option in the setup wizard, verify the context block is formatted correctly in the prompt, and re-evaluate on `content_validity_test_set.jsonl` at window = 0, 1, 2, 3 before deploying to real transcripts.
-
-The specific problem this solves: a participant utterance expressing apparent Reappraisal ("it's just sensation now") immediately following an Avoidance-dominant passage may reflect rote repetition of session vocabulary rather than a genuine stage shift. Explicit preceding context makes this distinction tractable.
-
-**Deliverable:** working windowed context, wizard option, content validity test set comparison across window sizes.
-
+ 
 ---
 
 ### 1.3 Outcome Integration Layer
@@ -110,7 +26,7 @@ The specific problem this solves: a participant utterance expressing apparent Re
 **Effort:** 1–2 days
 **Value:** enables the convergent evidence section of the modification report to be auto-populated rather than assembled manually
 
-Author `process/outcome_integration.py` that accepts a path to a trial outcomes CSV (weekly pain NRS, practice completion rate, ODI, any pre-specified change scores) and joins it to the master dataset on `session_id + participant_id`. Produce a session-level summary table with pain intensity, practice completion, and VAMMR stage distribution in the same row. This is the quantitative column in the joint display described in the Move-MORE protocol.
+Author `process/outcome_integration.py` that accepts a path to a trial outcomes CSV (weekly pain NRS, practice completion rate, ODI, any pre-specified change scores) and joins it to the master dataset on `session_id + participant_id`. Produce a session-level summary table with pain intensity, practice completion, and VAAMR stage distribution in the same row. This is the quantitative column in the joint display described in the Move-MORE protocol.
 
 **Deliverable:** `04_analysis_data/session_outcomes_integrated.csv`; updated longitudinal report incorporating outcome columns.
 
@@ -119,9 +35,9 @@ Author `process/outcome_integration.py` that accepts a path to a trial outcomes 
 ### 1.4 Human Validation of Cohorts 1–2
 
 **Effort:** 1–2 weeks (human rater scheduling is the constraint)
-**Value:** without validated kappa ≥ 0.60 on the VAMMR evaluation set, no classification result should be presented as primary evidence
+**Value:** without validated kappa ≥ 0.60 on the VAAMR evaluation set, no classification result should be presented as primary evidence
 
-Two independent rater teams blind-code `05_validation/human_coding_evaluation_set.csv` following the protocol in `methodology.txt` Section 7. Before coding real segments, each team works through `content_validity_test_set.jsonl` to calibrate on VAMMR boundary cases. After coding, compute raw agreement and Krippendorff's alpha.
+Two independent rater teams blind-code `05_validation/human_coding_evaluation_set.csv` following the protocol in `methodology.md` Section 7. Before coding real segments, each team works through `content_validity_test_set.jsonl` to calibrate on VAAMR boundary cases. After coding, compute raw agreement and Krippendorff's alpha.
 
 - **Agreement ≥ 75% and kappa ≥ 0.60**: classifications support curriculum modification recommendations
 - **Agreement 50–74% or kappa 0.40–0.59**: directional evidence only; frame recommendations as hypotheses for Cohorts 3–4
@@ -135,7 +51,7 @@ The validated Cohort 1–2 labels become the initial training signal for Phase 2
 
 **Target: concurrent with Cohorts 3–4**
 
-Once Cohort 1–2 validation is complete, the pipeline produces its first systematically labeled corpus of VAMMR and PURER expression in a mindfulness-based pain intervention. Phase 2 uses this corpus to fine-tune domain-adapted classifiers — replacing the zero-shot LLM with a supervised model that is faster, cheaper, and validated on real Move-MORE language.
+Once Cohort 1–2 validation is complete, the pipeline produces its first systematically labeled corpus of VAAMR and PURER expression in a mindfulness-based pain intervention. Phase 2 uses this corpus to fine-tune domain-adapted classifiers — replacing the zero-shot LLM with a supervised model that is faster, cheaper, and validated on real Move-MORE language.
 
 ### 2.1 Export the Fine-Tuning Corpus
 
@@ -150,13 +66,13 @@ Keep the validation split fixed (the same segments in `human_coding_evaluation_s
 
 ---
 
-### 2.2 Autoresearch: VAMMR Classifier Search
+### 2.2 Autoresearch: VAAMR Classifier Search
 
 **What autoresearch does:** an LLM-driven search controller that repeatedly edits `train.py`, runs a fixed-duration training job, scores the result with a fixed metric, and uses `git reset` to retain only improvements. The human contributes the research agenda through `program.md`; the agent discovers the implementation through overnight search.
 
 **Adapt for this task:**
 
-- **Metric**: swap `val_bpb` (bits per byte, for language modeling) for `val_macro_f1` on the held-out VAMMR 5-class classification task
+- **Metric**: swap `val_bpb` (bits per byte, for language modeling) for `val_macro_f1` on the held-out VAAMR 5-class classification task
 - **Fixed run length**: 5 minutes is appropriate — BERT fine-tuning for 5 classes on ~500–1000 examples converges in well under 5 minutes on a single GPU
 - **`prepare.py`** (read-only): dataset loading, tokenization, and the held-out validation split
 - **`train.py`** (agent edits): model choice, frozen layers, classification head depth, learning rate, batch size, label smoothing
@@ -164,7 +80,7 @@ Keep the validation split fixed (the same segments in `human_coding_evaluation_s
 **`program.md` search agenda:**
 
 ```
-Goal: maximize val_macro_f1 on 5-class VAMMR stage classification
+Goal: maximize val_macro_f1 on 5-class VAAMR stage classification
      from therapy session transcript segments (~50–300 words each)
 
 Hypotheses to explore (in this order):
@@ -173,7 +89,7 @@ Hypotheses to explore (in this order):
    then progressively unfreeze layers if val_macro_f1 plateaus
 3. Classification head: single linear → [768, 256, 5] bottleneck → [768, 128, 5]
 4. Learning rate: 2e-5 (BERT default) → 1e-5 → 3e-5
-5. Label smoothing: 0.0 vs. 0.1 (boundary cases between adjacent VAMMR stages
+5. Label smoothing: 0.0 vs. 0.1 (boundary cases between adjacent VAAMR stages
    are genuinely ambiguous; smoothing may help)
 
 Constraints:
@@ -183,8 +99,8 @@ Constraints:
 - Log every experiment result with the hypothesis being tested
 
 Known challenge: Avoidance (Stage 1) and Vigilance (Stage 0) share pain-focused
-language; Avoidance and Mindfulness (Stage 2) share attentional vocabulary;
-Mindfulness and Metacognition (Stage 3) share present-moment awareness language.
+language; Avoidance and Attention Regulation (Stage 2) share attentional vocabulary;
+Attention Regulation and Metacognition (Stage 3) share present-moment awareness language.
 Prioritize improving per-class F1 on these boundary classes.
 ```
 
@@ -207,7 +123,7 @@ Run both fine-tuned classifiers on Cohorts 3–4 as they complete, alongside the
 - **High agreement**: both systems classify the same — use fine-tuned model output directly
 - **Disagreement**: route to human review; disagreements between a validated fine-tuned model and a zero-shot LLM are the most informative cases for framework refinement
 
-Each Cohort 3–4 session that clears human validation extends the labeled corpus. By the end of Cohort 4, the accumulated dataset spans four cohorts and two intervention variants, constituting the largest systematically labeled corpus of VAMMR stage expression in an MBI.
+Each Cohort 3–4 session that clears human validation extends the labeled corpus. By the end of Cohort 4, the accumulated dataset spans four cohorts and two intervention variants, constituting the largest systematically labeled corpus of VAAMR stage expression in an MBI.
 
 ---
 
@@ -219,27 +135,27 @@ Each Cohort 3–4 session that clears human validation extends the labeled corpu
 
 CFiCS (Schmidt et al., 2024) demonstrated that combining domain-adapted BERT embeddings with GraphSAGE message-passing over a therapeutic taxonomy graph substantially outperforms either approach alone for psychotherapy content classification: ClinicalBERT alone achieved ~60% micro F1 on fine-grained skill classification; ClinicalBERT + GraphSAGE achieved ~96%. The key result is that graph structure encoding theoretical relationships between therapeutic concepts — which skills instantiate which higher-level factors — enables the model to learn distinctions that text embeddings alone cannot resolve.
 
-The PURER → VAMMR relationship in Move-MORE is structurally identical to this problem: which therapist behaviors (PURER steps) precipitate which participant outcomes (VAMMR stage transitions)? This is a hierarchical, relational, multi-level classification task. A GNN over a VAMMR × PURER taxonomy graph, with node features from a fine-tuned MindfulBERT encoder, is the natural architecture.
+The PURER → VAAMR relationship in Move-MORE is structurally identical to this problem: which therapist behaviors (PURER steps) precipitate which participant outcomes (VAAMR stage transitions)? This is a hierarchical, relational, multi-level classification task. A GNN over a VAAMR × PURER taxonomy graph, with node features from a fine-tuned MindfulBERT encoder, is the natural architecture.
 
 The critical enabling condition — which CFiCS lacked — is a labeled corpus of real clinical interactions. The autoresearch fine-tuned classifiers from Phase 2 produce exactly this. CFiCS substituted synthetic examples; this project does not need to.
 
 ---
 
-### 3.1 Build the VAMMR × PURER Taxonomy Graph
+### 3.1 Build the VAAMR × PURER Taxonomy Graph
 
 Construct a heterogeneous graph parallel to the CFiCS therapeutic taxonomy:
 
 **Node types:**
-- VAMMR stage nodes (5): Vigilance, Avoidance, Mindfulness, Metacognition, Reappraisal
+- VAAMR stage nodes (5): Vigilance, Avoidance, Attention Regulation, Metacognition, Reappraisal
 - PURER step nodes (5): Phenomenology, Utilization, Reframing, Education/Expectancy, Reinforcement
 - Transition nodes (3): Forward (stage increase), Lateral (same stage), Backward (stage decrease)
-- Example utterance nodes: participant segments (VAMMR labeled) and therapist segments (PURER labeled) from the full 4-cohort validated corpus
+- Example utterance nodes: participant segments (VAAMR labeled) and therapist segments (PURER labeled) from the full 4-cohort validated corpus
 
 **Edge types** (parallel to CFiCS `fosters`, `expresses`, `demonstrates`):
-- `precipitates`: therapist PURER step → participant VAMMR transition (weighted by empirical lift from Phase 1 cross-validation)
-- `demonstrates`: example utterance node → VAMMR stage or PURER step node
-- `co-occurs_with`: VAMMR stage × VAMMR stage temporal adjacency within sessions
-- `supports`: PURER step → VAMMR stage sustained across session (not just at transition moments)
+- `precipitates`: therapist PURER step → participant VAAMR transition (weighted by empirical lift from Phase 1 cross-validation)
+- `demonstrates`: example utterance node → VAAMR stage or PURER step node
+- `co-occurs_with`: VAAMR stage × VAAMR stage temporal adjacency within sessions
+- `supports`: PURER step → VAAMR stage sustained across session (not just at transition moments)
 
 Populate edge weights from the `purer_to_vammr_influence_table.json` produced in Phase 1. The graph encodes what theory predicts (edge types) and what the data shows (edge weights) simultaneously.
 
@@ -252,7 +168,7 @@ Use the autoresearch-optimized BERT checkpoint from Phase 2 as the text encoder.
 - Stage/step nodes: concatenation of name, definition, and prototypical features from the framework definition
 - Example nodes: the raw segment text
 
-This is the exact CFiCS approach, but the encoder has been fine-tuned on Move-MORE session transcripts with VAMMR and PURER labels. The MindfulBERT embeddings encode the Avoidance/Mindfulness and Mindfulness/Metacognition boundaries and the Phenomenology/Education boundary in a way that ClinicalBERT — trained on clinical notes with no exposure to VAMMR or PURER — cannot.
+This is the exact CFiCS approach, but the encoder has been fine-tuned on Move-MORE session transcripts with VAAMR and PURER labels. The MindfulBERT embeddings encode the Avoidance/Attention Regulation and Attention Regulation/Metacognition boundaries and the Phenomenology/Education boundary in a way that ClinicalBERT — trained on clinical notes with no exposure to VAAMR or PURER — cannot.
 
 CFiCS reported ~10–15% performance gain from ClinicalBERT vs. generic BERT. Expect a similar or larger gain from MindfulBERT vs. ClinicalBERT on this domain.
 
@@ -264,7 +180,7 @@ Multi-task objective over three prediction heads:
 
 | Task | Classes | Loss |
 |------|---------|------|
-| VAMMR stage | 5 | Cross-entropy |
+| VAAMR stage | 5 | Cross-entropy |
 | PURER step | 5 | Cross-entropy |
 | Transition type | 3 (forward/lateral/backward) | Cross-entropy |
 
@@ -278,15 +194,15 @@ Autoresearch can be applied here as well: `train.py` controls GNN depth, aggrega
 
 ### 3.4 Interpretation for MBI Development and Publication
 
-The t-SNE visualization of learned embeddings (analogous to CFiCS Figure 3) will reveal whether PURER steps cluster near the VAMMR transitions they theoretically precipitate. Specifically:
+The t-SNE visualization of learned embeddings (analogous to CFiCS Figure 3) will reveal whether PURER steps cluster near the VAAMR transitions they theoretically precipitate. Specifically:
 
-- Do **Reframing** and **Phenomenology** embeddings cluster near the Avoidance → Mindfulness transition zone? This is the primary prediction from Wexler, Balsamo et al. (2026)
+- Do **Reframing** and **Phenomenology** embeddings cluster near the Avoidance → Attention Regulation transition zone? This is the primary prediction from Wexler, Balsamo et al. (2026)
 - Does **Reinforcement** cluster near Reappraisal → Reappraisal (lateral) transitions? This would confirm that Reinforcement consolidates Reappraisal gains rather than producing new transitions
 - Do **Education/Expectancy** embeddings cluster near Stage 0 (Vigilance) transitions? This would show that psychoeducation is most active in early sessions, consistent with the MORE session structure
 
 Confirming these predictions provides the first graph-structured, empirically validated account of the PURER facilitation mechanism — extending the qualitative finding of Wexler et al. (2026) into a quantitative, reproducible model.
 
-**Target venue:** *Psychotherapy Research* or *Journal of Consulting and Clinical Psychology* for the GNN results; the VAMMR + PURER classification system as a standalone contribution to *npj Digital Medicine* or *JMIR Mental Health*.
+**Target venue:** *Psychotherapy Research* or *Journal of Consulting and Clinical Psychology* for the GNN results; the VAAMR + PURER classification system as a standalone contribution to *npj Digital Medicine* or *JMIR Mental Health*.
 
 ---
 
@@ -300,10 +216,10 @@ Confirming these predictions provides the first graph-structured, empirically va
 | 1.3 | Outcome integration layer | `session_outcomes_integrated.csv` | 1–2 days | Not started |
 | 1.4 | Human validation, Cohorts 1–2 | Kappa ≥ 0.60, agreement ≥ 75% | 1–2 weeks | In progress |
 | 2.1 | Fine-tuning corpus export | Labeled JSONL for BERT training | 1 day | Ready (blocked on 1.4 completion) |
-| 2.2 | Autoresearch VAMMR fine-tuning | Best VAMMR classifier checkpoint | 1 day setup + overnight | Blocked on 2.1 |
+| 2.2 | Autoresearch VAAMR fine-tuning | Best VAAMR classifier checkpoint | 1 day setup + overnight | Blocked on 2.1 |
 | 2.3 | Autoresearch PURER fine-tuning | Best PURER classifier checkpoint | 1 day setup + overnight | Blocked on 2.1 (1.1 now complete) |
 | 2.4 | Cohorts 3–4 prospective validation | Extended labeled corpus | Concurrent with trial | Blocked on 2.2–2.3 |
-| 3.1 | VAMMR × PURER taxonomy graph | Graph with empirical edge weights | 2–3 days | Blocked on 2.4 (1.1 now complete) |
+| 3.1 | VAAMR × PURER taxonomy graph | Graph with empirical edge weights | 2–3 days | Blocked on 2.4 (1.1 now complete) |
 | 3.2–3.3 | CFiCS-style GNN training | Trained GraphSAGE model | 1–2 weeks | Blocked on 3.1, 2.2 |
 | 3.4 | Interpretation + manuscript | Published findings | Ongoing | Blocked on 3.3 |
 
@@ -317,12 +233,12 @@ The PURER codebook is the binding constraint. Everything downstream depends on h
 
 | File | Purpose |
 |------|---------|
-| `theme_framework/vammr.py` | VAMMR framework definition (participant-side) |
+| `theme_framework/vaamr.py` | VAAMR framework definition (participant-side) |
 | `theme_framework/purer.py` | PURER framework definition (therapist-side) — **to build** |
 | `codebook/phenomenology_codebook.py` | VCE 59-code phenomenology codebook |
-| `process/cross_validation.py` | VAMMR × VCE lift statistics; extend for PURER × VAMMR influence table |
+| `process/cross_validation.py` | VAAMR × VCE lift statistics; extend for PURER × VAAMR influence table |
 | `process/outcome_integration.py` | Quantitative outcome join — **to build** |
-| `methodology.txt` | Full methodology paper (Phenomenology and the Cognitive Sciences) |
+| `methodology.md` | Full methodology paper (Phenomenology and the Cognitive Sciences) |
 
 ## References
 

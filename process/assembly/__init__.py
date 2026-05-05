@@ -7,10 +7,19 @@ from .training_export import export_theme_definitions, export_theme_definitions_
 from .human_forms import (
     export_human_classification_forms,
     export_flagged_for_review,
-    export_validation_testsets,
+    generate_or_refresh_validation_testsets,
+    create_frozen_testset,
+    refresh_testset_answer_key,
+    export_validation_testsets,  # Phase 1 back-compat — remove with legacy_migration.py
     export_content_validity_human_worksheet,
     export_content_validity_definition_key,
     export_content_validity_answer_key,
+)
+from .content_validity import (
+    create_frozen_content_validity_testset,
+    refresh_cv_answer_key,
+    list_content_validity_testsets,
+    generate_or_refresh_content_validity_testsets,
 )
 
 __all__ = [
@@ -27,5 +36,13 @@ __all__ = [
     'export_human_classification_forms',
     'export_flagged_for_review',
     'export_training_data',
-    'export_validation_testsets',
+    'generate_or_refresh_validation_testsets',
+    'create_frozen_testset',
+    'refresh_testset_answer_key',
+    'export_validation_testsets',  # Phase 1 back-compat — remove with legacy_migration.py
+    # Phase 2 content-validity
+    'create_frozen_content_validity_testset',
+    'refresh_cv_answer_key',
+    'list_content_validity_testsets',
+    'generate_or_refresh_content_validity_testsets',
 ]
