@@ -87,9 +87,9 @@ def load_segments(
     pd.DataFrame with guaranteed columns:
         segment_id, participant_id, session_id, session_number, cohort_id,
         session_variant, segment_index, text, word_count, primary_stage,
-        final_label, llm_confidence_primary, llm_run_consistency,
-        label_confidence_tier, codebook_labels_ensemble (list),
-        llm_justification
+        final_label, llm_confidence_primary, llm_confidence_secondary,
+        llm_run_consistency, secondary_stage, label_confidence_tier,
+        codebook_labels_ensemble (list), llm_justification
     """
     csv_path = find_master_csv(output_dir)
     df = pd.read_csv(csv_path, low_memory=False)
@@ -116,7 +116,15 @@ def load_segments(
     df['segment_index'] = pd.to_numeric(df['segment_index'], errors='coerce').fillna(0).astype(int)
     df['word_count'] = pd.to_numeric(df['word_count'], errors='coerce').fillna(0).astype(int)
     df['llm_confidence_primary'] = pd.to_numeric(df['llm_confidence_primary'], errors='coerce')
+    df['llm_confidence_secondary'] = pd.to_numeric(
+        df['llm_confidence_secondary'] if 'llm_confidence_secondary' in df.columns else pd.NA,
+        errors='coerce',
+    )
     df['llm_run_consistency'] = pd.to_numeric(df['llm_run_consistency'], errors='coerce')
+    df['secondary_stage'] = pd.to_numeric(
+        df['secondary_stage'] if 'secondary_stage' in df.columns else pd.NA,
+        errors='coerce',
+    )
     df['start_time_ms'] = pd.to_numeric(df['start_time_ms'], errors='coerce').fillna(0).astype(int)
     df['end_time_ms'] = pd.to_numeric(df['end_time_ms'], errors='coerce').fillna(0).astype(int)
 
@@ -145,6 +153,9 @@ def load_segments(
     if require_labeled and len(df) > 0:
         df['final_label'] = df['final_label'].astype(int)
         df['primary_stage'] = df['primary_stage'].fillna(df['final_label']).astype(int)
+
+    # Keep secondary_stage as float (nullable int) — NaN means no secondary classification
+    # Never cast to int; allow pd.isna() checks to work downstream
 
     df = df.reset_index(drop=True)
     return df

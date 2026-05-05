@@ -140,13 +140,16 @@ def generate_session_txt_report(
     if therapist_cue_config is not None:
         max_cue_words = getattr(therapist_cue_config, 'max_length_per_cue', 150)
 
-    # ── Precompute dominant / secondary stage ─────────────────────────────────
+    # Get segment-level data for secondary_stage analysis
+    sdf = df[df['session_id'] == session_id] if df is not None else pd.DataFrame()
+
+    # ── Precompute dominant / runner-up stage ─────────────────────────────────
     stage_props_sorted = sorted(
         [(float(group_props.get(str(st), 0.0)), st) for st in stage_ids],
         reverse=True,
     )
     dominant_stage = stage_props_sorted[0][1] if stage_props_sorted else None
-    secondary_stage = (
+    runner_up_stage = (
         stage_props_sorted[1][1]
         if len(stage_props_sorted) > 1 and stage_props_sorted[1][0] > 0
         else None
@@ -219,6 +222,20 @@ def generate_session_txt_report(
         cnt = round(prop * n_segments)
         lines.append(f'  {name:<20} {cnt:>3} segs  ({_pct(prop):>6})  {_bar(prop)}')
     lines.append(f'  [see session_{session_id}_stage_timeline.png for temporal view]')
+
+    # Dual-coded segment annotation
+    if 'secondary_stage' in sdf.columns:
+        dual_coded = sdf['secondary_stage'].notna()
+        n_dual = int(dual_coded.sum())
+        if n_dual > 0:
+            lines.append('')
+            lines.append(f'  Dual-coded segments: {n_dual} / {n_segments} ({_pct(n_dual / n_segments)}% have secondary stage)')
+            sec_counts = sdf.loc[dual_coded, 'secondary_stage'].dropna().astype(int).value_counts()
+            for st_id in sorted(sec_counts.index):
+                cnt = int(sec_counts[st_id])
+                name = stage_names.get(st_id, f'Stage {st_id}')
+                lines.append(f'    {name:<16} {cnt:>3} segs')
+
     lines.append('')
 
     # ── PURER therapist move distribution ─────────────────────────────────────
@@ -238,10 +255,10 @@ def generate_session_txt_report(
         lines.append(f'  [{total_t_purer} therapist turns classified]')
         lines.append('')
 
-    # ── Expressions of dominant stage + secondary stage ───────────────────────
+    # ── Expressions of dominant stage + runner-up stage ───────────────────────
     for rank, (rank_label, st) in enumerate([
         ('dominant stage', dominant_stage),
-        ('secondary stage', secondary_stage),
+        ('runner-up stage', runner_up_stage),
     ]):
         if st is None:
             continue

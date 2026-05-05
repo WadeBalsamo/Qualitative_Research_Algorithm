@@ -36,7 +36,7 @@ def _is_non_decreasing(values: list) -> bool:
     return all(b >= a for a, b in zip(values[:-1], values[1:]))
 
 
-def compute_group_trajectories(df: pd.DataFrame, framework: dict) -> pd.DataFrame:
+def compute_group_trajectories(df: pd.DataFrame, framework: dict, include_secondary: bool = False) -> pd.DataFrame:
     """Compute group-level mean stage proportions per session.
 
     Averages per-participant proportions (equal weighting), so no participant
@@ -44,7 +44,8 @@ def compute_group_trajectories(df: pd.DataFrame, framework: dict) -> pd.DataFram
 
     Returns DataFrame with columns:
         session_id, session_number, cohort_id,
-        stage_0_mean, ..., stage_{N}_mean, n_participants
+        stage_0_mean, ..., stage_{N}_mean, n_participants,
+        [secondary_{st}_mean, dual_coded_mean if include_secondary=True]
     """
     stage_ids = sorted(framework.keys())
     part_rows = []
@@ -56,15 +57,33 @@ def compute_group_trajectories(df: pd.DataFrame, framework: dict) -> pd.DataFram
         row = {'participant_id': pid, 'session_id': sid, 'session_number': snum, 'cohort_id': cid}
         for st in stage_ids:
             row[f'stage_{st}_pct'] = int((group['final_label'] == st).sum()) / n if n > 0 else 0.0
+
+        if include_secondary and 'secondary_stage' in group.columns:
+            n_with_sec = int(group['secondary_stage'].notna().sum())
+            row['dual_coded_pct'] = n_with_sec / n if n > 0 else 0.0
+            for st in stage_ids:
+                cnt_sec = int(
+                    (group['secondary_stage'].dropna().astype(int) == st).sum()
+                )
+                row[f'secondary_{st}_pct'] = cnt_sec / n if n > 0 else 0.0
+
         part_rows.append(row)
 
     part_df = pd.DataFrame(part_rows)
     if part_df.empty:
         return part_df
 
+    secondary_agg = {}
+    if include_secondary and 'dual_coded_pct' in part_df.columns:
+        secondary_agg = {
+            'dual_coded_mean': ('dual_coded_pct', 'mean'),
+            **{f'secondary_{st}_mean': (f'secondary_{st}_pct', 'mean') for st in stage_ids},
+        }
+
     agg = part_df.groupby(['session_id', 'session_number', 'cohort_id']).agg(
         n_participants=('participant_id', 'count'),
         **{f'stage_{st}_mean': (f'stage_{st}_pct', 'mean') for st in stage_ids},
+        **secondary_agg,
     ).reset_index()
 
     session_order = sort_session_ids(agg['session_id'].tolist())
@@ -172,7 +191,7 @@ def generate_longitudinal_summary(
         mean_trend_overall = round(sum(trends) / len(trends), 4)
 
     # Per-session group distribution
-    group_traj = compute_group_trajectories(df, framework)
+    group_traj = compute_group_trajectories(df, framework, include_secondary=True)
     distribution_by_session = {}
     for _, row in group_traj.iterrows():
         sid = str(row['session_id'])
@@ -180,6 +199,12 @@ def generate_longitudinal_summary(
             f'stage_{st}_mean_pct': float(row.get(f'stage_{st}_mean', 0.0))
             for st in stage_ids
         }
+        if 'dual_coded_mean' in row.index:
+            distribution_by_session[sid]['dual_coded_mean_pct'] = float(row.get('dual_coded_mean', 0.0))
+        for st in stage_ids:
+            k = f'secondary_{st}_mean'
+            if k in row.index:
+                distribution_by_session[sid][f'secondary_{st}_mean_pct'] = float(row.get(k, 0.0))
         distribution_by_session[sid]['n_participants'] = int(row['n_participants'])
 
     group_progression = {

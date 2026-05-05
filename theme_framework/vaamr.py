@@ -22,22 +22,9 @@ Regulation is the foundational skill on which Metacognition and Reappraisal
 depend. theme_id values are integers (0-4) for schema compatibility; the
 conceptual Stage 0.5 of Avoidance is reflected in the definition and
 description rather than the integer id.
+  
 
-================================================================================
-HIERARCHICAL CODING PRECEDENCE — REQUIRED FOR ALL OVERLAPPING UTTERANCES
-================================================================================
-Each later stage presupposes the capacities of earlier stages. Reappraisal
-requires the observing perspective of Metacognition; Metacognition requires
-the stable attention of Attention Regulation. When an utterance contains
-markers from multiple stages, code at the HIGHEST stage present. The lower-
-stage capacity is then understood as an implicit prerequisite — not a
-competing label.
-
-Precedence ranking, from least to most transformative:
-    Vigilance (0) < Avoidance (1) < Attention Regulation (2) <
-    Metacognition (3) < Reappraisal (4)
-
-Worked examples of the rule:
+Worked examples of navigating theme overlap between Metacognition and Reappraisal:
 
   "Noticing the way I'm noticing pain"
       → METACOGNITION
@@ -408,7 +395,10 @@ def get_vaamr_framework() -> ThemeFramework:
             'practice generalizing to daily life as steady awareness',
         ],
         distinguishing_criteria=(
-            "Sustained attention WITH experience rather than away from it "
+ 
+            "The participant can successfully direct attention to chosen objects of awareness, without overwhelming distraction or captured by experience, without being stuck or fixating without volitional control to direct attention."
+            "(distinguished from Vigilance)"
+            "Present attention is intentional, staying WITH experience rather than away from it; it is a choice to be present and they have the skill to do so purposefully without trying to distract or escape."
             "(distinguishing from Avoidance). The breath and body are anchors "
             "for presence, not vehicles for escape; the participant can stay "
             "with discomfort if it arises. Reports of attentional competence "
@@ -791,19 +781,13 @@ def get_vaamr_framework() -> ThemeFramework:
         description=(
             "Five-stage framework of contemplative transformation in "
             "Mindfulness-Oriented Recovery Enhancement (MORE) for chronic "
-            "pain. Vigilance (Stage 0) and Avoidance (Stage 0.5) are pre-"
-            "mindfulness stages representing dysfunctional relationships to "
-            "attention and experience. Attention Regulation (Stage 1), "
-            "Metacognition (Stage 2), and Reappraisal (Stage 3) are all "
+            "pain. Vigilance (Stage 0) and Avoidance (Stage 1) are pre-"
+            "mindfulness stages representing dysfunctional attention and maladaptive relationships to "
+            "attention and experience. Attention Regulation (Stage 2), "
+            "Metacognition (Stage 3), and Reappraisal (Stage 4) are all "
             "stages of mindfulness, representing progressively sophisticated "
             "deployments of present-moment awareness in relation to pain. "
-            "HIERARCHICAL CODING PRECEDENCE: when an utterance contains "
-            "markers from multiple stages, code at the HIGHEST stage "
-            "present. Each later stage presupposes the capacities of "
-            "earlier stages, so the lower-stage capacity in the utterance "
-            "is an implicit prerequisite, not a competing label. The "
-            "load-bearing precedence cases are documented in the module "
-            "docstring and in each theme's adversarial_utterances."
+            "When an utterance contains markers from multiple stages, code at the closest stage expressed, and put the other stage as a secondary code."
         ),
         themes=[
             vigilance,
