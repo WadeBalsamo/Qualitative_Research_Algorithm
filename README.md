@@ -163,15 +163,21 @@ python qra.py analyze --output-dir ./data/output/
 
 ## Development Roadmap
 
-The pipeline is currently being validated on Move-MORE Cohorts 1 and 2. Engineering priorities before the final cohort:
+The pipeline is currently being validated on Move-MORE Cohorts 1 and 2. **PURER classification is now operational** (as of late beta); current engineering priorities before the final cohort:
 
-1. **PURER classification of therapist dialogue** — extend classification to therapist segments, operationalizing the five PURER components as a therapist-side framework. Infrastructure already exists in Stage 1 speaker separation and the session adjacency index; requires a `theme_framework/purer.py` `ThemeFramework` definition and an aggregation layer in the cue-response report. This would transform the cue analysis from a content summary into a genuine PURER fidelity assessment.
+1. **PURER Validation and Refinement** — validate therapist segment classifications against human expert raters using the same protocol as VAMMR validation. Target: Krippendorff's α ≥ 0.70 for PURER reliability. Session-level therapist fidelity profiles comparing observed PURER move distribution against theoretical expectations. Validation against MORE Fidelity Measure (Hanley & Garland, 2021).
 
-2. **Context-window expansion** — add preceding-segment context to classification prompts to improve accuracy at stage boundaries, particularly the Avoidance–Mindfulness and Mindfulness–Metacognition transitions. Data structures already capture `segment_index` and `session_id`; the missing piece is a context-building function in [`classification_tools/llm_classifier.py`](classification_tools/llm_classifier.py).
+2. **Expected Codes Pre-Specification and Mutual-Constraints Validation** — operationalize the Varela-style mutual-constraints test by populating `expected_codes` fields in both `theme_framework/vammr.py` (predicted VCE codes per VAMMR stage) and `theme_framework/purer.py` (predicted VAMMR transitions per PURER move) **before Cohort 3 begins**. Implement mechanical expected-vs-observed comparison in cross-validation report. Add permutation-control analysis to address construct-overlap concerns. This is **critical path** for hypothesis pre-specification before Cohorts 3–4.
 
-3. **Movement language adaptation** — if human validation reveals systematic disagreement in movement-specific sessions, augment VAMMR stage definitions with kinesthetic exemplar utterances drawn from human-validated Cohorts 1–2 segments.
+3. **Avoidance-Barrier Dedicated Report** — automated analysis of Avoidance prevalence by session, Avoidance → Mindfulness transition rate, and per-participant barrier-crossing timing. This grounds the clinically most important analysis in pipeline output rather than manual synthesis.
 
-4. **Supervised fine-tuning** — the `master_segments.jsonl` files produced across all four cohorts will constitute the first systematically labeled corpus of VAMMR stage expression in mindfulness-based pain therapy, formatted for supervised fine-tuning. A domain-adapted classifier would enable therapeutic fidelity monitoring in future trials at a scale and cost that zero-shot LLM classification does not support.
+4. **Context-window expansion** — add preceding-segment context to classification prompts to improve accuracy at stage boundaries, particularly the Avoidance–Mindfulness and Mindfulness–Metacognition transitions. Data structures already capture `segment_index` and `session_id`; the missing piece is a context-building function in [`classification_tools/llm_classifier.py`](classification_tools/llm_classifier.py).
+
+5. **Outcome integration and joint displays** — join session-level VAMMR stage distributions with quantitative outcomes (pain NRS, disability, interoception, etc.) to enable convergent-evidence analysis at mixed-methods level.
+
+6. **Movement language adaptation** — if human validation reveals systematic disagreement in movement-specific sessions, augment VAMMR stage definitions with kinesthetic exemplar utterances drawn from human-validated Cohorts 1–2 segments.
+
+7. **Supervised fine-tuning** — the `master_segments.jsonl` files produced across all four cohorts will constitute the first systematically labeled corpus of VAMMR and PURER expression in mindfulness-based pain therapy. Domain-adapted classifiers would enable therapeutic fidelity monitoring in future trials at a scale and cost that zero-shot LLM classification does not support.
 
 ---
 

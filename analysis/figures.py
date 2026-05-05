@@ -8,6 +8,7 @@ Uses the Agg backend for headless compatibility.
 """
 
 import os
+import warnings
 
 import matplotlib
 matplotlib.use('Agg')
@@ -481,9 +482,16 @@ def plot_session_stage_timeline(
     # Assign a within-session position to each participant's segments, preserving temporal order
     # Collect per-participant sequence of stage labels sorted by time
     participant_sequences = {}
+    participant_secondary_sequences = {}
+    has_secondary = 'secondary_stage' in sdf.columns and sdf['secondary_stage'].notna().any()
     for pid in participant_ids:
         psdf = sdf[sdf['participant_id'] == pid].sort_values(sort_col)
         participant_sequences[pid] = [int(v) for v in psdf['final_label'].tolist() if pd.notna(v)]
+        if has_secondary:
+            participant_secondary_sequences[pid] = [
+                int(v) if pd.notna(v) else None
+                for v in psdf['secondary_stage'].tolist()
+            ]
 
     max_len = max((len(seq) for seq in participant_sequences.values()), default=0)
     if max_len == 0:
@@ -509,6 +517,15 @@ def plot_session_stage_timeline(
             color = colors.get(stage, '#AAAAAA')
             ax.barh(0, 1, left=seg_idx, height=0.8, color=color, edgecolor='white', linewidth=0.5)
 
+            # Secondary stage overlay (hatching if cell wide enough and secondary exists)
+            if has_secondary and cell_w > 0.25 and pid in participant_secondary_sequences:
+                sec_stage = participant_secondary_sequences[pid][seg_idx] if seg_idx < len(participant_secondary_sequences[pid]) else None
+                if sec_stage is not None and sec_stage != stage:
+                    sec_color = colors.get(sec_stage, '#AAAAAA')
+                    ax.barh(0, 1, left=seg_idx, height=0.8,
+                            color='none', edgecolor=sec_color,
+                            linewidth=1.5, hatch='///', alpha=0.6)
+
         ax.set_xlim(0, max_len)
         ax.set_ylim(-0.5, 0.5)
         ax.set_yticks([0])
@@ -528,13 +545,22 @@ def plot_session_stage_timeline(
         Patch(facecolor=colors[sid], label=framework[sid].get('short_name', f'Stage {sid}'))
         for sid in stage_ids
     ]
+    if has_secondary and any(
+        v is not None for seqs in participant_secondary_sequences.values() for v in seqs
+    ):
+        legend_elements.append(
+            Patch(facecolor='white', edgecolor='gray', hatch='///',
+                  label='Hatching = secondary stage (color = stage)')
+        )
     axes[0][0].legend(
         handles=legend_elements,
         loc='upper left', bbox_to_anchor=(1.01, 1),
         fontsize=8, frameon=True,
     )
 
-    fig.tight_layout()
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='.*tight_layout.*')
+        fig.tight_layout()
     out_dir = _ensure_figures_dir(output_dir)
     path = os.path.join(out_dir, f'session_{session_id}_stage_timeline.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
@@ -590,9 +616,16 @@ def plot_program_longitudinal_progression(
 
     # Collect per-participant sequence of stage labels in temporal order across entire program
     participant_sequences = {}
+    participant_secondary_sequences = {}
+    has_secondary = 'secondary_stage' in sdf.columns and sdf['secondary_stage'].notna().any()
     for pid in participant_ids:
         psdf = sdf[sdf['participant_id'] == pid].sort_values(sort_col)
         participant_sequences[pid] = [int(v) for v in psdf['final_label'].tolist() if pd.notna(v)]
+        if has_secondary:
+            participant_secondary_sequences[pid] = [
+                int(v) if pd.notna(v) else None
+                for v in psdf['secondary_stage'].tolist()
+            ]
 
     max_len = max((len(seq) for seq in participant_sequences.values()), default=0)
     if max_len == 0:
@@ -618,6 +651,15 @@ def plot_program_longitudinal_progression(
             color = colors.get(stage, '#AAAAAA')
             ax.barh(0, 1, left=seg_idx, height=0.8, color=color, edgecolor='white', linewidth=0.5)
 
+            # Secondary stage overlay (hatching if cell wide enough and secondary exists)
+            if has_secondary and cell_w > 0.25 and pid in participant_secondary_sequences:
+                sec_stage = participant_secondary_sequences[pid][seg_idx] if seg_idx < len(participant_secondary_sequences[pid]) else None
+                if sec_stage is not None and sec_stage != stage:
+                    sec_color = colors.get(sec_stage, '#AAAAAA')
+                    ax.barh(0, 1, left=seg_idx, height=0.8,
+                            color='none', edgecolor=sec_color,
+                            linewidth=1.5, hatch='///', alpha=0.6)
+
         ax.set_xlim(0, max_len)
         ax.set_ylim(-0.5, 0.5)
         ax.set_yticks([0])
@@ -641,13 +683,22 @@ def plot_program_longitudinal_progression(
         Patch(facecolor=colors[sid], label=framework[sid].get('short_name', f'Stage {sid}'))
         for sid in stage_ids
     ]
+    if has_secondary and any(
+        v is not None for seqs in participant_secondary_sequences.values() for v in seqs
+    ):
+        legend_elements.append(
+            Patch(facecolor='white', edgecolor='gray', hatch='///',
+                  label='Hatching = secondary stage (color = stage)')
+        )
     axes[0][0].legend(
         handles=legend_elements,
         loc='upper left', bbox_to_anchor=(1.01, 1),
         fontsize=8, frameon=True,
     )
 
-    fig.tight_layout()
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='.*tight_layout.*')
+        fig.tight_layout()
     out_dir = _ensure_figures_dir(output_dir)
     path = os.path.join(out_dir, 'program_longitudinal_progression.png')
     fig.savefig(path, dpi=150, bbox_inches='tight')
