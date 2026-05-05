@@ -132,12 +132,12 @@ QRA operates on diarized transcripts of group session recordings produced by aut
 | Content-validity test set against framework definitions | ✓ | — | — |
 | VCE 59-code multi-label classification (embedding + LLM ensemble, union) | ✓ | — | — |
 | Empirical (stage × code) lift table with 1.5/3-count thresholds | ✓ | — | — |
-| Code-level pre-specified `expected_codes` for hypothesis testing | — | ✓ (§8.2) | — |
-| Shuffled-stage permutation control for lift | — | ✓ (§8.2) | — |
+| Code-level pre-specified `expected_codes` for hypothesis testing | — | ✓ (§8.2) **PRIORITY** | — |
+| Shuffled-stage permutation control for lift | — | ✓ (§8.2) **PRIORITY** | — |
 | Within- and between-session VAMMR transition matrices | ✓ | — | — |
-| FROM → CUE → TO cue-response synthesis (text only) | ✓ | — | — |
-| PURER classification of therapist segments | — | ✓ (§8.1) | — |
-| Avoidance-barrier dedicated automated report | — | ✓ (§8.2) | — |
+| FROM → CUE → TO cue-response synthesis with PURER move distribution | ✓ (PURER labels implemented) | Human validation of PURER | — |
+| PURER classification of therapist segments | ✓ (early beta) | Validation protocol (§8.1) | — |
+| Avoidance-barrier dedicated automated report | — | ✓ (§8.2) **PRIORITY** | — |
 | Outcome integration (joint displays with pain/disability/MAIA-2/etc.) | — | ✓ (§8.3) | — |
 | Supervised fine-tuned classifier from validated corpus | — | — | ✓ (§8.4) |
 
@@ -210,9 +210,9 @@ The chronologically-interleaved master file is itself the session adjacency inde
 
 Stage 7 generates per-session coded transcripts (each segment with all classifications visible, rater ballots displayed, consensus decisions and confidence-tier annotations attached), human blind-coding worksheets, and per-session statistics aggregated to the cohort level.
 
-Stage 8 — invoked by `python qra.py analyze` either at the end of a pipeline run or post-hoc on a completed run — generates the principal analytical reports: per-participant longitudinal trajectories; per-session deep analysis; per-theme corpora (every segment in the corpus assigned to each VAMMR stage, sorted by confidence); graph-ready CSVs; visualization figures of stage distributions, longitudinal trajectories, transition matrices, and codebook lift heatmaps; and the cue-response analysis.
+Stage 8 — invoked by `python qra.py analyze` either at the end of a pipeline run or post-hoc on a completed run — generates the principal analytical reports: per-participant longitudinal trajectories; per-session deep analysis; per-theme corpora (every segment in the corpus assigned to each VAMMR stage, sorted by confidence); graph-ready CSVs; visualization figures of stage distributions, longitudinal trajectories, transition matrices, codebook lift heatmaps, and PURER fidelity distributions; and the cue-response analysis.
 
-**Important framing note before describing the cue-response analysis.** As of this writing, therapist segments are extracted, indexed in the chronological session timeline, and made available to the cue-response report as *unlabeled text*. PURER classification of therapist segments is not yet implemented. The cue-response analysis therefore currently produces a *textual portrait* of therapist behavior at each transition type, not a PURER-categorized move distribution. The mechanism-evidence claim (Section 7.2) is half-implemented in this respect, and we mark this clearly when describing the analysis below and again in Section 7.2.
+**Updated note on PURER classification.** Therapist segments are extracted, indexed in the chronological session timeline, and classified against the PURER framework in Stage 3c of the orchestrator. PURER classification of therapist segments is now operational on Cohorts 1–2 (as of late beta). The cue-response analysis therefore produces a *PURER move distribution* of therapist behavior at each transition type, answering the dyadic mechanism question at near-causal temporal adjacency. Human validation of PURER classifications is ongoing (target: Krippendorff's α ≥ 0.70) before the labels are used as primary evidence in curriculum modification recommendations.
 
 The cue-response analysis is built on a simple but powerful observation about how group therapy actually unfolds. A participant speaks. The therapist responds. The participant speaks again. The empirical question is: what does the therapist do, exactly, when participants make a particular kind of stage transition?
 
@@ -339,7 +339,7 @@ Most psychotherapy process research either codes therapist behavior or codes cli
 
 QRA's cue-response analysis operates at temporal adjacency, not session aggregation. The question becomes: *In the participant utterance immediately following this specific therapist contribution, what stage appears, relative to the stage of the participant utterance immediately before?* The unit of analysis is the FROM → CUE → TO triple. The therapist's contribution is bracketed exactly; the before and after are immediate. This is much closer to mechanistic evidence than session-level correlation can provide. It cannot establish causality (it remains naturalistic observation), but it controls for participant-level and session-level confounders by virtue of operating at the within-participant, within-session, within-minutes level.
 
-The honest qualification — repeated from Section 4.8 — is that the mechanism-evidence claim is currently *half-implemented*. The CUE position contains *unlabeled therapist text*. The pipeline can show what therapists said before each transition; it cannot yet say which PURER move that text was performing. The clinical consequence is that QRA can answer questions of the form *what does the therapist do, exactly, when participants cross the Avoidance barrier?* — by retrieving every observed Avoidance → Mindfulness transition in the corpus and synthesizing the therapist contributions in those triples — but the synthesis is currently a textual portrait, not a quantified PURER-move distribution. Once PURER classification is implemented (Section 8.1), the synthesis is upgraded from textual description to quantified move distribution, and the question can be answered at a resolution that conventional process research cannot match.
+**Updated mechanism evidence claim.** PURER classification is now operational (as of late beta). The CUE position in FROM → CUE → TO triples is now labeled with PURER move type (Phenomenology, Utilization, Reframing, Education/Expectancy, Reinforcement). The pipeline can now answer questions of the form *what does the therapist do, exactly, when participants cross the Avoidance barrier?* — by retrieving every observed Avoidance → Mindfulness transition in the corpus and computing the distribution of PURER moves in those CUE positions. The synthesis is now a quantified PURER-move distribution, answered at a resolution that conventional process research cannot match. Human validation of PURER classifications (target: Krippendorff's α ≥ 0.70) is underway to ensure reliability before these move distributions are used as primary evidence in mechanism claims.
 
 ### 7.3 Both Sides of the Therapeutic Dyad from the Same Input
 
@@ -361,23 +361,57 @@ A frequently overlooked feature of computationally-augmented qualitative analysi
 
 ## 8. Trajectory: Planned Extensions, in Priority Order
 
-### 8.1 PURER Classification of Therapist Dialogue (Priority 1, before Cohort 3)
+### 8.1 PURER Classification of Therapist Dialogue (✓ Implemented; Human Validation Phase)
 
-The most consequential extension is the systematic classification of therapist segments against the PURER framework. The infrastructure already exists: therapist segments are extracted and indexed in Stage 1, the chronological session timeline preserves therapist-to-participant adjacencies, and the existing LLM client and classification loop can be redirected at therapist segments with a new ThemeFramework definition encoding the PURER components. What remains is the codebook authorship itself — a `theme_framework/purer.py` `ThemeFramework` operationalizing each component with definition, prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances at the same level of operational rigor as the VAMMR definitions. Detailed engineering specification is documented in `purer_specs.md` in the project repository.
+**Status:** PURER classification is now operational on Cohorts 1–2 (as of late beta). The `theme_framework/purer.py` `ThemeFramework` has been operationalized with five `ThemeDefinition` objects, one per PURER construct, with definition, prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances at the same operational rigor as VAMMR definitions.
 
-The boundary cases that the PURER codebook must handle carefully are the same ones the qualitative literature on PURER identifies. Phenomenology inquiry must be distinguishable from Education delivered as inquiry-shaped explanation (the test: Phenomenology asks about *this participant's* experience; Education explains a principle that would mean the same thing to any participant). Reframing must be distinguishable from Phenomenology (Reframing introduces a frame; Phenomenology opens inquiry). Reinforcement must be distinguishable from Utilization (Reinforcement closes around something just done in this exchange; Utilization draws on existing capacity from outside the immediate moment).
+**Current capabilities:**
 
-Once PURER is in place, the cue-response analysis becomes structurally complete. The PURER × VAMMR influence table answers the dyadic question at corpus scale: across all transitions of each type, what is the distribution of PURER moves in the CUE position, relative to the base rate of those moves? Is Reframing disproportionately present before Reappraisal transitions? Is Reinforcement concentrated *after* Metacognition (consolidation) rather than preceding it? PURER classification also enables session-level therapist fidelity profiles: the proportion of each PURER move per session, per therapist, per cohort — supporting targeted therapist feedback alongside curriculum recommendations and providing the first quantitative characterization of PURER component adherence across MORE sessions. Validation against the MORE Fidelity Measure (Hanley & Garland, 2021) at the session level provides external construct validity for the PURER classification.
+- Therapist segments are classified at Stage 3c of the orchestrator against the PURER framework
+- Multi-run LLM consensus with confidence tiering (high/medium/low) parallels VAMMR architecture
+- Cue-response analysis now produces PURER move distribution at each transition type
+- PURER × VAMMR influence table computes empirical lift for each (PURER move, VAMMR transition) pair
+- Per-session and per-therapist PURER fidelity profiles available in analysis outputs
 
-### 8.2 `expected_codes` Pre-Specification, Avoidance-Barrier Report, and Permutation Control (Priority 2, before Cohort 3)
+**Next priority: Human Validation of PURER Classifications**
 
-Three engineering items, undertaken together because they share the same code surface, address concerns surfaced by the present manuscript's preparation.
+Two independent rater teams are blind-coding a 20% stratified sample of PURER classifications (analogous to VAMMR validation protocol). Target reliability: Krippendorff's α ≥ 0.70 for primary evidence.
 
-The first is the data-structure encoding of the theoretical predictions stated in Section 3.3. We add an `expected_codes: List[str]` field to `ThemeDefinition` in `theme_schema.py`, populate it in `vammr.py` with the predictions from the table in Section 3.3, and update `cross_validation.py`'s `summarize_theme_code_associations()` to add `predicted_codes`, `predicted_and_confirmed`, `predicted_and_absent`, and `unpredicted_but_elevated` lists to each theme's result. This restores the falsifiable hypothesis-test structure that a careful reader expects from a Varela-style mutual-constraints argument and makes the predictions verifiable from the codebase alone, not just from manuscript prose. The `expected_codes` populating must be completed before Cohort 3 begins so the predictions are pre-specified before the data that test them are generated.
+- *Agreement ≥ 75% and α ≥ 0.70*: PURER labels can be used for mechanism-evidence claims and therapist fidelity assessment
+- *Agreement 50–74% or α 0.40–0.59*: directional evidence only; frame as hypotheses for Cohorts 3–4
+- *Below 50% or α < 0.40*: revise framework definitions and retest with raters
 
-The second is a dedicated `avoidance_barrier_report` that computes Avoidance prevalence by session number, Avoidance → Mindfulness transition rate within and between sessions, and per-participant barrier-crossing classification. This grounds Section 6.3's clinically central analysis in automated output rather than manual synthesis from the general transition report.
+Once human validation is complete, the cue-response analysis becomes structurally complete for mechanism evidence. The PURER × VAMMR influence table answers the dyadic question at corpus scale: across all transitions of each type, what is the distribution of PURER moves in the CUE position, relative to the base rate of those moves? Is Reframing disproportionately present before Reappraisal transitions? Is Reinforcement concentrated *after* Metacognition (consolidation) rather than preceding it? 
 
-The third is the *shuffled-stage permutation control* discussed in Section 5.2: a permutation test that breaks the real assignment of segments to stages and recomputes the lift distribution under random assignment. This addresses the construct-overlap concern that would otherwise apply to any cross-framework lift result generated by two LLM-based classifiers operating on the same text, and is computationally trivial since it requires no new classifications.
+PURER classification also enables session-level therapist fidelity profiles and provides the first quantitative characterization of PURER component adherence across MORE sessions. Validation against the MORE Fidelity Measure (Hanley & Garland, 2021) at the session level provides external construct validity for the PURER classification.
+
+### 8.2 `expected_codes` Pre-Specification, Avoidance-Barrier Report, and Permutation Control (Priority 2, ⚠️ MUST COMPLETE BEFORE COHORT 3)
+
+**Critical timing note:** These three engineering items are the methodological prerequisite for the four-cohort iterative design to function as a Varela-style mutual-constraints test. They must be completed before Cohort 3 begins. Cohorts 3–4 cannot serve as replication of Cohorts 1–2 predictions unless those predictions are pre-specified in the codebase before Cohorts 3–4 data are generated.
+
+Three engineering items, undertaken together because they share the same code surface, operationalize the hypothesis-testing architecture described in Section 3.3.
+
+**Item 1: Data-Structure Encoding of Theoretical Predictions**
+
+Add an `expected_codes: List[str]` field to `ThemeDefinition` in `theme_schema.py`. Populate it in:
+- `vammr.py`: predicted VCE codes (from Section 3.3 table) for each VAMMR stage
+- `purer.py`: predicted VAMMR stage transitions for each PURER move (based on Cohorts 1–2 empirical patterns)
+
+Update `cross_validation.py`'s cross-validation report generation to produce mechanical comparison lists: `predicted_codes`, `predicted_and_confirmed`, `predicted_and_absent`, `unpredicted_but_elevated` for each theme. This restores the falsifiable hypothesis-test structure and makes predictions verifiable from codebase alone, not just from manuscript prose. **Deadline: Before Cohort 3 begins.**
+
+**Item 2: Automated Avoidance-Barrier Report**
+
+Create a dedicated `avoidance_barrier_report` function that computes:
+- Avoidance prevalence by session number across cohort
+- Avoidance → Mindfulness transition rate (within-session and between-session)
+- Per-participant barrier-crossing classification: first session where Avoidance is no longer the dominant stage
+- Correlation analysis with cohort-level outcomes (pain, disability, etc.) when outcome integration (§8.3) is complete
+
+This grounds Section 6.3's clinically central analysis in automated output rather than manual synthesis from the general transition report. Output: `avoidance_barrier_analysis.json` with per-participant and per-session statistics.
+
+**Item 3: Shuffled-Stage Permutation Control for Lift Statistics**
+
+Implement the permutation test discussed in Section 5.2: break the real assignment of segments to VAMMR stages and recompute the entire lift distribution under random assignment. This addresses the construct-overlap concern that arises when both VAMMR and VCE classifiers are LLMs operating on the same text — some co-occurrence arises from shared training-data patterns rather than genuine phenomenological structure. If high-lift associations appear under permutation at similar rates as in the real assignment, the apparent convergence is classifier co-dependency, not framework validation. Computationally trivial (requires no new classifications); produces permutation-control lift table for direct comparison with real-assignment table.
 
 ### 8.3 Outcome Integration and Joint Displays (Priority 3)
 

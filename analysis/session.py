@@ -108,11 +108,19 @@ def generate_session_analysis(
         stage_counts = pdf['final_label'].value_counts().to_dict()
         props = {str(st): round(stage_counts.get(st, 0) / n_p, 4) for st in stage_ids}
         dominant = int(pdf['final_label'].mode().iloc[0]) if n_p > 0 else None
+
+        secondary_counts = {}
+        if 'secondary_stage' in pdf.columns:
+            for s in pdf['secondary_stage'].dropna().astype(int):
+                secondary_counts[s] = secondary_counts.get(s, 0) + 1
+
         participants_detail[pid] = {
             'n_segments': n_p,
             'stage_proportions': props,
             'dominant_stage': dominant,
             'dominant_stage_name': framework.get(dominant, {}).get('short_name', '') if dominant is not None else '',
+            'secondary_stage_counts': secondary_counts,
+            'dual_coded_count': sum(secondary_counts.values()),
         }
 
     # Group proportions (mean of per-participant proportions — equal weighting)
@@ -160,16 +168,28 @@ def generate_session_analysis(
 
     # Stage exemplars (up to 3 per stage)
     stage_exemplars = {}
+    secondary_stage_exemplars = {}
     for st in stage_ids:
         st_df = sdf[sdf['final_label'] == st]
         ex_rows = select_prototypical_exemplars(st_df, n=3)
         stage_exemplars[str(st)] = [format_exemplar(ex_rows.iloc[i])
                                      for i in range(len(ex_rows))]
 
+        # Dual-coded exemplars (where secondary_stage == st)
+        if 'secondary_stage' in sdf.columns:
+            sec_df = sdf[sdf['secondary_stage'].notna() & (sdf['secondary_stage'].astype('Int64') == st)]
+            if not sec_df.empty:
+                sec_rows = select_prototypical_exemplars(sec_df, n=2)
+                secondary_stage_exemplars[str(st)] = [format_exemplar(sec_rows.iloc[i])
+                                                       for i in range(len(sec_rows))]
+
     narrative = _narrative_for_session(
         session_id, n_segments, len(participant_ids),
         group_props, confidence_dist, top_codes, framework,
     )
+
+    # Dual-coded statistics
+    n_dual_coded = int(sdf['secondary_stage'].notna().sum()) if 'secondary_stage' in sdf.columns else 0
 
     report = {
         'session_id': session_id,
@@ -180,11 +200,14 @@ def generate_session_analysis(
         'participant_ids': participant_ids,
         'participants': participants_detail,
         'group_stage_proportions': group_props,
+        'dual_coded_count': n_dual_coded,
+        'dual_coded_pct': round(n_dual_coded / n_segments, 4) if n_segments > 0 else 0.0,
         'stage_sequence': stage_sequence,
         'stage_transition_matrix': transition_matrix,
         'confidence_distribution': confidence_dist,
         'top_codebook_codes': top_codes,
         'stage_exemplars': stage_exemplars,
+        'secondary_stage_exemplars': secondary_stage_exemplars,
         'narrative_summary': narrative,
     }
 

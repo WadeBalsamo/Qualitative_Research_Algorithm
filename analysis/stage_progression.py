@@ -5,6 +5,7 @@ Per-participant session stage progression and state transition analysis.
 with proper (participant_id, session_id) granularity.
 """
 
+import json
 import os
 
 import numpy as np
@@ -64,6 +65,11 @@ def compute_session_stage_progression(
         for s in stages:
             stage_counts[s] = stage_counts.get(s, 0) + 1
 
+        secondary_counts = {}
+        if 'secondary_stage' in group.columns:
+            for s in group['secondary_stage'].dropna().astype(int):
+                secondary_counts[s] = secondary_counts.get(s, 0) + 1
+
         dominant = max(stage_counts, key=stage_counts.get)
         snum = int(group['session_number'].iloc[0])
         cid = group['cohort_id'].dropna().iloc[0] if group['cohort_id'].notna().any() else None
@@ -86,6 +92,12 @@ def compute_session_stage_progression(
                 framework.get(k, {}).get('short_name', str(k)): v
                 for k, v in sorted(stage_counts.items())
             },
+            'secondary_distribution': {
+                framework.get(k, {}).get('short_name', str(k)): v
+                for k, v in sorted(secondary_counts.items())
+            } if secondary_counts else {},
+            'dual_coded_count': sum(secondary_counts.values()),
+            'dual_coded_pct': round(sum(secondary_counts.values()) / len(stages), 4) if stages else 0.0,
         })
 
     result = pd.DataFrame(rows)
@@ -98,6 +110,15 @@ def compute_session_stage_progression(
     from process import output_paths as _paths
     out_dir = _paths.longitudinal_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
+
+    # Serialize dict columns to JSON strings before writing CSV
+    result['stage_distribution_json'] = result['stage_distribution'].apply(
+        lambda d: json.dumps(d) if isinstance(d, dict) else '{}'
+    )
+    result['secondary_distribution_json'] = result['secondary_distribution'].apply(
+        lambda d: json.dumps(d) if isinstance(d, dict) else '{}'
+    )
+
     path = os.path.join(out_dir, 'session_stage_progression.csv')
     result.to_csv(path, index=False)
 
