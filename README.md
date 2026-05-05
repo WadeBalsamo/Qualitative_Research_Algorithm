@@ -2,7 +2,7 @@
 
 **Computational phenomenology for mindfulness-based intervention research.**
 
-QRA is a machine-assisted qualitative analysis pipeline that classifies therapy transcript segments using two established phenomenological frameworks concurrently — the Vigilance-Avoidance-Mindfulness-Metacognition-Reappraisal (VAMMR) model of therapeutic progression and the Varieties of Contemplative Experience (VCE) phenomenology codebook — producing defensible cohort-level qualitative analysis in days rather than weeks.
+QRA is a machine-assisted qualitative analysis pipeline that applies two complementary classification frameworks bilaterally to therapy transcripts: the Vigilance-Avoidance-Attention Regulation-Metacognition-Reappraisal (VAAMR) model classifies participant speech across a five-stage developmental arc, PURER (Phenomenological, Utilization, Reframing, Educate/Expectancy, Reinforcement) classifies therapist speech across five guided-inquiry moves, and the Varieties of Contemplative Experience (VCE) phenomenology codebook enriches participant segments with multi-label phenomenological content codes — producing defensible cohort-level qualitative analysis in days rather than weeks.
 
 ---
 
@@ -24,21 +24,21 @@ QRA was built to dissolve this tension.
 
 QRA implements two complementary phenomenological frameworks concurrently on the same transcript corpus. They address orthogonal questions.
 
-### VAMMR: Where is this participant in therapeutic progression?
+### VAAMR: Where is this participant in therapeutic progression?
 
-The Vigilance-Avoidance-Mindfulness-Metacognition-Reappraisal (VAMMR) framework was derived from thematic analysis of MORE sessions and characterizes five stages of mindfulness skill development, interpretable as progressive stages in the restoration of healthy structural relationships between attention and the lived body:
+The Vigilance-Avoidance-Attention Regulation-Metacognition-Reappraisal (VAAMR) framework was derived from thematic analysis of MORE sessions and characterizes five stages of mindfulness skill development, interpretable as progressive stages in the restoration of healthy structural relationships between attention and the lived body:
 
 | Stage | Name | Phenomenological Character | Canonical Expression |
 |-------|------|---------------------------|---------------------|
 | 0 | **Vigilance** | Leder's dys-appearance at its most acute: the body occupying the total field of attentional engagement. Attention is reactive rather than directed, captured by pain signals that continuously reassert themselves. | *"I can't stop thinking about the pain, it's all I can focus on."* |
 | 1 | **Avoidance** | The critical developmental barrier: attentional competence acquired but deployed in the service of experiential avoidance rather than investigation. Mindfulness techniques used instrumentally to push pain away rather than to inhabit it. | *"When the pain comes, I focus really hard on my breathing to push it away."* |
-| 2 | **Mindfulness** | Stable, sustained, volitional attention that stays *with* present somatic experience — anchored in sensation rather than fighting it or fleeing from it. Attention as deliberate investigative presence rather than defensive tool. | *"I kept bringing my attention back to the sensations, just staying with them."* |
+| 2 | **Attention Regulation** | Stable, sustained, volitional attention that stays *with* present somatic experience — anchored in sensation rather than fighting it or fleeing from it. Attention as deliberate investigative presence rather than defensive tool. | *"I kept bringing my attention back to the sensations, just staying with them."* |
 | 3 | **Metacognition** | The emergence of reflexive distance — an observing standpoint from which the contents of experience, including pain-related cognitions and affects, can be witnessed without identification. The body begins to re-emerge as something observed rather than something constituting. | *"I noticed I was getting anxious about the pain, and I could just watch that anxiety."* |
 | 4 | **Reappraisal** | A transformation of the noematic structure of pain experience: pain decomposed into constituent sensations, losing its character as monolithic threatening event and becoming a complex, textured, changing field. | *"It's interesting, when I really look at it, the 'pain' is actually many different feelings."* |
 
 The arc from Stage 0 to Stage 4 describes the progressive recovery of the body as a transparent medium of experience rather than a dysappearing obstacle — the theoretical process MORE is designed to produce.
 
-The full operational definitions, including prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances (the boundary-case language that separates adjacent stages), are implemented in [`theme_framework/vammr.py`](theme_framework/vammr.py).
+The full operational definitions, including prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances (the boundary-case language that separates adjacent stages), are implemented in [`theme_framework/vaamr.py`](theme_framework/vaamr.py).
 
 ### VCE: What is this participant phenomenologically experiencing?
 
@@ -58,13 +58,13 @@ Implemented in [`codebook/phenomenology_codebook.py`](codebook/phenomenology_cod
 
 ### Why Both: Orthogonal Analytical Dimensions
 
-VAMMR is a *developmental stage model* — it answers *where in therapeutic progression*. VCE is a *content taxonomy* — it answers *what is being experienced at each location in that progression*. Their concurrent application generates evidence neither framework can produce alone.
+VAAMR is a *developmental stage model* — it answers *where in therapeutic progression*. VCE is a *content taxonomy* — it answers *what is being experienced at each location in that progression*. Their concurrent application generates evidence neither framework can produce alone.
 
-The VAMMR framework encodes theoretically grounded expectations about which VCE codes should co-occur with each stage (to be pre-registered as an `expected_codes` field in [`theme_framework/vammr.py`](theme_framework/vammr.py) before Cohort 3):
+The VAAMR framework encodes theoretically grounded expectations about which VCE codes should co-occur with each stage (to be pre-registered as an `expected_codes` field in [`theme_framework/vaamr.py`](theme_framework/vaamr.py) before Cohort 3):
 
 - **Vigilance** is predicted to lift: *Fear/Anxiety/Panic/Paranoia*, *Agitation or Irritability*, *Pain (Somatic)* — consistent with dys-appearance as an affective-somatic phenomenon
 - **Avoidance** is predicted to lift: *Affective Flattening*, *Emotional Detachment, or Alexithymia* — consistent with the emotional blunting documented in experiential avoidance strategies (Hayes et al., 1996)
-- **Mindfulness** is predicted to lift: *Attention*, *Change in Duration of Experience*, *Somatic Relaxation or Calming* — consistent with sustained volitional attention to somatic experience with reduced effortful struggle
+- **Attention Regulation** is predicted to lift: *Attention*, *Change in Duration of Experience*, *Somatic Relaxation or Calming* — consistent with sustained volitional attention to somatic experience with reduced effortful struggle
 - **Metacognition** is predicted to lift: *Meta-Cognition*, *Clarity*, *Change in Narrative Self* — consistent with the emergence of reflexive self-observation
 - **Reappraisal** is predicted to lift: *Positive Affect*, *Change in Worldview*, *Change in Self-Other or Self-World Boundaries*, *Disintegration of Conceptual Meaning Structures* — consistent with a transformation in the noematic structure of pain experience
 
@@ -72,17 +72,23 @@ Pipeline Stage 4 tests these predictions empirically through **lift statistics**
 
 ---
 
-## The PURER Framework and Therapist Cue Analysis
+## The PURER Framework: Bilateral Therapist Classification
 
-Each MORE session follows a structured therapist inquiry format called PURER: **P**henomenology, **U**tilization, **R**eframing, **E**ducation/Expectancy, **R**einforcement. In the context of this analysis, PURER functions as a structured phenomenological interview method — analogous to Giorgi's (1985) descriptive phenomenological interview — systematically eliciting and consolidating participants' first-person reports of their experience.
+QRA applies two classification frameworks bilaterally. VAAMR classifies every participant segment. PURER classifies every therapist segment. The two frameworks together constitute a complete phenomenological account of the therapeutic dyad.
 
-The Phenomenology component (*"What did you notice during the practice?"*) is structurally similar to Husserlian epoché: the invitation to bracket naturalistic assumptions and describe experience as it presents itself. Reframing offers interpretive proposals that may shift participants' appraisive relationship to pain — what Giorgi calls free imaginative variation. Reinforcement consolidates participants' expressions of therapeutic insight.
+PURER operationalizes five guided-inquiry moves drawn from the MORE Manual (Garland, 2018) and validated against the qualitative dataset analyzed by Wexler, Balsamo et al. (2026): **P**henomenological, **U**tilization, **R**eframing, **E**ducate/Expectancy, **R**einforcement. Implemented in [`theme_framework/purer.py`](theme_framework/purer.py).
 
-This has a direct methodological implication. Therapist dialogue is not merely contextual background to participant phenomenological expression — it is a systematic *elicitor* of phenomenological description. The structure of PURER shapes which phenomenological reports participants offer; understanding therapeutic mechanism requires understanding that shaping.
+In the context of this analysis, PURER functions as a structured phenomenological interview method — analogous to Giorgi's (1985) descriptive phenomenological interview — systematically eliciting and consolidating participants' first-person reports of their experience.
 
-QRA's **therapist cue-response analysis** makes this visible. Because the pipeline separates participant and therapist segments at Stage 1 and indexes them chronologically, it can retrieve — for every observed within-session VAMMR stage transition — the therapist dialogue that immediately preceded it. This produces an empirical characterization of which therapist behaviors are associated with each type of stage change.
+The Phenomenological component (*"What did you notice during the practice?"*) is structurally similar to Husserlian epoché: the invitation to bracket naturalistic assumptions and describe experience as it presents itself. Reframing offers interpretive proposals that may shift participants' appraisive relationship to pain — what Giorgi calls free imaginative variation. Reinforcement consolidates participants' expressions of therapeutic insight.
 
-The Avoidance → Mindfulness transition is the single most clinically important transition to monitor: it marks the crossing of the experiential avoidance barrier, where emerging attentional skill is redirected from suppression toward open, investigative presence. Examining the therapist dialogue at these transitions and mapping it onto its PURER component — Is the therapist using a Phenomenology inquiry? A Reframe? A Reinforcement? — answers what therapist behaviors precipitate the most therapeutically significant moments in the session. This directly informs therapist training and scripting for subsequent cohorts.
+PURER moves frequently co-occur within a single therapist turn — most turns of meaningful length contain at least two moves simultaneously. When a single label is required, an empirical precedence order is specified in `purer.py`: Reinforcement is often a wrapper around a substantive move (code the inner move); Utilization takes precedence over Reframing for forward-application prompts; Reframing takes precedence over Education when the concept is anchored to the participant's specific story.
+
+Therapist dialogue is not merely contextual background to participant phenomenological expression — it is a systematic *elicitor* of phenomenological description. The structure of PURER shapes which phenomenological reports participants offer; understanding therapeutic mechanism requires understanding that shaping.
+
+QRA's **therapist cue-response analysis** makes this visible. Because the pipeline separates participant and therapist segments at Stage 1 and indexes them chronologically, it can retrieve — for every observed within-session VAAMR stage transition — the therapist dialogue that immediately preceded it. This produces an empirical characterization of which therapist behaviors are associated with each type of stage change.
+
+The Avoidance → Attention Regulation transition is the single most clinically important transition to monitor: it marks the crossing of the experiential avoidance barrier, where emerging attentional skill is redirected from suppression toward open, investigative presence. Examining the therapist dialogue at these transitions and mapping it onto its PURER component — Is the therapist using a Phenomenological inquiry? A Reframe? A Reinforcement? — answers what therapist behaviors precipitate the most therapeutically significant moments in the session. This directly informs therapist training and scripting for subsequent cohorts.
 
 ---
 
@@ -107,7 +113,7 @@ The outputs support three levels of analysis, each addressing a different resear
 
 ### Session level: Which sessions are catalyzing stage progression?
 
-Session stage distributions, compared against the theoretical arc implied by session content, reveal where the curriculum is working and where it is not. Sessions where Avoidance remains dominant in weeks 5–7 — despite content explicitly designed to catalyze the Avoidance → Mindfulness transition (Sessions 3, 5) — are primary curriculum targets. Sessions where Reappraisal first emerges identify the intervention's active ingredients at the phenomenological level.
+Session stage distributions, compared against the theoretical arc implied by session content, reveal where the curriculum is working and where it is not. Sessions where Avoidance remains dominant in weeks 5–7 — despite content explicitly designed to catalyze the Avoidance → Attention Regulation transition (Sessions 3, 5) — are primary curriculum targets. Sessions where Reappraisal first emerges identify the intervention's active ingredients at the phenomenological level.
 
 ### Dyadic level: What therapist behaviors facilitate contemplative transformation?
 
@@ -148,8 +154,8 @@ The eight-session MORE for Pain protocol proceeds from psychoeducation about pai
 ## Getting Started
 
 - **[USAGE.md](USAGE.md)** — Installation, LLM backend configuration, pipeline commands, output structure, configuration reference
-- **[methodology.txt](methodology.txt)** — Full neurophenomenological methodology paper (Journal of Phenomenology and the Cognitive Sciences)
-- **[methodology_v2.txt](methodology_v2.txt)** — Applied methodology paper oriented toward clinical trial researchers (Journal of Contemplative Studies)
+- **[methodology.md](methodology.md)** — Full neurophenomenological methodology paper (Journal of Phenomenology and the Cognitive Sciences)
+- **[methodology_v2.md](references/methodology_v2.md)** — Applied methodology paper oriented toward clinical trial researchers (Journal of Contemplative Studies)
 
 ```bash
 python qra.py setup    # interactive 12-step configuration wizard
@@ -169,7 +175,7 @@ The pipeline is currently being validated on Move-MORE Cohorts 1 and 2. **PURER 
 
 2. **Expected Codes Pre-Specification and Mutual-Constraints Validation** — operationalize the Varela-style mutual-constraints test by populating `expected_codes` fields in both `theme_framework/vammr.py` (predicted VCE codes per VAMMR stage) and `theme_framework/purer.py` (predicted VAMMR transitions per PURER move) **before Cohort 3 begins**. Implement mechanical expected-vs-observed comparison in cross-validation report. Add permutation-control analysis to address construct-overlap concerns. This is **critical path** for hypothesis pre-specification before Cohorts 3–4.
 
-3. **Avoidance-Barrier Dedicated Report** — automated analysis of Avoidance prevalence by session, Avoidance → Mindfulness transition rate, and per-participant barrier-crossing timing. This grounds the clinically most important analysis in pipeline output rather than manual synthesis.
+3. **Avoidance-Barrier Dedicated Report** — automated analysis of Avoidance prevalence by session, Avoidance → Attention Regulation transition rate, and per-participant barrier-crossing timing. This grounds the clinically most important analysis in pipeline output rather than manual synthesis.
 
 4. **Context-window expansion** — add preceding-segment context to classification prompts to improve accuracy at stage boundaries, particularly the Avoidance–Mindfulness and Mindfulness–Metacognition transitions. Data structures already capture `segment_index` and `session_id`; the missing piece is a context-building function in [`classification_tools/llm_classifier.py`](classification_tools/llm_classifier.py).
 
@@ -183,11 +189,11 @@ The pipeline is currently being validated on Move-MORE Cohorts 1 and 2. **PURER 
 
 ## Publications in Preparation
 
-Two methodology papers are in preparation, grounded in this pipeline:
+Methodology papers are in preparation, grounded in this pipeline:
 
-**Balsamo, W., Wexler, R. S., et al.** — "From Vigilance to Reappraisal: A Computational Neurophenomenological Method for Analyzing Contemplative Transformation in Mindfulness-Based Pain Therapy." *In preparation for Journal of Phenomenology and the Cognitive Sciences.* [`methodology.txt`](methodology.txt)
+**Balsamo, W., Wexler, R. S., et al.** — "From Vigilance to Reappraisal: A Computational Neurophenomenological Method for Analyzing Contemplative Transformation in Mindfulness-Based Pain Therapy." *In preparation for Journal of Phenomenology and the Cognitive Sciences.* [`methodology.md`](methodology.md)
 
-**Balsamo, W., Wexler, R. S., Fox, D. J., Garland, E. L., et al.** — "Computational Phenomenology in Mindfulness-Based Interventions for Chronic Pain: A Machine-Assisted Methodology for Rapid Iterative Curriculum Refinement." *In preparation for Journal of Contemplative Studies.* [`methodology_v2.txt`](methodology_v2.txt)
+**Balsamo, W., Wexler, R. S., Fox, D. J., Garland, E. L., et al.** — "Computational Phenomenology in Mindfulness-Based Interventions for Chronic Pain: A Machine-Assisted Methodology for Rapid Iterative Curriculum Refinement." *In preparation for Journal of Contemplative Studies.* [`methodology_v2.md`](references/methodology_v2.md)
 
 ---
 

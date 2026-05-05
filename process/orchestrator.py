@@ -59,7 +59,9 @@ from .assembly import (
     export_human_classification_forms,
     export_flagged_for_review,
     export_training_data,
-    export_validation_testsets,
+    generate_or_refresh_validation_testsets,
+    export_validation_testsets,  # Phase 1 back-compat — remove with legacy_migration.py
+    generate_or_refresh_content_validity_testsets,
 )
 from .cross_validation import (
     compute_theme_codebook_cooccurrence,
@@ -67,9 +69,17 @@ from .cross_validation import (
     export_cross_validation_results,
 )
 from . import output_paths as _paths
+from . import legacy_migration  # LEGACY-MIGRATION CALL SITE — Phase 3 cleanup target
+from . import segments_io
 from .speaker_filter import apply_speaker_filter as _apply_speaker_filter
 from .speaker_anonymization import load_speaker_map as _load_speaker_map
 
+
+def _resolve_session_id(session_file: str) -> str:
+    """Extract the session_id from a transcript file path."""
+    if session_file.lower().endswith('.vtt'):
+        return os.path.splitext(os.path.basename(session_file))[0]
+    return os.path.basename(os.path.dirname(session_file))
 
 
 class PipelineObserver:
@@ -235,6 +245,17 @@ def run_full_pipeline(
             speaker_normalizer=segmenter.speaker_norm,
         )
 
+    # LEGACY-MIGRATION CALL SITE — Phase 3 cleanup target
+    if legacy_migration.is_legacy_project(output_dir):
+        _n_segs = legacy_migration.migrate_legacy_segments(output_dir)
+        _n_ts = legacy_migration.migrate_legacy_testsets(output_dir)
+        observer.on_stage_progress(
+            "Transcript Ingestion and Segmentation",
+            f"Auto-migrated {_n_segs} sessions and {_n_ts} testsets from legacy layout",
+        )
+
+    current_hash = segments_io.params_hash(config.segmentation)
+
     session_files = discover_session_files(config.transcript_dir)
     if not session_files:
         observer.on_stage_progress(
@@ -253,6 +274,16 @@ def run_full_pipeline(
 
     all_segments: List[Segment] = []
     for session_file in session_files:
+        sid = _resolve_session_id(session_file)
+
+        if segments_io.is_segmentation_fresh(output_dir, sid, current_hash):
+            observer.on_stage_progress(
+                "Transcript Ingestion and Segmentation",
+                f"Reusing frozen segments for {sid}",
+            )
+            all_segments.extend(segments_io.read_session_segments(output_dir, sid))
+            continue
+
         if session_file.lower().endswith('.vtt'):
             session_data = load_vtt_session(session_file)
         else:
@@ -282,9 +313,9 @@ def run_full_pipeline(
                 session_data['sentences'], metadata,
                 return_intermediates=True,
             )
-            segments = result['segments']
-            segments = llm_refiner.refine(
-                segments,
+            session_segments = result['segments']
+            session_segments = llm_refiner.refine(
+                session_segments,
                 result['sentences'],
                 result['sim_curve'],
                 result['embeddings'],
@@ -292,7 +323,7 @@ def run_full_pipeline(
                 original_sentences=result.get('original_sentences'),
             )
         else:
-            segments = segmenter.segment_session(
+            session_segments = segmenter.segment_session(
                 session_data['sentences'], metadata
             )
 
@@ -305,15 +336,13 @@ def run_full_pipeline(
             session_data['sentences'], metadata, max_gap_seconds=_th_gap,
         )
         if therapist_segs:
-            combined = sorted(segments + therapist_segs, key=lambda s: s.start_time_ms)
+            combined = sorted(session_segments + therapist_segs, key=lambda s: s.start_time_ms)
             for i, seg in enumerate(combined):
                 seg.segment_index = i
-            segments = combined
+            session_segments = combined
         else:
-            for i, seg in enumerate(segments):
+            for i, seg in enumerate(session_segments):
                 seg.segment_index = i
-
-        all_segments.extend(segments)
 
         import shutil as _shutil
         _diar_dir = _paths.transcripts_diarized_dir(output_dir)
@@ -321,6 +350,9 @@ def run_full_pipeline(
         _diar_dest = os.path.join(_diar_dir, os.path.basename(session_file))
         if not os.path.exists(_diar_dest):
             _shutil.copy2(session_file, _diar_dest)
+
+        segments_io.write_session_segments(output_dir, sid, session_segments, current_hash)
+        all_segments.extend(session_segments)
 
     session_counts = Counter(s.session_id for s in all_segments)
     for seg in all_segments:
@@ -995,21 +1027,42 @@ def run_full_pipeline(
         "  Flagged for review: 04_validation/flagged_for_review.txt",
     )
 
-    # Cross-session validation test sets
+    # Cross-session validation test sets (VAAMR, PURER, codebook)
     ts_cfg = getattr(config, 'test_sets', None)
-    if ts_cfg is not None and ts_cfg.enabled:
-        export_validation_testsets(
+    if ts_cfg is not None and ts_cfg.any_enabled():
+        generate_or_refresh_validation_testsets(
             all_segments,
             framework,
             output_dir,
-            n_sets=ts_cfg.n_sets,
-            fraction_per_set=ts_cfg.fraction_per_set,
-            random_seed=ts_cfg.random_seed,
+            test_sets_config=ts_cfg,
             codebook_enabled=config.run_codebook_classifier,
+            codebook=codebook,
         )
         observer.on_stage_progress(
             "Report Generation",
-            "  Validation test sets: 04_validation/testsets/[human|AI]_classification_testset_worksheet_#.txt",
+            "  Validation test sets: 04_validation/testsets/",
+        )
+
+    # Content-validity testsets (VAAMR, PURER)
+    cv_cfg = getattr(config, 'content_validity', None)
+    if cv_cfg is not None and cv_cfg.any_enabled():
+        framework_purer = None
+        if cv_cfg.purer.enabled:
+            try:
+                from theme_framework.purer import get_purer_framework
+                framework_purer = get_purer_framework()
+            except Exception:
+                pass
+        generate_or_refresh_content_validity_testsets(
+            output_dir,
+            cv_config=cv_cfg,
+            framework_vaamr=framework if cv_cfg.vaamr.enabled else None,
+            framework_purer=framework_purer,
+            theme_classification_cfg=config.theme_classification if config.run_theme_labeler else None,
+        )
+        observer.on_stage_progress(
+            "Report Generation",
+            "  Content-validity testsets: 04_validation/content_validity/",
         )
 
     # Per-transcript stats (one JSON per session)

@@ -1,6 +1,6 @@
 # QRA: Qualitative Research Algorithm
 
-A comprehensive LLM-based classification pipeline for analyzing therapeutic dialogue transcripts. QRA classifies dialogue segments into theme/stage categories (e.g., the VAMMR framework: Vigilance, Avoidance, Mindfulness, Metacognition, Reappraisal) and optionally applies multi-label phenomenology codebook classification.
+A comprehensive LLM-based classification pipeline for analyzing therapeutic dialogue transcripts. QRA applies bilateral classification frameworks: VAAMR (Vigilance, Avoidance, Attention Regulation, Metacognition, Reappraisal) classifies participant segments, PURER classifies therapist segments, and the VCE phenomenology codebook provides optional multi-label construct enrichment.
 
 ## Overview
 
@@ -9,7 +9,7 @@ QRA is designed for qualitative research in psychotherapy and mindfulness-based 
 ### Key Capabilities
 
 - **Semantic Segmentation**: Embedding-based segmentation with adaptive thresholds, topic clustering, and optional LLM-assisted boundary refinement
-- **Theme Classification**: Zero-shot LLM classification into theoretical frameworks (e.g., VAMMR stages of contemplative transformation)
+- **Theme Classification**: Zero-shot LLM classification into theoretical frameworks (e.g., VAAMR stages of contemplative transformation)
 - **Codebook Classification**: Multi-label coding via embedding similarity + LLM zero-shot prompting, reconciled by ensemble
 - **Interrater Reliability**: Multi-model runs with consensus voting for cross-rater reliability metrics
 - **Validation Test Sets**: Stratified cross-session sampling for human blind-coding
@@ -183,7 +183,7 @@ python qra.py analyze --output-dir ./data/output/
 ```
 
 Runs post-hoc analysis on existing pipeline output to generate:
-- Per-participant longitudinal reports (VAMMR stage progression)
+- Per-participant longitudinal reports (VAAMR stage progression)
 - Per-session summaries with prototypical exemplars
 - Per-theme (stage + codebook) analyses
 - Longitudinal text reports and transition explanations
@@ -322,7 +322,7 @@ python qra.py run \
 
 ## Theme Frameworks
 
-### VAMMR (Vigilance-Avoidance-Mindfulness-Metacognition-Reappraisal)
+### VAAMR (Vigilance-Avoidance-Attention Regulation-Metacognition-Reappraisal)
 
 The default framework for mindfulness-based interventions:
 
@@ -552,7 +552,7 @@ class PipelineConfig:
 | File | Description |
 |------|-------------|
 | `theme_schema.py` | `ThemeFramework` and `ThemeDefinition` dataclasses |
-| `vammr.py` | VAMMR framework definitions (default) |
+| `vaamr.py` | VAAMR framework definitions (default) |
 | `vamr.py` | Legacy VA-MR framework (4-stage, archived — not used by default) |
 | `config.py` | `ThemeClassificationConfig` dataclass |
 
@@ -591,7 +591,7 @@ class PipelineConfig:
 | `loader.py` | Load master JSONL and framework from output directory |
 | `participant.py` | Per-participant report generation |
 | `session.py` | Per-session analysis |
-| `theme.py` | Per-theme (VAMMR stage + code) analyses |
+| `theme.py` | Per-theme (VAAMR stage + code) analyses |
 | `stage_progression.py` | Session-level stage progression computation |
 | `longitudinal.py` | Longitudinal summary generation |
 | `figure_data.py` | Export graph-ready CSV datasets |
@@ -666,6 +666,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- VAMMR framework based on research by [Wexler, Balsamo et al.]
+- VAAMR framework based on research by [Wexler, Balsamo et al.]
 - Powered by LLMs from OpenRouter, Replicate, HuggingFace, Ollama, and LM Studio
 - Embeddings powered by sentence-transformers and Qwen models

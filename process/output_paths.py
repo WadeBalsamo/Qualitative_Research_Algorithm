@@ -171,3 +171,89 @@ def training_data_dir(run_dir: str) -> str:
 def session_summaries_json_path(run_dir: str) -> str:
     """Machine-readable session summaries JSON (analysis data, not reports)."""
     return os.path.join(run_dir, '03_analysis_data', 'session_summaries.json')
+
+
+# ── Frozen segmentation ───────────────────────────────────────────────────
+
+def segmented_sessions_dir(run_dir: str) -> str:
+    """Root for per-session frozen segmentation artifacts."""
+    return os.path.join(run_dir, '01_transcripts', 'segmented')
+
+
+def segmented_session_dir(run_dir: str, session_id: str) -> str:
+    """Directory for a single session's frozen segments."""
+    return os.path.join(segmented_sessions_dir(run_dir), session_id)
+
+
+def session_segments_path(run_dir: str, session_id: str) -> str:
+    """Frozen segments JSONL for one session."""
+    return os.path.join(segmented_session_dir(run_dir, session_id), 'segments.jsonl')
+
+
+def segmentation_meta_path(run_dir: str, session_id: str) -> str:
+    """Segmentation params hash and ingest timestamp for one session."""
+    return os.path.join(segmented_session_dir(run_dir, session_id), 'segmentation_meta.json')
+
+
+# ── Frozen testsets ───────────────────────────────────────────────────────
+
+def testset_dir(run_dir: str, name: str) -> str:
+    """Directory for a single named frozen testset."""
+    return os.path.join(testsets_dir(run_dir), name)
+
+
+def testset_manifest_path(run_dir: str, name: str) -> str:
+    """Frozen manifest (segment IDs + content SHAs) for a testset."""
+    return os.path.join(testset_dir(run_dir, name), 'manifest.json')
+
+
+def testset_snapshot_path(run_dir: str, name: str) -> str:
+    """Frozen segment text snapshot for a testset."""
+    return os.path.join(testset_dir(run_dir, name), 'segments_snapshot.jsonl')
+
+
+def testset_human_worksheet_path(run_dir: str, name: str) -> str:
+    """Frozen blind-coding worksheet for a testset."""
+    return os.path.join(testset_dir(run_dir, name), 'human_worksheet.txt')
+
+
+def testset_answer_key_path(run_dir: str, name: str) -> str:
+    """Refreshable AI answer key for a testset."""
+    return os.path.join(testset_dir(run_dir, name), 'AI_answer_key.txt')
+
+
+# ── Frozen content-validity testsets ─────────────────────────────────────
+
+def cv_testsets_dir(run_dir: str) -> str:
+    """Root for content-validity testset directories."""
+    return os.path.join(run_dir, '04_validation', 'content_validity')
+
+
+def cv_testset_dir(run_dir: str, name: str) -> str:
+    """Directory for a single named content-validity testset."""
+    return os.path.join(cv_testsets_dir(run_dir), name)
+
+
+def cv_testset_manifest_path(run_dir: str, name: str) -> str:
+    """Frozen manifest for a content-validity testset."""
+    return os.path.join(cv_testset_dir(run_dir, name), 'manifest.json')
+
+
+def cv_testset_items_path(run_dir: str, name: str) -> str:
+    """Frozen items JSONL for a content-validity testset."""
+    return os.path.join(cv_testset_dir(run_dir, name), 'items.jsonl')
+
+
+def cv_testset_human_worksheet_path(run_dir: str, name: str) -> str:
+    """Frozen blind-coding worksheet for a content-validity testset."""
+    return os.path.join(cv_testset_dir(run_dir, name), 'human_worksheet.txt')
+
+
+def cv_testset_definition_key_path(run_dir: str, name: str) -> str:
+    """Frozen framework definition reference for a content-validity testset."""
+    return os.path.join(cv_testset_dir(run_dir, name), 'definition_key.txt')
+
+
+def cv_testset_answer_key_path(run_dir: str, name: str) -> str:
+    """Refreshable AI graded report for a content-validity testset."""
+    return os.path.join(cv_testset_dir(run_dir, name), 'AI_answer_key.txt')
