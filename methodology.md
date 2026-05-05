@@ -1,6 +1,6 @@
 # Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain
 
-**Wade Balsamo, Ryan S. Wexler, Devon J. Fox, Eric L. Garland, and the Move-MORE Research Collaborative**
+**Wade Balsamo, Ryan S. Wexler, and the Move-MORE Research Collaborative**
 
 *In preparation for submission to a mixed-methods methodology venue (Journal of Mixed Methods Research, BMC Medical Research Methodology, or International Journal of Qualitative Methods).*
 
