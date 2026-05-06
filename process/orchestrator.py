@@ -83,15 +83,23 @@ def _resolve_session_id(session_file: str) -> str:
 
 
 class PipelineObserver:
-    """Base observer with no-op methods for all pipeline events."""
+    """Base observer with no-op methods for all pipeline events.
 
-    def on_stage_start(self, stage_name: str, stage_number: str, **kwargs):
+    The optional ``scope_id`` keyword argument on each method lets partial
+    (stage-only) runs scope their progress without referencing a non-existent
+    prior stage.  Existing observers ignore it for back-compat.
+    """
+
+    def on_stage_start(self, stage_name: str, stage_number: str,
+                       *, scope_id: Optional[str] = None, **kwargs):
         pass
 
-    def on_stage_progress(self, stage_name: str, message: str, **kwargs):
+    def on_stage_progress(self, stage_name: str, message: str,
+                          *, scope_id: Optional[str] = None, **kwargs):
         pass
 
-    def on_stage_complete(self, stage_name: str, summary: str, **kwargs):
+    def on_stage_complete(self, stage_name: str, summary: str,
+                          *, scope_id: Optional[str] = None, **kwargs):
         pass
 
     def on_pipeline_complete(self, output_dir: str, **kwargs):
@@ -101,15 +109,18 @@ class PipelineObserver:
 class SilentObserver(PipelineObserver):
     """Minimal output: stage headers and summaries."""
 
-    def on_stage_start(self, stage_name: str, stage_number: str, **kwargs):
+    def on_stage_start(self, stage_name: str, stage_number: str,
+                       *, scope_id: Optional[str] = None, **kwargs):
         print(f"\n{'=' * 60}")
         print(f"STAGE {stage_number}: {stage_name}")
         print(f"{'=' * 60}")
 
-    def on_stage_progress(self, stage_name: str, message: str, **kwargs):
+    def on_stage_progress(self, stage_name: str, message: str,
+                          *, scope_id: Optional[str] = None, **kwargs):
         print(f"  {message}")
 
-    def on_stage_complete(self, stage_name: str, summary: str, **kwargs):
+    def on_stage_complete(self, stage_name: str, summary: str,
+                          *, scope_id: Optional[str] = None, **kwargs):
         print(f"  {summary}")
 
     def on_pipeline_complete(self, output_dir: str, **kwargs):
@@ -120,6 +131,448 @@ class SilentObserver(PipelineObserver):
 
 from codebook.embedding_classifier import EmbeddingCodebookClassifier, ensure_embedding_model_ready
 from codebook.ensemble import CodebookEnsemble
+from . import classifications_io as _cio
+
+
+# ===========================================================================
+# Phase 3 — Modular stage functions
+#
+# Each function follows this contract:
+#   - If segments=None, loads from frozen disk state + overlays (standalone mode).
+#   - If config/framework is provided, runs the actual classifier.
+#   - Always writes its overlay from the current in-memory segment state.
+#   - Returns the (possibly mutated) segments list, or pd.DataFrame for assemble.
+#
+# output_dir is resolved from the explicit kwarg first, then config.output_dir.
+# ===========================================================================
+
+def _resolve_output_dir(output_dir, config):
+    if output_dir is not None:
+        return output_dir
+    if config is not None and hasattr(config, 'output_dir'):
+        return config.output_dir
+    raise ValueError("output_dir required: pass --output-dir or provide a config with output_dir")
+
+
+def stage_classify_theme(
+    config,
+    framework,
+    *,
+    segments: Optional[List[Segment]] = None,
+    output_dir: Optional[str] = None,
+    observer: Optional[PipelineObserver] = None,
+) -> List[Segment]:
+    """
+    Theme classification stage.
+
+    If config and framework are provided, runs zero-shot LLM theme classification
+    against participant segments, then writes/updates theme_labels.jsonl.
+    If segments=None, loads from 01_transcripts/segmented/ + non-theme overlays.
+    """
+    _od = _resolve_output_dir(output_dir, config)
+    os.makedirs(_od, exist_ok=True)
+
+    if segments is None:
+        segments = segments_io.load_segments_for_stage(
+            _od, apply=('purer', 'codebook', 'cv'),
+        )
+
+    if config is not None and framework is not None:
+        _theme_llm_classify(config, framework, segments, _od, observer)
+
+    _cio.write_theme_overlay(_od, segments)
+    entry: dict = {'n_segments': len(segments)}
+    if framework is not None:
+        entry['framework'] = {'name': framework.name, 'version': getattr(framework, 'version', '?')}
+    if config is not None:
+        entry['model'] = config.theme_classification.model
+    _cio.update_classification_manifest(_od, key='theme', entry=entry)
+
+    return segments
+
+
+def stage_classify_purer(
+    config,
+    *,
+    segments: Optional[List[Segment]] = None,
+    output_dir: Optional[str] = None,
+    observer: Optional[PipelineObserver] = None,
+) -> List[Segment]:
+    """
+    PURER cue-unit classification stage.
+
+    Writes purer_labels.jsonl from current in-memory PURER fields.
+    Runs LLM classification when config is provided.
+    """
+    _od = _resolve_output_dir(output_dir, config)
+    os.makedirs(_od, exist_ok=True)
+
+    if segments is None:
+        segments = segments_io.load_segments_for_stage(
+            _od, apply=('theme', 'codebook', 'cv'),
+        )
+
+    if config is not None:
+        _purer_llm_classify(config, segments, _od, observer)
+
+    _cio.write_purer_overlay(_od, segments)
+    entry: dict = {'n_segments': len(segments)}
+    if config is not None:
+        entry['model'] = (getattr(config.purer_classification, 'model', None)
+                          or config.theme_classification.model)
+    _cio.update_classification_manifest(_od, key='purer', entry=entry)
+
+    return segments
+
+
+def stage_classify_codebook(
+    config,
+    codebook,
+    *,
+    segments: Optional[List[Segment]] = None,
+    output_dir: Optional[str] = None,
+    observer: Optional[PipelineObserver] = None,
+) -> List[Segment]:
+    """
+    Codebook classification stage.
+
+    Writes codebook_labels.jsonl from current in-memory codebook fields.
+    Runs embedding + LLM codebook classification when config and codebook are provided.
+    """
+    _od = _resolve_output_dir(output_dir, config)
+    os.makedirs(_od, exist_ok=True)
+
+    if segments is None:
+        segments = segments_io.load_segments_for_stage(
+            _od, apply=('theme', 'purer', 'cv'),
+        )
+
+    if config is not None and codebook is not None:
+        _codebook_classify(config, codebook, segments, _od, observer)
+
+    _cio.write_codebook_overlay(_od, segments)
+    entry: dict = {'n_segments': len(segments)}
+    if codebook is not None:
+        entry['codebook'] = {'name': codebook.name, 'version': getattr(codebook, 'version', '?')}
+    _cio.update_classification_manifest(_od, key='codebook', entry=entry)
+
+    return segments
+
+
+def stage_cross_validation(
+    config,
+    framework,
+    *,
+    segments: Optional[List[Segment]] = None,
+    output_dir: Optional[str] = None,
+    observer: Optional[PipelineObserver] = None,
+) -> List[Segment]:
+    """
+    Cross-validation stage (theme × codebook co-occurrence).
+
+    Writes cross_validation_labels.jsonl.  When config and framework are both
+    provided, also computes and exports co-occurrence statistics.
+    """
+    _od = _resolve_output_dir(output_dir, config)
+    os.makedirs(_od, exist_ok=True)
+
+    if segments is None:
+        segments = segments_io.load_segments_for_stage(
+            _od, apply=('theme', 'purer', 'codebook'),
+        )
+
+    if config is not None and framework is not None and \
+            getattr(config, 'run_theme_labeler', False) and \
+            getattr(config, 'run_codebook_classifier', False):
+        _run_cv_stats(segments, framework, _od, observer)
+
+    _cio.write_cross_validation_overlay(_od, segments)
+    _cio.update_classification_manifest(
+        _od, key='cv', entry={'n_segments': len(segments)},
+    )
+
+    return segments
+
+
+def stage_assemble(
+    config,
+    *,
+    segments: Optional[List[Segment]] = None,
+    output_dir: Optional[str] = None,
+    observer: Optional[PipelineObserver] = None,
+):
+    """
+    Dataset assembly stage.
+
+    Joins frozen segments + all present overlays and writes
+    master_segments.{csv,jsonl}.  Returns the master pd.DataFrame.
+    When segments=None, loads from disk.
+    """
+    import pandas as pd
+    from dataclasses import asdict
+
+    _od = _resolve_output_dir(output_dir, config)
+    os.makedirs(_od, exist_ok=True)
+
+    if segments is None:
+        segments = segments_io.load_segments_for_stage(
+            _od, apply=('theme', 'purer', 'codebook', 'cv'),
+        )
+
+    confidence_tiers: dict = {}
+    if config is not None and hasattr(config, 'confidence_tiers'):
+        confidence_tiers = asdict(config.confidence_tiers)
+
+    _ms_dir = _paths.master_segments_dir(_od)
+    os.makedirs(_ms_dir, exist_ok=True)
+    master_df = assemble_master_dataset(
+        segments,
+        os.path.join(_ms_dir, 'master_segments.jsonl'),
+        confidence_tiers=confidence_tiers,
+    )
+
+    return master_df
+
+
+# ---------------------------------------------------------------------------
+# Private helpers for stage classification logic
+# (extracted from run_full_pipeline body to avoid duplication)
+# ---------------------------------------------------------------------------
+
+def _theme_llm_classify(config, framework, segments, output_dir, observer):
+    """Run zero-shot LLM theme classification in-place on segments."""
+    theme_config = config.theme_classification
+    theme_config.output_dir = _paths.auditable_logs_dir(output_dir)
+
+    _llm_log_path = _paths.llm_prompts_path(output_dir)
+    plog = ProcessLogger(None, llm_log_path=_llm_log_path)
+
+    from .speaker_filter import apply_speaker_filter as _apply_sf
+    segments_to_classify = _apply_sf(segments, config.speaker_filter)
+
+    results_all, _ = classify_segments_zero_shot(
+        segments=segments_to_classify,
+        framework=framework,
+        config=theme_config,
+        resume_from=config.resume_from,
+        process_logger=plog,
+    )
+
+    name_to_id = framework.build_name_to_id_map()
+    updated, _ = parse_all_results(results_all, segments, name_to_id)
+    # parse_all_results returns the updated list; splice back into segments
+    segments[:] = updated
+    plog.close_llm_log()
+
+
+def _purer_llm_classify(config, segments, output_dir, observer):
+    """Run PURER cue-unit classification in-place on therapist segments."""
+    _has_therapists = any(s.speaker == 'therapist' for s in segments)
+    if not getattr(config, 'run_purer_labeler', False) or not _has_therapists:
+        return
+
+    from theme_framework.purer import get_purer_framework
+    purer_framework = get_purer_framework()
+    purer_cfg = config.purer_classification
+    purer_cfg.output_dir = _paths.auditable_logs_dir(output_dir)
+    purer_cue = getattr(config, 'purer_cue', None)
+
+    # Inherit backend/model from theme classification if not explicitly set
+    tc = config.theme_classification
+    _default_model = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'
+    if not purer_cfg.model or purer_cfg.model == _default_model:
+        purer_cfg.model = tc.model
+        purer_cfg.backend = tc.backend
+        purer_cfg.api_key = tc.api_key
+        purer_cfg.replicate_api_token = tc.replicate_api_token
+        purer_cfg.lmstudio_base_url = getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')
+        purer_cfg.temperature = tc.temperature
+    if not getattr(purer_cfg, 'per_run_models', None):
+        inherited = list(getattr(tc, 'per_run_models', []))
+        if inherited:
+            purer_cfg.per_run_models = inherited
+            purer_cfg.n_runs = len(inherited)
+        else:
+            purer_cfg.n_runs = 1
+
+    _llm_log_path = _paths.llm_prompts_path(output_dir)
+    plog = ProcessLogger(None, llm_log_path=_llm_log_path)
+
+    skip_lessons = getattr(purer_cue, 'skip_lesson_content', False)
+    max_lesson_words = getattr(purer_cue, 'max_lesson_words', 400)
+    max_ctx_words = getattr(purer_cue, 'max_context_words', 1000)
+    ctx_window = getattr(purer_cfg, 'context_window_segments', 6)
+
+    from collections import defaultdict as _dd
+    sorted_segs = sorted(segments, key=lambda s: s.start_time_ms)
+    seg_id_to_idx: dict = {}
+    segs_by_session: dict = _dd(list)
+    th_by_session: dict = _dd(list)
+    for i, s in enumerate(sorted_segs):
+        seg_id_to_idx[s.segment_id] = i
+        if s.speaker == 'participant' and s.primary_stage is not None:
+            segs_by_session[s.session_id].append(s)
+        if s.speaker == 'therapist':
+            th_by_session[s.session_id].append(s)
+
+    cue_units = []
+    cue_constituents = []
+    for session_id, p_segs in segs_by_session.items():
+        th_segs = th_by_session.get(session_id, [])
+        if not th_segs:
+            continue
+        for i in range(len(p_segs) - 1):
+            from_seg = p_segs[i]
+            to_seg = p_segs[i + 1]
+            between = [
+                t for t in th_segs
+                if t.start_time_ms < to_seg.start_time_ms
+                and t.end_time_ms > from_seg.end_time_ms
+            ]
+            if not between:
+                continue
+            cue_text = '\n'.join(t.text.strip() for t in between if t.text.strip())
+            cue_words = len(cue_text.split())
+            if skip_lessons and cue_words > max_lesson_words:
+                continue
+            from_idx = seg_id_to_idx.get(from_seg.segment_id, -1)
+            exchange_ctx = (
+                _build_context_block_for_purer(sorted_segs, from_idx, window_size=ctx_window,
+                                               max_words=max_ctx_words)
+                if from_idx >= 0 else ''
+            )
+            synthetic_id = f'purer_cue_{from_seg.segment_id}_to_{to_seg.segment_id}'
+            synthetic = Segment(
+                segment_id=synthetic_id,
+                trial_id=from_seg.trial_id,
+                session_id=session_id,
+                session_number=from_seg.session_number,
+                cohort_id=from_seg.cohort_id,
+                speaker='therapist',
+                text=cue_text,
+                word_count=cue_words,
+                start_time_ms=between[0].start_time_ms,
+                end_time_ms=between[-1].end_time_ms,
+            )
+            cue_units.append({
+                'segment': synthetic,
+                'from_segment': from_seg,
+                'to_segment': to_seg,
+                'context_block': exchange_ctx,
+            })
+            cue_constituents.append(between)
+
+    if not cue_units:
+        plog.close_llm_log()
+        return
+
+    try:
+        purer_results, _ = _classify_purer_cue_units(
+            cue_units=cue_units,
+            framework=purer_framework,
+            config=purer_cfg,
+            resume_from=config.resume_from,
+            process_logger=plog,
+        )
+    except Exception:
+        purer_results = {}
+
+    for cu, constituents in zip(cue_units, cue_constituents):
+        sid = cu['segment'].segment_id
+        result = purer_results.get(sid)
+        if not isinstance(result, dict):
+            continue
+        consensus = result.get('consensus', {})
+        primary = consensus.get('primary_stage')
+        if primary is None:
+            continue
+        for th_seg in constituents:
+            th_seg.purer_primary = primary
+            th_seg.purer_secondary = consensus.get('secondary_stage')
+            th_seg.purer_confidence_primary = consensus.get('primary_confidence', 0.0)
+            th_seg.purer_confidence_secondary = consensus.get('secondary_confidence')
+            th_seg.purer_justification = consensus.get('justification', '')
+            th_seg.purer_run_consistency = consensus.get('n_agree', 0)
+            th_seg.purer_agreement_level = consensus.get('agreement_level')
+            n_agree = consensus.get('n_agree', 0)
+            n_raters = consensus.get('n_raters', 1) or 1
+            th_seg.purer_agreement_fraction = n_agree / n_raters
+            th_seg.purer_needs_review = bool(consensus.get('needs_review', False))
+            th_seg.purer_rater_ids = result.get('rater_ids') or []
+            th_seg.purer_rater_votes = result.get('rater_votes') or []
+    plog.close_llm_log()
+
+
+def _codebook_classify(config, codebook, segments, output_dir, observer):
+    """Run embedding + LLM codebook classification in-place on segments."""
+    _llm_log_path = _paths.llm_prompts_path(output_dir)
+    plog = ProcessLogger(None, llm_log_path=_llm_log_path)
+
+    codebook_output_dir = _paths.codebook_raw_dir(output_dir)
+    os.makedirs(codebook_output_dir, exist_ok=True)
+    config.codebook_embedding.exemplar_export_path = os.path.join(
+        codebook_output_dir, 'found_exemplar_utterances.json'
+    )
+
+    from .speaker_filter import apply_speaker_filter as _apply_sf
+    cb_segments = _apply_sf(segments, config.speaker_filter)
+
+    embedding_classifier = EmbeddingCodebookClassifier(config.codebook_embedding)
+    embedding_results = embedding_classifier.classify_segments(cb_segments, codebook)
+
+    tc = config.theme_classification
+    llm_cfg = LLMClientConfig(
+        backend=tc.backend,
+        api_key=tc.api_key,
+        replicate_api_token=tc.replicate_api_token,
+        model=tc.model,
+        temperature=tc.temperature,
+        lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+        ollama_host=getattr(tc, 'ollama_host', '0.0.0.0'),
+        ollama_port=getattr(tc, 'ollama_port', 11434),
+        process_logger=plog,
+    )
+    llm_client = LLMClient(llm_cfg)
+    config.codebook_llm.output_dir = codebook_output_dir
+    llm_classifier = LLMCodebookClassifier(llm_client, config.codebook_llm)
+    try:
+        llm_results = llm_classifier.classify_segments(
+            cb_segments, codebook, output_dir=codebook_output_dir,
+        )
+    except Exception:
+        llm_results = {}
+
+    ensemble = CodebookEnsemble(config.codebook_ensemble)
+    ensemble_results = ensemble.reconcile(embedding_results, llm_results)
+
+    for seg in segments:
+        if seg.segment_id in ensemble_results:
+            ens = ensemble_results[seg.segment_id]
+            seg.codebook_labels_embedding = sorted(
+                a.code_id for a in embedding_results.get(seg.segment_id, [])
+            )
+            seg.codebook_labels_llm = sorted(
+                a.code_id for a in llm_results.get(seg.segment_id, [])
+            )
+            seg.codebook_labels_ensemble = ens.final_codes
+            seg.codebook_disagreements = [d['code_id'] for d in ens.disagreement_details]
+            seg.codebook_confidence = {a.code_id: a.confidence for a in ens.final_assignments}
+
+    plog.close_llm_log()
+
+
+def _run_cv_stats(segments, framework, output_dir, observer):
+    """Compute cross-validation co-occurrence stats and export to disk."""
+    import pandas as pd
+    segments_df = pd.DataFrame([vars(s) for s in segments])
+    cooccurrence = compute_theme_codebook_cooccurrence(
+        segments_df, framework,
+        codebook_label_column='codebook_labels_ensemble',
+        theme_label_column='primary_stage',
+    )
+    _cv_params = {'min_lift': 1.5, 'min_count': 3, 'top_n': 10}
+    associations_by_theme = summarize_theme_code_associations(cooccurrence, **_cv_params)
+    export_cross_validation_results(cooccurrence, associations_by_theme, _cv_params, output_dir)
 
 
 def run_full_pipeline(

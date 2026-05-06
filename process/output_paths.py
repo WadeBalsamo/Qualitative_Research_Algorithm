@@ -195,6 +195,29 @@ def segmentation_meta_path(run_dir: str, session_id: str) -> str:
     return os.path.join(segmented_session_dir(run_dir, session_id), 'segmentation_meta.json')
 
 
+# ── Classification overlays (Phase 3) ────────────────────────────────────
+
+def classifications_dir(run_dir: str) -> str:
+    """Per-classifier overlay JSONL files and the provenance manifest."""
+    return os.path.join(run_dir, '02_meta', 'classifications')
+
+
+def classification_overlay_path(run_dir: str, key: str) -> str:
+    """Overlay JSONL for a specific classifier: theme | purer | codebook | cv."""
+    _filenames = {
+        'theme': 'theme_labels.jsonl',
+        'purer': 'purer_labels.jsonl',
+        'codebook': 'codebook_labels.jsonl',
+        'cv': 'cross_validation_labels.jsonl',
+    }
+    return os.path.join(classifications_dir(run_dir), _filenames[key])
+
+
+def classification_manifest_path(run_dir: str) -> str:
+    """Provenance manifest recording model/version for each overlay."""
+    return os.path.join(classifications_dir(run_dir), 'classification_manifest.json')
+
+
 # ── Frozen testsets ───────────────────────────────────────────────────────
 
 def testset_dir(run_dir: str, name: str) -> str:

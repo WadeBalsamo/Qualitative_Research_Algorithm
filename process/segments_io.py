@@ -246,6 +246,39 @@ def _load_segments_from_jsonl(jsonl_path: str) -> List[Segment]:
     return segments
 
 
+def load_segments_for_stage(
+    run_dir: str,
+    *,
+    apply: tuple = ('theme', 'purer', 'codebook', 'cv'),
+) -> List[Segment]:
+    """
+    Load all frozen segments from disk and apply the requested overlays.
+
+    ``apply`` controls which overlay files are applied; callers exclude the
+    overlay they are about to overwrite so stale labels don't bleed in.
+
+    Raises FileNotFoundError if 01_transcripts/segmented/ is empty.
+    Missing overlay files in the apply tuple are silently skipped.
+    """
+    sessions = list_segmented_sessions(run_dir)
+    if not sessions:
+        raise FileNotFoundError(
+            f"No frozen segments found in {run_dir}; "
+            "run `qra ingest` first."
+        )
+
+    segments: List[Segment] = []
+    for sid in sessions:
+        segments.extend(read_session_segments(run_dir, sid))
+
+    if apply:
+        from .classifications_io import apply_overlays
+        by_id = {s.segment_id: s for s in segments}
+        apply_overlays(run_dir, by_id, keys=apply)
+
+    return segments
+
+
 def _int_or_none(val) -> Optional[int]:
     try:
         return int(val) if val is not None and str(val) != 'nan' else None

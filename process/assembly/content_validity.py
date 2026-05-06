@@ -197,13 +197,17 @@ def generate_or_refresh_content_validity_testsets(
     framework_vaamr,
     framework_purer,
     theme_classification_cfg,
+    create_missing: bool = True,
 ) -> List[str]:
     """
     Coordinator used by orchestrator Stage 7 and by qra cv refresh --all.
 
     For each enabled spec in cv_config:
       - if testset exists: refresh_cv_answer_key(...)
-      - else:              create_frozen_content_validity_testset(...)
+      - else (and create_missing=True): create_frozen_content_validity_testset(...)
+
+    When create_missing=False, only refreshes testsets that already exist;
+    skips kinds whose directory is absent. Used by `qra assemble`.
 
     Returns list of testset directories touched.
     """
@@ -225,13 +229,16 @@ def generate_or_refresh_content_validity_testsets(
 
         if os.path.isfile(manifest_path):
             refresh_cv_answer_key(run_dir, name, theme_classification_cfg, framework)
-        else:
+        elif create_missing:
             create_frozen_content_validity_testset(
                 framework, run_dir,
                 name=name,
                 kind=kind,
                 theme_classification_cfg=theme_classification_cfg,
             )
+        else:
+            # create_missing=False and testset does not yet exist — skip
+            continue
 
         dirs.append(_paths.cv_testset_dir(run_dir, name))
 
