@@ -33,3 +33,5 @@ MoveMORE_protocol.txt
 references/
 references/*
 plan.md
+.gitignore
+.prompt.txt

@@ -1,0 +1,1076 @@
+SPECS ON LATEST REFACTOR: # QRA Modular Refactor — Three-Phase Plan
+
+This refactor is split into three phases that ship independently.
+
+- **Phase 1 — Freeze.** Freeze raw segmentation and validation testsets to disk, migrate legacy projects forward. CLI shape and orchestrator stage layout unchanged. (Already planned in detail below.)
+- **Phase 2 — Testset Kinds and Content-Validity Refresh.** Add PURER (therapist cue blocks) and codebook (multi-label per participant segment) testsets on the frozen-testset foundation from Phase 1. Add a refresh subcommand for the existing VAAMR content-validity testset and add a new PURER content-validity testset. Codebook content-validity is deferred (codebook codes today have empty `exemplar_utterances`). Introduce two scoped CLI surfaces: `qra testset {create|refresh|list}` and `qra cv {create|refresh|list}`.
+- **Phase 3 — Modular CLI Stages and Classification Overlays.** Decompose `process/orchestrator.py:run_full_pipeline` into independently invokable stages, expose them as `qra ingest`, `qra classify`, `qra assemble`, and separate classification results into overlay files at `02_meta/classifications/` so re-classification never touches the frozen `01_transcripts/segmented/` tree. `qra run` becomes a thin orchestrator over the stages.
+
+After Phase 1, every existing project still runs `python qra.py run …` exactly as before; the only externally visible change is that re-runs reuse frozen segments and the AI answer keys for testsets refresh instead of the entire testset being regenerated. After Phase 2, two new testset kinds and PURER content-validity are available, and CV refresh is a single command. After Phase 3, every stage of the pipeline is independently runnable and re-classifying never re-segments.
+
+Phase 1 introduces a separate, deletable legacy-migration module (`process/legacy_migration.py`) carrying every line of code that exists only to upgrade pre-modular projects. Cleanup of that module — and of the small back-compat seams introduced in Phase 1 — is **out of scope for this plan** and will be planned separately once in-flight projects have all been migrated.
+
+---
+
+# Phase 1 — Freeze Segmentation, Freeze Testsets, Legacy Import
+
+## Context
+
+`process/orchestrator.py:run_full_pipeline()` re-segments every transcript on every run, and `process/assembly/human_forms.py:export_validation_testsets()` re-samples testset segments on every run (re-shuffling the cohort pool every time, so the seed alone does not protect previously human-coded testsets — adding a single new transcript silently changes which segments appear). There is no on-disk artifact representing "the segmentation result" separately from `02_meta/training_data/master_segments.jsonl`, which mixes raw segmentation with classification output.
+
+Phase 1 introduces two on-disk freeze layers:
+
+1. **Per-session frozen segments** under `01_transcripts/segmented/<sid>/segments.jsonl`. Once a session is segmented, its segments are loaded from disk on subsequent runs instead of being recomputed. Adding a new transcript only segments that one transcript. Existing `participant_N` IDs stay stable via the already-cross-run-stable speaker map (`02_meta/speaker_anonymization_key.json`, loaded by `process/speaker_anonymization.py:load_speaker_map()`).
+2. **Per-testset frozen artifacts** under `04_validation/testsets/<name>/`: a `manifest.json` (segment IDs + content SHA), a `segments_snapshot.jsonl` (text + identity at creation), a `human_worksheet.txt` (blind, never re-emitted), and a refreshable `AI_answer_key.txt`. The first time a testset is generated it freezes; on subsequent runs only the AI answer key is regenerated and the segment SHAs are verified against the current frozen segments.
+
+Legacy projects that have a populated `master_segments.jsonl` and pre-modular testset worksheets are auto-migrated on first run by a clearly separated `process/legacy_migration.py` module.
+
+## Non-goals for Phase 1
+
+- No new CLI subcommands. `qra setup`, `qra run`, `qra analyze`, `qra testsets` keep their current shapes and behaviors. Phase 2 introduces `qra ingest`, `qra classify`, `qra assemble`, `qra testset {create|refresh|list}`, `qra cv {…}`.
+- No PURER or codebook testset variants. Today only VAAMR participant testsets exist; that stays true through Phase 1. The freeze invariants are written to be kind-tagged (`kind="vaamr"`) so Phase 2 can extend them.
+- No classification-overlay separation. Classification results still write to the in-memory `Segment` and out to `master_segments.jsonl` exactly as today.
+- No setup-wizard changes.
+
+## On-disk layout introduced
+
+```
+01_transcripts/
+    diarized/                                 existing (unchanged)
+    segmented/<session_id>/
+        segments.jsonl                        NEW — frozen raw segmentation
+        segmentation_meta.json                NEW — params_hash, segmenter version, ingest timestamp
+
+04_validation/
+    testsets/<name>/                          NEW shape — frozen
+        manifest.json                         kind ("vaamr"), set_index, n_sets, seed, fraction,
+                                               framework name+version, segment_ids, content_sha256
+        segments_snapshot.jsonl               text + identity at creation
+        human_worksheet.txt                   FROZEN once written
+        AI_answer_key.txt                     refreshable
+
+    testsets/                                 LEGACY — moved into testsets/<name>/ during migration
+        human_classification_testset_worksheet_1.txt  …
+        AI_classification_testset_worksheet_1.txt      …
+```
+
+The names default to `vaamr_testset_<idx>` derived from the existing `set_idx` numbering in `process/assembly/human_forms.py:533`, so migrated projects get one folder per existing legacy worksheet pair.
+
+## Files to add
+
+### `process/_freeze.py` (new)
+
+Generic freeze enforcement primitives, used by both segmentation and testset code paths.
+
+```python
+class FrozenArtifactError(RuntimeError): ...
+
+def write_frozen(path: str, write_fn: Callable[[IO], None], *, force: bool = False) -> None:
+    """Write a file via write_fn(open_handle). Raises FrozenArtifactError if path
+    already exists unless force=True. Atomic: writes to path + '.tmp' then renames."""
+
+def sha256_text(text: str) -> str: ...
+
+def verify_content_sha(snapshot_path: str, segments_by_id: Dict[str, "Segment"]) -> Dict[str, bool]:
+    """For each segment_id in snapshot, return True if its current text's sha256
+    matches the stored content_sha256. Used by testset refresh."""
+```
+
+### `process/segments_io.py` (new)
+
+Frozen-segments I/O. The canonical loader is reused by Phase 2; for Phase 1 it serves the orchestrator.
+
+```python
+def params_hash(seg_cfg: SegmentationConfig) -> str:
+    """sha256 of canonical-sorted JSON of fields that affect segmentation output:
+       embedding_model, silence_threshold_ms, semantic_shift_percentile,
+       min/max_segment_words_conversational, max_gap_seconds, min_words_per_sentence,
+       max_segment_duration_seconds, use_adaptive_threshold, min_prominence,
+       broad_window_size, use_topic_clustering, use_llm_refinement,
+       llm_refinement_mode, llm_ambiguity_threshold, llm_batch_size."""
+
+def write_session_segments(run_dir, session_id, segments, params_hash, *, force=False) -> str:
+    """Write 01_transcripts/segmented/<sid>/segments.jsonl + segmentation_meta.json
+    via write_frozen. JSONL contains ONLY raw-segmentation fields (no classification)."""
+
+def read_session_segments(run_dir, session_id) -> List[Segment]:
+    """Reconstruct Segment objects from frozen segments.jsonl. Raises if missing.
+    Mirror image of write_session_segments — leaves classification fields at defaults."""
+
+def list_segmented_sessions(run_dir) -> List[str]: ...
+
+def is_segmentation_fresh(run_dir, session_id, current_params_hash) -> bool:
+    """True iff 01_transcripts/segmented/<sid>/segments.jsonl exists AND
+    segmentation_meta.json's params_hash matches current_params_hash, OR
+    the legacy sentinel 'legacy-pre-modular' is recorded (treated as fresh
+    so legacy projects don't trigger a re-segmentation just because params drifted)."""
+```
+
+The raw-segmentation field set persisted by `write_session_segments` is exactly what `Segment.__init__` requires plus `speakers_in_segment` and `session_file`:
+
+```
+segment_id, trial_id, participant_id, session_id, session_number, cohort_id,
+session_variant, segment_index, start_time_ms, end_time_ms,
+total_segments_in_session, speaker, text, word_count, speakers_in_segment, session_file
+```
+
+### `process/legacy_migration.py` (new — DELETABLE in Phase 3)
+
+```python
+# ============================================================================
+# LEGACY MIGRATION SHIM — REMOVE IN PHASE 3
+#
+# This module exists solely to upgrade pre-modular project directories
+# (those that have a populated 02_meta/training_data/master_segments.jsonl
+# but no 01_transcripts/segmented/ tree) to the frozen-segments + frozen-
+# testsets layout introduced in Phase 1.
+#
+# Once the in-flight projects have all been migrated, delete this file
+# and the two call sites in process/orchestrator.py marked
+# `# LEGACY-MIGRATION CALL SITE` (search the repo).
+# ============================================================================
+
+def is_legacy_project(run_dir) -> bool:
+    """True iff there is master_segments.jsonl but no 01_transcripts/segmented/."""
+
+def migrate_legacy_segments(run_dir) -> int:
+    """Read master_segments.jsonl, group by session_id, write per-session
+    segments.jsonl files containing only raw-segmentation fields. Mark
+    segmentation_meta.json with params_hash='legacy-pre-modular' so subsequent
+    ingests don't auto-trigger a re-segmentation just because configured params
+    drifted. Returns number of sessions migrated."""
+
+def migrate_legacy_testsets(run_dir) -> int:
+    """For every legacy 04_validation/testsets/{human,AI}_classification_testset_worksheet_<n>.txt
+    pair, derive name='vaamr_testset_<n>', create
+    04_validation/testsets/<name>/, parse segment IDs from worksheet headers
+    (today's _write_human_testset format includes 'Session: <sid>   Segment <NNN>'),
+    look those segments up in the master, write manifest.json + segments_snapshot.jsonl,
+    and MOVE the legacy worksheet files into the new folder renamed to human_worksheet.txt
+    and AI_answer_key.txt. Returns number of testsets migrated."""
+```
+
+## Files to modify
+
+### `process/output_paths.py`
+
+Add helpers:
+
+```python
+def segmented_sessions_dir(run_dir): return os.path.join(run_dir, '01_transcripts', 'segmented')
+def segmented_session_dir(run_dir, sid): return os.path.join(segmented_sessions_dir(run_dir), sid)
+def session_segments_path(run_dir, sid): return os.path.join(segmented_session_dir(run_dir, sid), 'segments.jsonl')
+def segmentation_meta_path(run_dir, sid): return os.path.join(segmented_session_dir(run_dir, sid), 'segmentation_meta.json')
+
+def testset_dir(run_dir, name):                return os.path.join(testsets_dir(run_dir), name)
+def testset_manifest_path(run_dir, name):       return os.path.join(testset_dir(run_dir, name), 'manifest.json')
+def testset_snapshot_path(run_dir, name):       return os.path.join(testset_dir(run_dir, name), 'segments_snapshot.jsonl')
+def testset_human_worksheet_path(run_dir, name): return os.path.join(testset_dir(run_dir, name), 'human_worksheet.txt')
+def testset_answer_key_path(run_dir, name):     return os.path.join(testset_dir(run_dir, name), 'AI_answer_key.txt')
+```
+
+### `process/orchestrator.py`
+
+Two surgical changes; the rest of the function is unchanged.
+
+**(a) Replace the segmentation loop** (lines 238-329) with a load-or-segment loop:
+
+```python
+# LEGACY-MIGRATION CALL SITE — Phase 3 cleanup target
+if legacy_migration.is_legacy_project(output_dir):
+    n_segs = legacy_migration.migrate_legacy_segments(output_dir)
+    n_ts   = legacy_migration.migrate_legacy_testsets(output_dir)
+    observer.on_stage_progress(
+        "Transcript Ingestion and Segmentation",
+        f"Auto-migrated {n_segs} sessions and {n_ts} testsets from legacy layout"
+    )
+
+current_hash = segments_io.params_hash(config.segmentation)
+session_files = discover_session_files(config.transcript_dir) or [...glob fallback...]
+
+all_segments: List[Segment] = []
+for session_file in session_files:
+    sid = _resolve_session_id(session_file)  # extracts session_id the same way today's code does
+    if segments_io.is_segmentation_fresh(output_dir, sid, current_hash):
+        observer.on_stage_progress(..., f"Reusing frozen segments for {sid}")
+        all_segments.extend(segments_io.read_session_segments(output_dir, sid))
+        continue
+
+    # === existing segmentation logic for this session ===
+    # (load_diarized_session/load_vtt_session, segmenter.segment_session,
+    #  llm_refiner.refine, extract_therapist_segments, interleave + reindex,
+    #  copy diarized into 01_transcripts/diarized/)
+    # === unchanged ===
+
+    segments_io.write_session_segments(output_dir, sid, session_segments, current_hash)
+    all_segments.extend(session_segments)
+
+session_counts = Counter(s.session_id for s in all_segments)
+for seg in all_segments:
+    seg.total_segments_in_session = session_counts[seg.session_id]
+```
+
+A small helper `_resolve_session_id(session_file)` lifts the existing logic at lines 263-278 (`os.path.splitext(os.path.basename(...))` for VTT, `os.path.basename(os.path.dirname(...))` for diarized JSON). The diarized-file copy at lines 318-323 still happens inside the segmentation branch, not on cache hits.
+
+**(b) Replace the validation-testset call site** (lines 999-1013) with the new coordinator:
+
+```python
+ts_cfg = getattr(config, 'test_sets', None)
+if ts_cfg is not None and ts_cfg.enabled:
+    from .assembly import generate_or_refresh_validation_testsets  # new name
+    generate_or_refresh_validation_testsets(
+        all_segments,
+        framework,
+        output_dir,
+        n_sets=ts_cfg.n_sets,
+        fraction_per_set=ts_cfg.fraction_per_set,
+        random_seed=ts_cfg.random_seed,
+        codebook_enabled=config.run_codebook_classifier,
+    )
+```
+
+The Stage 7 speaker-anonymization-key write (lines 941-947) stays where it is. Everything between Stage 1 and Stage 7 is unchanged.
+
+### `process/assembly/human_forms.py`
+
+Refactor `export_validation_testsets()` (lines 485-544) into three functions; keep the existing `_write_human_testset` and `_write_ai_testset` helpers (they already write the right content shapes — they just gain a target path argument).
+
+```python
+def generate_or_refresh_validation_testsets(
+    segments, framework, run_dir, *,
+    n_sets, fraction_per_set, random_seed, codebook_enabled,
+) -> List[str]:
+    """Coordinator. For each set index i (1..n_sets):
+       name = f'vaamr_testset_{i}'
+       if testset_manifest_path(run_dir, name) exists:
+           refresh_testset_answer_key(...)
+       else:
+           create_frozen_testset(...)
+    """
+
+def create_frozen_testset(
+    segments, framework, run_dir, *,
+    name, n_sets, set_index, fraction_per_set, random_seed,
+    codebook_enabled, force=False,
+) -> str:
+    """Computes the cohort-stratified sample (existing logic at lines 503-527),
+    writes via write_frozen():
+       - manifest.json with kind='vaamr', set_index, n_sets, seed, fraction,
+         framework {name, version}, segment_ids, content_sha256 per id, created_at.
+       - segments_snapshot.jsonl: per-segment text + identity (segment_id,
+         session_id, segment_index, participant_id, speaker, start_time_ms,
+         end_time_ms, word_count, speakers_in_segment, text).
+       - human_worksheet.txt: existing _write_human_testset output.
+    Then writes (NOT frozen) AI_answer_key.txt via _write_ai_testset.
+    Refuses to overwrite an existing testset_dir unless force=True."""
+
+def refresh_testset_answer_key(
+    segments_by_id, framework, run_dir, name, *, codebook_enabled,
+) -> str:
+    """Reads manifest.json. For each segment_id in manifest.segment_ids:
+       - look up in segments_by_id (raise FrozenArtifactError if missing)
+       - verify sha256(seg.text) == manifest.content_sha256[segment_id]
+         (raise FrozenArtifactError listing drifted IDs if any)
+    Then re-emits AI_answer_key.txt via _write_ai_testset on the looked-up
+    segments in the manifest's order. Touches NO frozen file."""
+```
+
+The existing `_write_human_testset(segs, framework, output_path, set_idx, n_sets)` and `_write_ai_testset(segs, framework, output_path, set_idx, n_sets, codebook_enabled)` keep their current bodies; only the call sites change. Add `set_idx`/`n_sets` to manifest so the existing header line "VALIDATION TEST SET <i> of <n>" remains accurate after refresh.
+
+### `process/assembly/__init__.py`
+
+Export the three new function names. Keep `export_validation_testsets` exported as a thin alias to `generate_or_refresh_validation_testsets` so any external callers (and `qra.py:cmd_testsets`) keep working. Mark the alias with `# Phase 1 back-compat — remove with legacy_migration.py`.
+
+### `qra.py`
+
+Minimal change. `cmd_testsets` (lines 883-940) keeps its current CLI shape. Internally it now:
+
+1. Loads segments from `master_segments.jsonl` (existing).
+2. Calls `generate_or_refresh_validation_testsets(...)` instead of `export_validation_testsets(...)`.
+3. Prints the testset directory paths returned, not just the worksheet file paths.
+
+Move `_load_segments_from_jsonl` (lines 943-1032) into `process/segments_io.py` as `read_master_segments(run_dir) -> List[Segment]`. This keeps qra.py thin and gives Phase 2 a single canonical reader to extend.
+
+## Frozen-artifact write rules (summary)
+
+| Path | Phase 1 behavior |
+|---|---|
+| `01_transcripts/segmented/<sid>/segments.jsonl` | `write_frozen` — created on first ingest of that session, never rewritten unless `--reingest` (Phase 2 flag; no CLI surface in Phase 1, but `force=True` parameter exists). |
+| `01_transcripts/segmented/<sid>/segmentation_meta.json` | Same. |
+| `04_validation/testsets/<name>/manifest.json` | `write_frozen`. |
+| `04_validation/testsets/<name>/segments_snapshot.jsonl` | `write_frozen`. |
+| `04_validation/testsets/<name>/human_worksheet.txt` | `write_frozen`. |
+| `04_validation/testsets/<name>/AI_answer_key.txt` | Plain overwrite each run. |
+
+## Verification (Phase 1)
+
+Run against an existing project (`./data/output/`).
+
+1. **Migration on first new-pipeline run.** `python qra.py run --config <existing config> --resume-from …` (or any `qra run …`). Confirm:
+   - `01_transcripts/segmented/<sid>/segments.jsonl` exists for every session.
+   - `02_meta/speaker_anonymization_key.json` is byte-identical before and after.
+   - Each pre-existing legacy testset `human_classification_testset_worksheet_<n>.txt` has been moved into `04_validation/testsets/vaamr_testset_<n>/human_worksheet.txt`, with manifest.json + segments_snapshot.jsonl alongside.
+   - `master_segments.jsonl` content unchanged in identity columns.
+
+2. **Re-run does not re-segment.** Run the pipeline again. Confirm:
+   - No segmenter calls (no new entries in `02_meta/auditable_logs/llm_prompts.txt` for segmentation refinement).
+   - `mtime` of every `01_transcripts/segmented/<sid>/segments.jsonl` is unchanged.
+   - `mtime` of every `04_validation/testsets/<name>/human_worksheet.txt` is unchanged.
+   - `mtime` of every `04_validation/testsets/<name>/AI_answer_key.txt` IS updated.
+
+3. **New transcript only segments the new one.** Drop a new `.vtt` into `data/input/`. Run the pipeline. Confirm:
+   - Only the new session got a new `segmented/<sid>/`.
+   - Existing `participant_N` IDs in `speaker_anonymization_key.json` are unchanged; new IDs are appended.
+   - Existing testset `manifest.json`, `segments_snapshot.jsonl`, `human_worksheet.txt` are byte-identical before and after.
+   - AI answer keys for existing testsets are regenerated and reflect any updated classifications.
+
+4. **Drift detection.** Synthesize drift: edit one session's `01_transcripts/segmented/<sid>/segments.jsonl` to change a segment's text that's referenced in a testset. Run the pipeline. Confirm `refresh_testset_answer_key` raises `FrozenArtifactError` listing the drifted segment IDs. Restore the file; confirm it works again.
+
+5. **Different model rerun.** Switch `--model` to a different ID and re-run. Confirm AI answer keys reflect the new model's labels; human worksheets and manifests untouched.
+
+Add minimal unit tests in `tests/`:
+
+- `tests/test_segments_io.py` — round-trip a list of `Segment` objects through `write_session_segments` / `read_session_segments`; assert classification-only fields (primary_stage, codebook_labels_ensemble, etc.) are NOT persisted.
+- `tests/test_freeze.py` — `write_frozen` raises on overwrite, succeeds with `force=True`; `verify_content_sha` returns False when text mutated.
+- `tests/test_testset_freeze.py` — `create_frozen_testset` writes manifest + snapshot + human worksheet; second call raises; `refresh_testset_answer_key` regenerates only the answer key; sha drift raises.
+- `tests/test_legacy_migration.py` — synthesize a tiny `master_segments.jsonl` + a legacy `human_classification_testset_worksheet_1.txt`; run both migration functions; assert the new layout is correct.
+
+## Order of work (Phase 1)
+
+1. `process/_freeze.py`, `process/segments_io.py`, `process/output_paths.py` additions (pure additions, no call sites change).
+2. `process/legacy_migration.py` (with the deletion banner). Tests for it.
+3. Refactor `process/assembly/human_forms.py` — three new functions, keep old name as alias. Tests.
+4. `process/orchestrator.py` two surgical changes: load-or-segment loop, testset-call replacement. Add the `# LEGACY-MIGRATION CALL SITE` comment.
+5. Move `_load_segments_from_jsonl` from `qra.py` into `process/segments_io.py`; switch `qra.py:cmd_testsets` to use it and the new coordinator.
+6. End-to-end verification on `./data/output/`.
+
+---
+
+# Phase 2 — Testset Kinds (PURER, Codebook) and Content-Validity Refresh
+
+## Context (Phase 2)
+
+Phase 1 froze the existing single VAAMR participant testset and made the validation-testset coordinator generic enough to accept a `kind` field in its manifest. Phase 2 lights up the two additional testset kinds the team has asked for and adds a refresh path for content-validity:
+
+- **PURER testset (`kind=purer`)** — a held-out random sample of *therapist* segments that carry non-null PURER labels. PURER classification runs in `process/orchestrator.py` Stage 4b and propagates each cue block's primary/secondary onto every constituent therapist segment (lines 660-676), so the therapist segments in `master_segments.jsonl` already carry the labels needed.
+- **Codebook testset (`kind=codebook`)** — a held-out random sample of *participant* segments that carry at least one entry in `codebook_labels_ensemble`.
+- **Refreshable VAAMR content-validity** — today `process/assembly/human_forms.py:export_content_validity_testset` writes a content-validity testset only when it does not exist (line 595); there is no path to re-grade it against a new model without manually deleting and rerunning. Phase 2 adds `qra cv refresh` to regrade the AI answer key while keeping the human worksheet and definition key frozen.
+- **PURER content-validity** — built from the PURER framework's `exemplar_utterances` / `subtle_utterances` / `adversarial_utterances`. The PURER framework definition (`frameworks/purer/definition.py`) already exposes those fields, and `classification_tools/llm_classifier.py:create_content_validity_test_set(framework)` already works against any framework that exposes them, so PURER plug-in is a one-line config change at the call site.
+- **Codebook content-validity is deferred.** Codebook codes today have empty `exemplar_utterances` / `subtle_utterances` / `adversarial_utterances`. The code path is implemented and gated behind config; it stays disabled until the codebook content gap is filled. The deferral is a content gap, not an architecture gap — the same `qra cv create --framework codebook` surface added in Phase 2 will work without code changes once the codebook content is populated.
+
+Phase 2 also generalizes the wizard and config so users can multi-select which testsets and which content-validity variants to generate, and exposes scoped CLI subcommands (`qra testset {create|refresh|list}` and `qra cv {create|refresh|list}`) so testset and content-validity operations can be performed without invoking the full pipeline. Stage decomposition and full-pipeline subcommands (`qra ingest` / `qra classify` / `qra assemble`) are explicitly **not** in Phase 2 — they are Phase 3.
+
+## Goals
+
+1. Generalize the Phase 1 frozen-testset shape to accept `kind ∈ {vaamr, purer, codebook}`. `manifest.json` carries a `kind` field; the AI answer-key writer and human-worksheet writer dispatch on it.
+2. Move content-validity testset generation out of `process/assembly/human_forms.py` into a dedicated `process/assembly/content_validity.py` that uses the same Phase 1 freeze primitives. Add `refresh_cv_answer_key`.
+3. Generalize wizard + config so users can multi-select which testsets and which CV variants to generate.
+4. Add scoped CLI subcommands for testset and content-validity operations: `qra testset {create|refresh|list}` and `qra cv {create|refresh|list}`. Each loads segments from disk via Phase 1's `process/segments_io.py:read_master_segments` (no orchestrator decomposition required yet).
+5. Keep `qra run` end-to-end: in Stage 7 it generates/refreshes every enabled testset variant and every enabled content-validity testset.
+
+## Non-goals for Phase 2
+
+- No orchestrator decomposition. `run_full_pipeline` stays monolithic; Phase 3 splits it.
+- No `qra ingest` / `qra classify` / `qra assemble` subcommands; those are Phase 3.
+- No classification-overlay separation. Phase 2 still writes classification fields onto in-memory `Segment` objects and through into `master_segments.jsonl` exactly as today.
+- Codebook content-validity is not generated. The wizard offers it greyed-out; the `qra cv create --framework codebook` command exits with a deferral message.
+
+## On-disk additions (Phase 2)
+
+```
+04_validation/
+    testsets/<name>/                       same shape as Phase 1
+        manifest.json                      gains "kind": "vaamr" | "purer" | "codebook"
+        segments_snapshot.jsonl
+        human_worksheet.txt                FROZEN — content varies by kind
+        AI_answer_key.txt                  refreshable — content varies by kind
+
+    content_validity/<name>/               NEW frozen tree (lifts VAAMR CV out of testsets/)
+        manifest.json                      "kind": "vaamr" | "purer";
+                                             framework {name, version}; item_ids;
+                                             content_sha256 per item; created_at
+        items.jsonl                        items (id, text, expected_label, difficulty,
+                                             source_field ∈ {exemplar,subtle,adversarial})
+        human_worksheet.txt                FROZEN — blind worksheet
+        definition_key.txt                 FROZEN — framework-derived rubric
+        AI_answer_key.txt                  refreshable graded report
+```
+
+Default names if not provided: `vaamr_testset_<idx>`, `purer_testset_<idx>`, `codebook_testset_<idx>`, `cv_vaamr_v1`, `cv_purer_v1`. The `<idx>` increments per-kind across `n_sets`.
+
+## Files to add
+
+### `process/assembly/content_validity.py` (new)
+
+Owns the entire CV freeze + refresh surface. The existing VAAMR CV machinery in `process/assembly/human_forms.py:547-625` is moved here and generalized.
+
+```python
+def create_frozen_content_validity_testset(
+    framework, run_dir, *,
+    name: str,
+    kind: Literal["vaamr", "purer"],
+    force: bool = False,
+) -> str:
+    """Enumerates items via classification_tools.llm_classifier.create_content_validity_test_set(framework),
+    then writes via process/_freeze.write_frozen():
+      - manifest.json (kind, framework {name, version}, item_ids, content_sha256[id], created_at)
+      - items.jsonl
+      - human_worksheet.txt (blind)
+      - definition_key.txt (full theme/code definitions)
+    Then writes (NOT frozen) AI_answer_key.txt via _grade_cv_items.
+    Refuses to overwrite an existing dir without force=True."""
+
+def refresh_cv_answer_key(
+    run_dir, name, theme_classification_cfg, framework,
+) -> str:
+    """Reads manifest + items.jsonl. Verifies each item's text sha256 vs manifest
+    (raises FrozenArtifactError on drift). Builds Segment-shaped objects (lift
+    _cv_items_to_segments from qra.py:448 into this module). Calls
+    classification_tools.llm_classifier.classify_segments_zero_shot. Renders the
+    graded report (lift _write_zeroshot_report from qra.py:473-739 into this
+    module) into AI_answer_key.txt. Touches no frozen file."""
+
+def list_content_validity_testsets(run_dir) -> List[dict]:
+    """Returns one dict per content_validity/<name>/ folder, with manifest summary
+    (name, kind, framework name+version, n_items, created_at)."""
+
+def generate_or_refresh_content_validity_testsets(
+    run_dir, *,
+    cv_config: ContentValidityConfig,
+    framework_vaamr,
+    framework_purer,
+    theme_classification_cfg,
+) -> List[str]:
+    """Coordinator used by orchestrator Stage 7 and by qra cv refresh --all.
+    For each enabled spec in cv_config.{vaamr, purer}:
+      if testset exists: refresh_cv_answer_key(...)
+      else:               create_frozen_content_validity_testset(...)
+    Returns list of testset directories touched."""
+```
+
+`process/assembly/__init__.py` re-exports these four names. The existing `export_content_validity_testset` / `export_content_validity_testsets` functions in `process/assembly/human_forms.py` are removed once the orchestrator Stage 2 is updated.
+
+`_grade_cv_items` is the small private helper that calls `classify_segments_zero_shot` and writes the AI report; it is shared between create-and-grade and refresh.
+
+### `frameworks/purer/__init__.py` (no code change — verification only)
+
+Verify (one-line check during Phase 2 work) that `frameworks/purer/definition.py:PURERThemeDefinition` exposes the same `exemplar_utterances` / `subtle_utterances` / `adversarial_utterances` field names as `frameworks/vaamr/definition.py:VAAMRThemeDefinition`. They do today; this confirms the existing `classification_tools/llm_classifier.py:create_content_validity_test_set` plugs in directly.
+
+## Files to modify (Phase 2)
+
+### `process/assembly/human_forms.py` — testset generalization
+
+The Phase 1 functions gain a `kind` parameter. The signatures become:
+
+```python
+def generate_or_refresh_validation_testsets(
+    segments, framework, run_dir, *,
+    test_sets_config: TestSetsConfig,        # NEW dataclass — see config.py
+    codebook_enabled: bool,
+    codebook=None,
+) -> List[str]:
+    """Coordinator. For each enabled spec in test_sets_config.{vaamr, purer, codebook}:
+       for i in 1..spec.n_sets:
+         name = spec.name if spec.n_sets == 1 else f"{spec.name}_{i}"
+         if testset exists: refresh_testset_answer_key(...)
+         else:               create_frozen_testset(...)"""
+
+def create_frozen_testset(
+    segments, framework, run_dir, *,
+    name: str,
+    kind: Literal["vaamr", "purer", "codebook"],
+    n_sets: int,
+    set_index: int,
+    fraction_per_set: float,
+    random_seed: int,
+    codebook_enabled: bool = False,
+    codebook=None,
+    force: bool = False,
+) -> str: ...
+
+def refresh_testset_answer_key(
+    segments_by_id, framework, run_dir, name, *,
+    codebook_enabled: bool = False,
+    codebook=None,
+) -> str:
+    """Reads manifest, dispatches on manifest['kind'] to one of:
+       _write_vaamr_answer_key, _write_purer_answer_key, _write_codebook_answer_key.
+       Verifies content_sha256 first (raises FrozenArtifactError on drift)."""
+```
+
+#### Sampling pools by kind
+
+Three internal pool builders, each used by `create_frozen_testset`:
+
+```python
+def _pool_vaamr(segments) -> List[Segment]:
+    """Participant segments — existing logic from human_forms.py:503-509.
+    Stratify by cohort_id."""
+
+def _pool_purer(segments) -> List[Segment]:
+    """Therapist segments where seg.purer_primary is not None.
+    Stratify by purer_primary so each label class is represented in proportion
+    to its prevalence in the therapist talk pool."""
+
+def _pool_codebook(segments) -> List[Segment]:
+    """Participant segments where seg.codebook_labels_ensemble is non-empty.
+    Stratify by cohort_id (same as VAAMR)."""
+```
+
+A shared helper `_stratified_sample(pool, fraction, seed, key_fn)` is extracted from the existing per-cohort sampling at human_forms.py:511-527 and reused across kinds.
+
+#### Worksheet writers by kind
+
+The existing `_write_human_testset` is renamed to `_write_vaamr_human_worksheet` and `_write_ai_testset` to `_write_vaamr_answer_key` (no body changes). Two new sibling pairs are added:
+
+```python
+def _write_purer_human_worksheet(segments, framework_purer, output_path, set_idx, n_sets):
+    """Therapist segments with PURER label slots (primary, secondary, notes).
+    Includes the PURER definitions reference at the bottom (the same compact
+    rubric used in classification_tools/purer_classifier.py prompts)."""
+
+def _write_purer_answer_key(segments, framework_purer, output_path, set_idx, n_sets):
+    """Per-segment purer_primary, purer_secondary, purer_confidence_*,
+    purer_rater_ids, purer_rater_votes, purer_agreement_*, purer_needs_review.
+    Header line: 'PURER VALIDATION TEST SET <i> of <n>'."""
+
+def _write_codebook_human_worksheet(segments, codebook, output_path, set_idx, n_sets):
+    """Participant segments with multi-select codebook code slots.
+    Includes the codebook reference at the bottom."""
+
+def _write_codebook_answer_key(segments, codebook, output_path, set_idx, n_sets):
+    """Per-segment codebook_labels_embedding/llm/ensemble (with vote counts),
+    codebook_disagreements, codebook_confidence. Header line:
+    'CODEBOOK VALIDATION TEST SET <i> of <n>'."""
+```
+
+`create_frozen_testset` dispatches on `kind` to pick the pool builder, the human-worksheet writer, and the answer-key writer.
+
+### `process/assembly/__init__.py`
+
+Export `generate_or_refresh_content_validity_testsets`, `create_frozen_content_validity_testset`, `refresh_cv_answer_key`, `list_content_validity_testsets`. The Phase 1 alias `export_validation_testsets` stays (still marked `# Phase 1 back-compat`).
+
+### `process/orchestrator.py` — Stage 7 expansion (only)
+
+The two existing call sites at lines 999-1015 are replaced with two coordinator calls. Everything else in Stage 7 is unchanged.
+
+```python
+ts_cfg = config.test_sets   # now TestSetsConfig with vaamr/purer/codebook subspecs
+if ts_cfg.any_enabled():
+    generate_or_refresh_validation_testsets(
+        all_segments, framework, output_dir,
+        test_sets_config=ts_cfg,
+        codebook_enabled=config.run_codebook_classifier,
+        codebook=codebook,
+    )
+
+cv_cfg = config.content_validity
+if cv_cfg.any_enabled():
+    framework_purer = load_purer_framework() if cv_cfg.purer.enabled else None
+    generate_or_refresh_content_validity_testsets(
+        run_dir=output_dir,
+        cv_config=cv_cfg,
+        framework_vaamr=framework,
+        framework_purer=framework_purer,
+        theme_classification_cfg=config.theme_classification,
+    )
+```
+
+`load_purer_framework()` already exists in the codebase — it is the same loader the PURER classifier uses.
+
+### `process/config.py`
+
+Replace the legacy `TestSetConfig` (single VAAMR spec) with the multi-kind shape:
+
+```python
+@dataclass
+class TestSetSpec:
+    enabled: bool = False
+    name: str = ""                    # base name; per-set names get "_<i>" appended if n_sets>1
+    n_sets: int = 1
+    fraction_per_set: float = 0.10
+    random_seed: int = 42
+
+@dataclass
+class TestSetsConfig:
+    vaamr: TestSetSpec = field(default_factory=lambda: TestSetSpec(enabled=True, name="vaamr_testset"))
+    purer: TestSetSpec = field(default_factory=lambda: TestSetSpec(name="purer_testset"))
+    codebook: TestSetSpec = field(default_factory=lambda: TestSetSpec(name="codebook_testset"))
+    def any_enabled(self) -> bool:
+        return self.vaamr.enabled or self.purer.enabled or self.codebook.enabled
+
+@dataclass
+class ContentValiditySpec:
+    enabled: bool = False
+    name: str = ""
+
+@dataclass
+class ContentValidityConfig:
+    vaamr: ContentValiditySpec = field(default_factory=lambda: ContentValiditySpec(enabled=True, name="cv_vaamr_v1"))
+    purer: ContentValiditySpec = field(default_factory=lambda: ContentValiditySpec(name="cv_purer_v1"))
+    def any_enabled(self) -> bool:
+        return self.vaamr.enabled or self.purer.enabled
+```
+
+Wire through:
+- `PipelineConfig.from_json` (lines 215-265): parse the new shape; fall back to the legacy `TestSetConfig` shape if `config["test_sets"]` is the old flat dict (single spec). Mark fallback with `# Phase 1 back-compat — defer cleanup`.
+- `qra.py:_flatten_wizard_config` (lines 304-328): produce the new shape from wizard answers.
+
+### `process/setup_wizard.py`
+
+Replace the single-toggle "validation testsets enabled?" page with two new pages.
+
+**Page A — Validation testsets:**
+```
+Which validation testsets do you want generated?
+  [x] VAAMR participant testset    (recommended)
+  [ ] PURER therapist testset      (only useful if PURER classifier is enabled)
+  [ ] Codebook testset             (only useful if codebook classifier is enabled)
+For each selection, prompt for:  name, n_sets (default 1), fraction (default 0.10), seed (default 42).
+```
+
+The wizard greys out PURER if PURER classifier is disabled and codebook if codebook classifier is disabled.
+
+**Page B — Content-validity testsets:**
+```
+Which content-validity testsets do you want generated?
+  [x] VAAMR content validity       (recommended)
+  [ ] PURER content validity
+  [-] Codebook content validity    (deferred — codebook codes have no exemplar utterances)
+For each selection, prompt for: name (default cv_vaamr_v1 / cv_purer_v1).
+```
+
+The codebook row is rendered greyed-out with the deferral note. Selecting it (if the user forces it) records `codebook.enabled=False` in the config — the wizard does not create a stub spec.
+
+### `qra.py` — new subcommands
+
+Add `testset` and `cv` subcommand groups. Each is a thin wrapper over `process/assembly/` functions; both load segments via `process/segments_io.py:read_master_segments()` (added in Phase 1).
+
+```
+qra testset create  -o DIR --kind vaamr|purer|codebook --name NAME
+                     [--n-sets 1 --fraction 0.10 --seed 42 --force]
+qra testset refresh -o DIR [--name NAME | --all]
+qra testset list    -o DIR
+
+qra cv create  -o DIR --framework vaamr|purer --name NAME [--force]
+qra cv refresh -o DIR [--name NAME | --all]
+qra cv list    -o DIR
+```
+
+`qra testsets` (the existing top-level subcommand, kept intact in Phase 1) becomes a deprecation alias for `qra testset refresh --all` that prints a `DeprecationWarning`. The Phase 1 plan already routes `qra testsets` through `generate_or_refresh_validation_testsets`; in Phase 2 it gains kind-awareness automatically since the coordinator now handles all enabled kinds.
+
+`qra testset create --kind purer` rejects with a clear error ("PURER classifier has not been run; run `qra run` with PURER enabled first") if no segment in `master_segments.jsonl` carries `purer_primary`. Same check for `--kind codebook` against `codebook_labels_ensemble`.
+
+`qra cv create --framework codebook` returns exit 2 with: "codebook content-validity is not yet supported — codebook codes have no exemplar utterances. Skipping." No folder is created.
+
+## Verification (Phase 2)
+
+End-to-end against `./data/output/` after Phase 1 has been applied:
+
+1. **Wizard upgrade.** Run `qra setup --upgrade` on an existing config. Confirm new `test_sets` / `content_validity` blocks appear with sensible defaults; existing config preserved; the codebook CV row is greyed out.
+
+2. **Mixed testset generation via `qra run`.** Enable VAAMR + PURER + codebook in config. `python qra.py run -o ./data/output/`. Confirm `04_validation/testsets/{vaamr_testset,purer_testset,codebook_testset}/` each have manifest+snapshot+human worksheet+AI answer key. Manifests show distinct `kind` fields. Sampling pools are correct: VAAMR contains only participant segments, PURER only therapist segments with non-null `purer_primary`, codebook only participant segments with non-empty `codebook_labels_ensemble`.
+
+3. **Refresh path.** Re-run with a different model. Confirm three human worksheets are byte-stable; three AI answer keys are regenerated; PURER/codebook AI keys reflect new model labels. Confirm `qra testset refresh --all -o ./data/output/` produces output identical to the Stage-7 path of `qra run` for the same config and model.
+
+4. **Standalone create.** With Phase 2 fresh, run `python qra.py testset create -o ./data/output/ --kind purer --name purer_irr_pilot --fraction 0.05 --seed 7`. Confirm only that one testset appears; existing testsets untouched. Re-running the same command without `--force` returns exit 2 with "testset already exists".
+
+5. **Content-validity refresh.** `python qra.py cv refresh -o ./data/output/ --name cv_vaamr_v1` after switching `--model`. Confirm `04_validation/content_validity/cv_vaamr_v1/AI_answer_key.txt` regenerated; `human_worksheet.txt` and `definition_key.txt` byte-stable; `manifest.json` content_sha256 verification passes.
+
+6. **PURER content-validity create.** `python qra.py cv create -o ./data/output/ --framework purer --name cv_purer_v1`. Confirm:
+   - `manifest.json` lists items sourced from `frameworks/purer/definition.py` exemplar/subtle/adversarial fields (one item per source utterance, with `source_field` recorded).
+   - `definition_key.txt` shows PURER theme definitions.
+   - `AI_answer_key.txt` regenerated by zero-shot grading against PURER framework.
+
+7. **Codebook CV blocked.** `python qra.py cv create -o ./data/output/ --framework codebook` exits 2 with the deferral message; no folder is created.
+
+8. **List subcommands.** `qra testset list -o ./data/output/` returns one row per `testsets/<name>/` with kind, n_items, created_at. `qra cv list -o ./data/output/` similarly.
+
+Add unit tests:
+- `tests/test_testset_kinds.py` — synthesize segments populated with VAAMR / PURER / codebook fields. For each kind, assert pool selection, stratification balance, and answer-key contents.
+- `tests/test_content_validity.py` — round-trip `create_frozen_content_validity_testset` + `refresh_cv_answer_key` for both VAAMR and PURER frameworks; codebook framework raises a clear deferral error.
+
+## Order of work (Phase 2)
+
+1. `process/config.py` — add `TestSetSpec` / `TestSetsConfig` / `ContentValiditySpec` / `ContentValidityConfig`. Tests for `from_json` legacy fallback.
+2. `process/assembly/human_forms.py` — generalize `create_frozen_testset` / `refresh_testset_answer_key` to accept `kind`. Add `_pool_purer`, `_pool_codebook`, `_write_purer_*`, `_write_codebook_*`. Tests.
+3. `process/assembly/content_validity.py` — new module. Move VAAMR CV out of `human_forms.py`. Add `refresh_cv_answer_key` + `generate_or_refresh_content_validity_testsets`. Tests against VAAMR and PURER.
+4. `process/orchestrator.py` Stage 7 — replace the two call sites with the two coordinators. End-to-end smoke test.
+5. `process/setup_wizard.py` — two new selection pages.
+6. `qra.py` — add `testset` and `cv` subcommand groups. `qra testsets` becomes deprecation alias.
+7. End-to-end verification on `./data/output/`.
+
+---
+
+# Phase 3 — Modular CLI Stages and Classification Overlays
+
+## Context (Phase 3)
+
+After Phases 1 and 2 the pipeline already has frozen segmentation, three frozen testset kinds, refreshable content-validity, and scoped `qra testset` / `qra cv` subcommands. What is still monolithic:
+
+- **Re-running classification rewrites segment-level state.** Today every classifier in `process/orchestrator.py` (Theme stage at lines 411-606, PURER stage at lines 608-696, Codebook stage at lines 698-770) mutates `Segment` objects in place, and the orchestrator then writes the merged result to `02_meta/training_data/master_segments.{csv,jsonl}` (lines 845-919). There is no separation between "raw segmentation" and "classification annotations on top of segmentation". A user who wants to swap models for the theme classifier and rerun must invoke the entire pipeline.
+- **`run_full_pipeline` is one ~1100-line function.** It cannot be re-entered at a stage boundary, every stage shares mutable local state, and observers can only watch the whole run.
+- **There is no command surface for partial pipeline runs.** The only entry points are `qra run` (everything), `qra testset {…}` and `qra cv {…}` (testsets/CV only — Phase 2), and `qra analyze` (post-hoc Stage 8). There is no way to ingest only, classify only, or assemble only.
+
+Phase 3 makes each pipeline stage a top-level callable with deterministic on-disk inputs and outputs, exposes those stages as `qra ingest`, `qra classify`, `qra assemble` subcommands, and separates classification results into per-classifier overlay files so re-classification is a strictly additive operation that never touches `01_transcripts/segmented/`. `qra run` becomes a thin wrapper over the stage subcommands.
+
+## Goals
+
+1. **Decompose `run_full_pipeline` into pure stage functions** under `process/orchestrator.py`. Each stage takes the pipeline config, optionally a list of `Segment` objects (or loads them from disk), and a progress observer; returns the modified segments (or `None` for side-effect-only stages). Each stage is independently invokable and idempotent on disk for the same inputs.
+2. **Separate classification results into overlay files** at `02_meta/classifications/{theme,purer,codebook,cross_validation}_labels.jsonl`. Re-running a classifier overwrites only its overlay; the frozen `01_transcripts/segmented/` tree is never touched.
+3. **`qra assemble` joins frozen segments + overlays** into `master_segments.{csv,jsonl}` and the per-session human-classification reports, and writes `02_meta/classifications/classification_manifest.json` recording which classifier versions and models produced each overlay.
+4. **Add stage subcommands**: `qra ingest`, `qra classify [--what theme|purer|codebook|cross-validation|all]`, `qra assemble`. Each is a 5-15 line wrapper over a stage function.
+5. **`qra run` becomes a thin wrapper** that calls the stages in order. Its CLI shape stays unchanged; existing config files keep working. `--resume-from` is preserved as an alias.
+6. **Stage-level observability.** The existing `PipelineObserver` API (`on_stage_started/finished/progress`) gains an optional per-stage scope so partial runs report progress without referencing a non-existent prior stage.
+
+## Non-goals for Phase 3
+
+- No removal of legacy code paths or Phase 1 back-compat aliases. Cleanup is out of scope for this plan.
+- No new testset kinds or CV variants beyond what Phase 2 delivers.
+- No change to the segmentation algorithm, classifier prompts, ensemble logic, or any framework definition file.
+- No change to the analysis package (`process/analysis/`); `qra analyze` keeps its current shape.
+
+## On-disk additions (Phase 3)
+
+```
+02_meta/
+    classifications/                                    NEW directory
+        theme_labels.jsonl                              one record per classified segment
+        purer_labels.jsonl                              one record per classified therapist segment
+        codebook_labels.jsonl                           one record per classified participant segment
+        cross_validation_labels.jsonl                   adjudicated rows from Stage 5
+        classification_manifest.json                    overlay provenance manifest
+```
+
+`classification_manifest.json` records, per overlay:
+```
+{
+  "theme":            { "model": "...", "framework": {"name": "...", "version": "..."},
+                        "classifier_version": "...", "n_segments": N,
+                        "completed_at": "...",
+                        "segmentation_params_hash": "<from segmentation_meta.json>" },
+  "purer":            { ... same shape ... },
+  "codebook":         { ..., "codebook": {"name": "...", "version": "..."} },
+  "cross_validation": { "raters": ["..."], "completed_at": "..." }
+}
+```
+
+The `segmentation_params_hash` field is recorded so a future check can detect "this classification was produced against a different segmentation than what is currently frozen on disk" (not enforced in Phase 3 — recorded for future use).
+
+## Stage function decomposition
+
+All stage functions live in `process/orchestrator.py` and follow this signature pattern:
+
+```python
+def stage_<name>(
+    config: PipelineConfig,
+    *,
+    segments: Optional[List[Segment]] = None,    # passed when caller already has them
+    framework: Optional[Framework] = None,       # required for theme/cv/assemble stages
+    codebook: Optional[Codebook] = None,         # required when codebook is enabled
+    observer: Optional[PipelineObserver] = None,
+) -> Optional[List[Segment]]:
+    """Each stage:
+       1. Either receives `segments` from the caller, OR re-reads them from disk
+          (frozen segments + overlays) if segments is None. This makes every stage
+          standalone: `qra classify` doesn't need a prior in-memory ingest.
+       2. Performs its work.
+       3. Writes its on-disk artifacts (overlay file, master, reports, ...).
+       4. Returns the (possibly mutated) segments list, or None for side-effect-only
+          stages."""
+```
+
+Decomposition mirrors today's stage boundaries in `run_full_pipeline`:
+
+| Stage function | Today's lines | Inputs | Outputs |
+|---|---|---|---|
+| `stage_ingest(config, observer)` | 230-345 | `data/input/`, frozen segments tree, legacy migration shim | `01_transcripts/segmented/<sid>/` (frozen, written by Phase 1's `segments_io.write_session_segments`); returns full `List[Segment]` |
+| `stage_classify_theme(config, framework, *, segments, observer)` | 411-606 | segments, framework | `02_meta/classifications/theme_labels.jsonl`; mutates segment objects in memory; updates `classification_manifest.json["theme"]` |
+| `stage_classify_purer(config, *, segments, observer)` | 608-696 | segments | `02_meta/classifications/purer_labels.jsonl`; mutates segments; updates manifest |
+| `stage_classify_codebook(config, codebook, *, segments, observer)` | 698-770 | segments, codebook | `02_meta/classifications/codebook_labels.jsonl`; mutates segments; updates manifest |
+| `stage_cross_validation(config, framework, *, segments, observer)` | 772-820 | segments, framework | `02_meta/classifications/cross_validation_labels.jsonl`; updates manifest |
+| `stage_assemble(config, *, segments, observer)` | 845-919 | segments | `02_meta/training_data/master_segments.{csv,jsonl}`; the assembled master is the join of frozen segments + every present overlay |
+| `stage_validation_artifacts(config, framework, codebook, *, segments, observer)` | 921-1015 (Phase 2 form) | segments, framework, codebook | `02_meta/speaker_anonymization_key.json`, `04_validation/human_classification_<sid>.txt`, `04_validation/flagged_for_review.txt`; refreshes existing testsets and CV via Phase 2 coordinators |
+| `stage_reports(config, framework, codebook, *, segments, master_df, observer)` | 1017-1080 | segments, master_df, framework, codebook | `03_reports/*` |
+| `stage_analysis(output_dir, observer)` | 1082-1095 | output_dir | `05_analysis/*` |
+
+`run_full_pipeline` becomes:
+
+```python
+def run_full_pipeline(config, framework, codebook=None, observer=None) -> pd.DataFrame:
+    segments = stage_ingest(config, observer=observer)
+    if config.run_theme_classifier:
+        segments = stage_classify_theme(config, framework, segments=segments, observer=observer)
+    if config.run_purer_classifier:
+        segments = stage_classify_purer(config, segments=segments, observer=observer)
+    if config.run_codebook_classifier:
+        segments = stage_classify_codebook(config, codebook, segments=segments, observer=observer)
+    if config.run_cross_validation:
+        segments = stage_cross_validation(config, framework, segments=segments, observer=observer)
+    master_df = stage_assemble(config, segments=segments, observer=observer)
+    stage_validation_artifacts(config, framework, codebook, segments=segments, observer=observer)
+    stage_reports(config, framework, codebook, segments=segments, master_df=master_df, observer=observer)
+    if config.run_analysis:
+        stage_analysis(config.output_dir, observer=observer)
+    return master_df
+```
+
+### Standalone re-entry semantics
+
+Each stage's "no segments passed in" branch loads what it needs from disk:
+
+```python
+def stage_classify_theme(config, framework, *, segments=None, observer=None):
+    if segments is None:
+        segments = segments_io.load_segments_for_stage(
+            config.output_dir,
+            apply=("purer", "codebook", "cv"),    # everything EXCEPT theme
+        )
+    ...
+```
+
+The `apply` tuple lets each stage load only the overlays it needs and explicitly excludes the overlay it is about to overwrite (so prior theme labels don't bleed into a fresh theme classification run).
+
+Per-stage `apply` defaults when called standalone:
+
+| Stage | `apply` defaults |
+|---|---|
+| `stage_classify_theme` | `("purer", "codebook", "cv")` |
+| `stage_classify_purer` | `("theme", "codebook", "cv")` |
+| `stage_classify_codebook` | `("theme", "purer", "cv")` |
+| `stage_cross_validation` | `("theme", "purer", "codebook")` |
+| `stage_assemble` | `("theme", "purer", "codebook", "cv")` |
+| `stage_validation_artifacts` | `("theme", "purer", "codebook", "cv")` |
+| `stage_reports` | `("theme", "purer", "codebook", "cv")` |
+
+This is what makes `qra classify --what theme` work without a prior `qra ingest`: the stage reads the frozen segments off disk, applies the non-theme overlays, runs the theme classifier, writes the theme overlay, and exits.
+
+## Files to add
+
+### `process/classifications_io.py` (new)
+
+The single source of truth for overlay file shape and provenance manifest.
+
+```python
+THEME_OVERLAY_FIELDS = (
+    "primary_stage", "secondary_stage",
+    "llm_confidence_primary", "llm_confidence_secondary", "llm_justification",
+    "rater_ids", "rater_votes", "agreement_primary", "agreement_secondary",
+    "consensus_vote", "tie_broken_by_confidence", "llm_run_consistency",
+)
+PURER_OVERLAY_FIELDS = (
+    "purer_primary", "purer_secondary",
+    "purer_confidence_primary", "purer_confidence_secondary",
+    "purer_rater_ids", "purer_rater_votes",
+    "purer_agreement_primary", "purer_agreement_secondary",
+    "purer_needs_review",
+)
+CODEBOOK_OVERLAY_FIELDS = (
+    "codebook_labels_embedding", "codebook_labels_llm", "codebook_labels_ensemble",
+    "codebook_disagreements", "codebook_confidence",
+)
+CROSS_VALIDATION_OVERLAY_FIELDS = (
+    "cv_adjudicated_primary", "cv_adjudicated_secondary",
+    "cv_disagreement_score", "cv_adjudication_method",
+)
+OVERLAY_KEYS = ("theme", "purer", "codebook", "cv")
+OVERLAY_FILENAMES = {
+    "theme": "theme_labels.jsonl",
+    "purer": "purer_labels.jsonl",
+    "codebook": "codebook_labels.jsonl",
+    "cv": "cross_validation_labels.jsonl",
+}
+
+def overlay_path(run_dir, key) -> str: ...
+def manifest_path(run_dir) -> str: ...
+
+# Writers — one per overlay; each uses process/_freeze.write_frozen with force=True
+# (overlays are deliberately overwritable; the freeze primitive provides only the
+# atomic write semantics, not the no-overwrite guard).
+def write_theme_overlay(run_dir, segments) -> str
+def write_purer_overlay(run_dir, segments) -> str
+def write_codebook_overlay(run_dir, segments) -> str
+def write_cross_validation_overlay(run_dir, segments) -> str
+
+# Readers — apply overlays back onto Segment objects in memory.
+def apply_theme_overlay(run_dir, segments_by_id) -> int
+def apply_purer_overlay(run_dir, segments_by_id) -> int
+def apply_codebook_overlay(run_dir, segments_by_id) -> int
+def apply_cross_validation_overlay(run_dir, segments_by_id) -> int
+    """For each segment_id in the overlay, set the listed fields on the matching Segment.
+    Returns count of segments updated. No-op (returns 0) if overlay file absent."""
+
+def update_classification_manifest(run_dir, *, key: str, entry: dict) -> None:
+    """Read 02_meta/classifications/classification_manifest.json (or create empty),
+    set manifest[key] = entry (with completed_at = now and segmentation_params_hash
+    pulled from the first available 01_transcripts/segmented/<sid>/segmentation_meta.json),
+    write back atomically."""
+
+def read_classification_manifest(run_dir) -> Optional[dict]
+```
+
+Each `write_*_overlay` writes JSONL with one record per segment, keyed by `segment_id`, containing exactly the listed fields plus `segment_id`. Records are sorted by `segment_id` so diffs are stable across runs.
+
+Each overlay write completes with a single call to `update_classification_manifest` recording the model, framework/codebook version, classifier version, and completion time.
+
+### `process/segments_io.py` additions
+
+```python
+def load_segments_for_stage(
+    run_dir, *,
+    apply: Tuple[str, ...] = ("theme", "purer", "codebook", "cv"),
+) -> List[Segment]:
+    """Reads every 01_transcripts/segmented/<sid>/segments.jsonl via list_segmented_sessions
+    + read_session_segments, then applies the requested overlays via
+    classifications_io.apply_*_overlay. The 'apply' tuple lets a caller load only
+    the overlays it needs.
+    Raises a clear error if 01_transcripts/segmented/ is empty:
+      'no frozen segments found in <run_dir>; run `qra ingest` first'."""
+```
+
+`read_master_segments(run_dir)` (added in Phase 1) is kept; it becomes the back-compat path used by Phase 1/2 callers (notably `qra testset *` and `qra cv *` scoped subcommands that load post-classification state). The new canonical path for stage functions and `qra assemble` is `load_segments_for_stage`.
+
+## Files to modify (Phase 3)
+
+### `process/orchestrator.py` — full decomposition
+
+The decomposition is the single largest mechanical change in this plan. The order of work below stages it so the orchestrator stays runnable end-to-end at every commit.
+
+1. **Extract pure helpers first.** Pull the inline classifier-setup logic (lines 386-410, 608-625, 699-721) into module-private helpers (`_build_theme_classifier`, `_build_purer_classifier`, `_build_codebook_classifier`). No behavior change. These are used by both the stage functions and any future ad-hoc callers.
+
+2. **Extract stage function bodies one at a time, top-down.** For each stage in the table above:
+   - Move the stage's lines into a new `stage_*` function with the standardized signature.
+   - At the bottom of the new stage function, call the appropriate `classifications_io.write_*_overlay` to persist results to its overlay file, then call `update_classification_manifest`.
+   - Replace the original lines in `run_full_pipeline` with `segments = stage_*(config, ..., segments=segments, observer=observer)`.
+   - Run end-to-end after each extraction; segment counts and report contents must match byte-for-byte (modulo the new overlay files).
+
+3. **`stage_assemble` becomes the join point.** It takes the in-memory segments (which already carry classifier output from earlier stages in a `qra run`) and writes `master_segments.{csv,jsonl}`. When called standalone (`qra assemble`), it calls `load_segments_for_stage(run_dir, apply=("theme","purer","codebook","cv"))` to rebuild the in-memory state from frozen + overlays, then writes master. The master columns are unchanged — every existing column is still produced.
+
+4. **`stage_validation_artifacts` writes the speaker key + per-session human-coding worksheets + flagged_for_review + Phase 2 testset/CV coordinators.** It accepts `segments` (already classified), so the existing logic at lines 921-1015 lifts unchanged.
+
+5. **No segment dual-writes.** After this decomposition, classification fields are no longer written redundantly into both segment objects and overlays. The in-memory `Segment` continues to carry classifier fields (so downstream stages in the same `qra run` invocation see them without a disk round-trip), but the *persistent* record is the overlay; `master_segments.{csv,jsonl}` is recomputed each `stage_assemble` from frozen + overlays, not from a stale per-stage write.
+
+### `qra.py` — new subcommands
+
+```
+qra ingest    -o DIR
+                 [--reingest SESSION_ID]      Force re-segmentation of one session
+                 [--reingest-all]              Force re-segmentation of every session
+
+qra classify  -o DIR
+                 [--what theme|purer|codebook|cross-validation|all]   default: all enabled in config
+                 [--config FILE | --backend ... --model ...]
+                 # If a per-classifier overlay already exists, it is overwritten
+                 # (re-classification is intended to be the cheap operation).
+
+qra assemble  -o DIR
+                 # Reloads frozen segments + every overlay present, writes
+                 # master_segments.{csv,jsonl} and 04_validation/human_classification_<sid>.txt,
+                 # and refreshes existing testsets / CV (delegates to Phase 2 coordinators).
+                 # Does NOT generate testsets that have not yet been frozen.
+
+qra run       -o DIR ...                       Existing CLI; now a thin wrapper
+                 [--resume-from STAGE_NAME]    Skip stages whose overlay/master is
+                                                 already on disk; preserved as alias.
+```
+
+`qra ingest`:
+- Validates that `data/input/` exists and has at least one `.vtt` or `_diarized.json`.
+- Prints, per session, "frozen / reused" or "segmented / written".
+- With `--reingest SID` or `--reingest-all`, bypasses Phase 1's freshness check by passing `force=True` to `segments_io.write_session_segments`.
+
+`qra classify --what X`:
+- If `--what` is omitted, runs every classifier enabled in the config.
+- Refuses to run if `01_transcripts/segmented/` is empty (clear error: "no frozen segments; run `qra ingest` first").
+- For each requested classifier, calls the corresponding `stage_classify_*` standalone (segments loaded via `load_segments_for_stage` with the per-stage `apply` defaults above).
+- Writes/overwrites only that classifier's overlay and updates `classification_manifest.json`.
+- Does NOT regenerate `master_segments.{csv,jsonl}` — `qra assemble` does that.
+
+`qra assemble`:
+- Refuses to run if no overlay files exist (clear error: "no classifications on disk; run `qra classify` first").
+- Reads frozen segments + every present overlay.
+- Writes master_segments, human-classification worksheets, flagged_for_review.
+- Calls Phase 2's `generate_or_refresh_validation_testsets` and `generate_or_refresh_content_validity_testsets` with a `create_missing=False` flag (added to the Phase 2 coordinators in this phase) so it only refreshes existing testsets/CV; new testsets are still created via `qra testset create` / `qra cv create` (or via `qra run`).
+
+`qra run --resume-from STAGE`:
+- `STAGE` ∈ {ingest, theme, purer, codebook, cross_validation, assemble, validation, reports, analysis}.
+- Skips stages strictly before `STAGE`. The skipped stages' on-disk artifacts must be present; otherwise `qra run` errors out and tells the user which subcommand to run first.
+
+### `process/observer.py` — per-stage scope
+
+The existing `PipelineObserver` ABC has `on_stage_started/finished/progress`. Add an optional `scope_id: Optional[str]` parameter so partial runs can scope their progress without referencing a non-existent prior stage. Default `None` preserves existing behavior. The default `LoggingObserver` and the wizard's TUI observer both ignore `scope_id` for back-compat.
+
+### `process/config.py` — no new flags
+
+`run_theme_classifier`, `run_purer_classifier`, `run_codebook_classifier`, `run_cross_validation`, `run_analysis` already exist. The stage subcommands consult these directly.
+
+### `process/assembly/` — `create_missing` flag
+
+`generate_or_refresh_validation_testsets` and `generate_or_refresh_content_validity_testsets` (added in Phase 2) gain a keyword argument `create_missing: bool = True`. When `False`, the coordinators skip kinds whose testset directory does not yet exist instead of creating them. `qra assemble` passes `create_missing=False`; `qra run` and `qra testset create`/`qra cv create` keep the default.
+
+## Idempotency rules summary (Phase 3)
+
+| Operation | Reads | Writes | Side effects |
+|---|---|---|---|
+| `qra ingest` | `data/input/` | `01_transcripts/segmented/<sid>/` (Phase 1 frozen) | Adds new sessions; idempotent on previously-frozen sessions unless `--reingest*` |
+| `qra ingest --reingest SID` | `data/input/<sid>` | `01_transcripts/segmented/<sid>/` (force) | Overwrites only that session's frozen segments. Existing testsets that reference that session's segments will fail SHA check on next refresh — clear, intentional error surface. |
+| `qra classify --what theme` | frozen segments, non-theme overlays | `02_meta/classifications/theme_labels.jsonl`, manifest | Idempotent on overwrite (overlay is fully rewritten each run) |
+| `qra assemble` | frozen segments + every overlay | `master_segments.{csv,jsonl}`, `human_classification_<sid>.txt`, `flagged_for_review.txt`; refreshes existing testsets/CV | Idempotent; same inputs → same outputs |
+| `qra testset create` (Phase 2) | master, segments | `04_validation/testsets/<name>/` (frozen) | Frozen — refuses to overwrite without `--force` |
+| `qra testset refresh` (Phase 2) | master, manifest | `04_validation/testsets/<name>/AI_answer_key.txt` | Refreshes only the answer key; verifies sha first |
+| `qra run` | everything | every artifact above | Composition of the above; behaves identically to the explicit chain |
+
+## Verification (Phase 3)
+
+End-to-end against `./data/output/` after Phases 1 and 2 have been applied:
+
+1. **Stage parity (the must-pass test).** Snapshot `master_segments.jsonl`, all reports, all testsets, all CV testsets before starting Phase 3. After Phase 3 completes, run `python qra.py run -o ./data/output/` and diff against the snapshot. Expected diff: identical except for the new `02_meta/classifications/` overlay files.
+
+2. **Standalone ingest.** Delete `01_transcripts/segmented/`, then `python qra.py ingest -o ./data/output/`. Confirm every session gets frozen; classification overlays untouched.
+
+3. **Standalone classify.** `python qra.py classify -o ./data/output/ --what theme --backend lmstudio --model <new>`. Confirm:
+   - `02_meta/classifications/theme_labels.jsonl` rewritten.
+   - Other overlays (`purer_labels.jsonl`, `codebook_labels.jsonl`, `cross_validation_labels.jsonl`) byte-stable.
+   - `classification_manifest.json["theme"]["model"]` shows the new model; other manifest entries untouched.
+   - `01_transcripts/segmented/` mtimes unchanged.
+   - `master_segments.jsonl` NOT rewritten (assemble does that).
+
+4. **Standalone assemble.** `python qra.py assemble -o ./data/output/`. Confirm:
+   - `master_segments.{csv,jsonl}` regenerated and reflects the new theme labels from step 3.
+   - `human_classification_<sid>.txt` files regenerated.
+   - All existing Phase 2 testsets/CV: human worksheets byte-stable; AI answer keys regenerated.
+   - No new testset directories created.
+
+5. **Resume composition.** Delete `02_meta/training_data/master_segments.{csv,jsonl}`; run `python qra.py run -o ./data/output/ --resume-from assemble`. Confirm only assemble + downstream stages run; ingest and classify skipped because their on-disk artifacts are present.
+
+6. **Reingest one session.** `python qra.py ingest -o ./data/output/ --reingest <sid>`. Confirm only that session's frozen segments are touched; other sessions byte-stable. Then `python qra.py testset refresh --all` — confirm any testsets that reference segments from `<sid>` raise `FrozenArtifactError` (because content sha drifted), with a clear error listing the drifted IDs.
+
+7. **Empty-state guards.**
+   - In a fresh empty project, `qra classify` errors: "no frozen segments; run `qra ingest` first".
+   - With frozen segments but no overlays, `qra assemble` errors: "no classifications on disk; run `qra classify` first".
+   - In a project with frozen segments and overlays, `qra run --resume-from reports` errors if any prior stage's artifact is missing.
+
+8. **Manifest integrity.** After step 3, `02_meta/classifications/classification_manifest.json` records the new theme model, retains the prior PURER, codebook, and cross-validation entries, and has a `segmentation_params_hash` matching `01_transcripts/segmented/<any_sid>/segmentation_meta.json`'s hash.
+
+9. **Per-classifier exclusion.** Confirm that running `qra classify --what theme` after a fresh ingest (no theme overlay yet, no other overlays yet) succeeds: the apply tuple skips missing overlays gracefully.
+
+Add unit and integration tests:
+- `tests/test_classifications_io.py` — round-trip every overlay; confirm `apply_*_overlay` restores in-memory segment fields exactly; confirm `update_classification_manifest` merges keys without clobbering siblings; confirm overlay records are sorted by segment_id.
+- `tests/test_orchestrator_stages.py` — for each `stage_*` function: (a) call standalone with `segments=None`; (b) call inline with `segments=...`; assert both produce identical on-disk artifacts.
+- `tests/test_qra_subcommands.py` — invoke each subcommand against a synthesized minimal project; assert exit codes, error messages on misuse, and on-disk side effects.
+- `tests/test_resume_from.py` — synthesize partial pipeline state; verify each `--resume-from` stage value runs the right subset and errors when prerequisites are missing.
+
+## Order of work (Phase 3)
+
+1. `process/classifications_io.py` — overlay reads/writes, manifest helpers, field constants. Tests.
+2. `process/segments_io.py` — add `load_segments_for_stage`. Tests.
+3. `process/orchestrator.py` — extract module-private classifier-setup helpers (`_build_theme_classifier`, `_build_purer_classifier`, `_build_codebook_classifier`). No behavior change.
+4. Extract `stage_ingest` and `stage_assemble` first (they bracket the pipeline; getting them right surfaces interface issues early). Each extraction is a separate commit; end-to-end run must match pre-Phase-3 snapshot.
+5. Extract `stage_classify_theme`, then `stage_classify_purer`, then `stage_classify_codebook`. Each writes its overlay and updates the manifest.
+6. Extract `stage_cross_validation`, `stage_validation_artifacts`, `stage_reports`, `stage_analysis`.
+7. Refactor `run_full_pipeline` to be the thin wrapper shown above. End-to-end snapshot diff: identical except for new overlay files.
+8. `process/assembly/` — add `create_missing` flag to the two Phase 2 coordinators.
+9. `process/observer.py` — add optional `scope_id`.
+10. `qra.py` — add `ingest`, `classify`, `assemble` subcommands; rewrite `run` to delegate; preserve `--resume-from` as alias.
+11. Documentation — update `README.md`, `USAGE.md`, `PROCESS.md` with the new command surface and overlay layout.
+12. End-to-end verification on `./data/output/`.
