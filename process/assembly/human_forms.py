@@ -492,6 +492,7 @@ def generate_or_refresh_validation_testsets(
     test_sets_config=None,
     codebook_enabled: bool = False,
     codebook=None,
+    create_missing: bool = True,
     # Legacy keyword args (Phase 1 back-compat — remove with legacy_migration.py)
     n_sets: Optional[int] = None,
     fraction_per_set: Optional[float] = None,
@@ -502,6 +503,11 @@ def generate_or_refresh_validation_testsets(
 
     For each enabled kind in test_sets_config, generates or refreshes
     the frozen testset directory. Returns a list of testset directory paths.
+
+    When create_missing=False, only refreshes testsets that already exist on
+    disk; skips kinds whose directory is absent. Used by `qra assemble` so
+    it doesn't inadvertently create new testsets outside of the normal
+    `qra run` / `qra testset create` flow.
     """
     from process.config import TestSetsConfig, TestSetSpec
 
@@ -536,7 +542,7 @@ def generate_or_refresh_validation_testsets(
                     codebook_enabled=codebook_enabled,
                     codebook=codebook,
                 )
-            else:
+            elif create_missing:
                 create_frozen_testset(
                     segments, framework, run_dir,
                     name=name,
@@ -548,6 +554,9 @@ def generate_or_refresh_validation_testsets(
                     codebook_enabled=codebook_enabled,
                     codebook=codebook,
                 )
+            else:
+                # create_missing=False and testset does not yet exist — skip
+                continue
 
             dirs.append(_paths.testset_dir(run_dir, name))
 

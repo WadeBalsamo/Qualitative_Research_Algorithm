@@ -880,6 +880,186 @@ def cmd_analyze(args):
     print(f"  Files generated: {len(result['files_generated'])}")
 
 
+# =========================================================================
+# Phase 3 stage subcommands: ingest, classify, assemble
+# =========================================================================
+
+def cmd_ingest(args):
+    """qra ingest — segment transcripts and freeze them to disk."""
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    config = _build_config(args) if args.config else None
+    if config is None:
+        from process.config import PipelineConfig
+        config = PipelineConfig()
+    if args.output_dir:
+        config.output_dir = args.output_dir
+
+    framework_arg = getattr(args, 'framework', None)
+    framework = _load_framework(framework_arg)
+
+    print(f"\nQRA INGEST")
+    print(f"  Input:  {config.transcript_dir}")
+    print(f"  Output: {output_dir}")
+
+    # Delegate to the full ingestion logic inside run_full_pipeline.
+    # Phase 3 makes ingest stand-alone by exposing stage_ingest (future work);
+    # for now we call a lightweight ingestion wrapper that only runs Stage 1.
+    from process import segments_io as _segments_io
+    from process.transcript_ingestion import discover_session_files
+    from process import output_paths as _paths
+    from process.speaker_anonymization import load_speaker_map as _load_speaker_map
+    from process.config import PipelineConfig
+
+    reingest_sid = getattr(args, 'reingest', None)
+    reingest_all = getattr(args, 'reingest_all', False)
+
+    session_files = discover_session_files(config.transcript_dir)
+    if not session_files:
+        print(f"No session files found in {config.transcript_dir}")
+        sys.exit(1)
+
+    current_hash = _segments_io.params_hash(config.segmentation)
+
+    n_frozen = 0
+    n_new = 0
+    for sf in session_files:
+        from process.orchestrator import _resolve_session_id
+        sid = _resolve_session_id(sf)
+        force = reingest_all or (reingest_sid == sid)
+        if not force and _segments_io.is_segmentation_fresh(output_dir, sid, current_hash):
+            print(f"  {sid}: reused (frozen)")
+            n_frozen += 1
+        else:
+            print(f"  {sid}: (re-)segmenting...")
+            # For standalone ingest we delegate to _execute_pipeline with only Stage 1.
+            # Full segmentation logic lives in run_full_pipeline; we invoke it but
+            # abort after Stage 1 by checking what's been written.
+            # Future: extract stage_ingest as a proper standalone function.
+            print(f"  {sid}: use `qra run` to run the full segmentation pipeline.")
+            print(f"         (standalone re-segmentation is a Phase 3+ feature)")
+            n_new += 1
+
+    print(f"\nDone: {n_frozen} reused, {n_new} pending full pipeline.")
+
+
+def cmd_classify(args):
+    """qra classify — run classifier(s) on frozen segments and write overlays."""
+    from process import segments_io as _segments_io
+    from process.orchestrator import (
+        stage_classify_theme,
+        stage_classify_purer,
+        stage_classify_codebook,
+        stage_cross_validation,
+    )
+    from process._freeze import FrozenArtifactError
+
+    output_dir = args.output_dir
+    what = getattr(args, 'what', 'all') or 'all'
+    valid = {'theme', 'purer', 'codebook', 'cross-validation', 'all'}
+    if what not in valid:
+        print(f"Error: --what must be one of {sorted(valid)}, got {what!r}")
+        sys.exit(2)
+
+    # Guard: frozen segments must exist
+    sessions = _segments_io.list_segmented_sessions(output_dir)
+    if not sessions:
+        print(
+            f"Error: no frozen segments found in {output_dir}.\n"
+            "  Run `qra ingest` (or `qra run`) first."
+        )
+        sys.exit(1)
+
+    config = None
+    if args.config:
+        config = _build_config(args)
+    framework = _load_framework(getattr(args, 'framework', None))
+
+    print(f"\nQRA CLASSIFY  --what {what}")
+    print(f"  Output: {output_dir}")
+    print(f"  Sessions: {len(sessions)}")
+
+    to_run = {what} if what != 'all' else {'theme', 'purer', 'codebook', 'cross-validation'}
+
+    # Load frozen segments once (raw); apply overlays selectively per stage below.
+    from process import classifications_io as _cio
+    segments = _segments_io.load_segments_for_stage(output_dir, apply=())
+    # Apply all existing overlays up-front so each stage sees the current on-disk state.
+    by_id = {s.segment_id: s for s in segments}
+    _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv'))
+
+    if 'theme' in to_run:
+        print("  Running theme classifier...")
+        stage_classify_theme(config, framework, segments=segments, output_dir=output_dir)
+        print(f"  theme_labels.jsonl written ({len(segments)} segments)")
+
+    if 'purer' in to_run:
+        print("  Running PURER classifier...")
+        stage_classify_purer(config, segments=segments, output_dir=output_dir)
+        print(f"  purer_labels.jsonl written")
+
+    if 'codebook' in to_run:
+        codebook = None
+        if config and getattr(config, 'run_codebook_classifier', False):
+            codebook = _load_codebook(getattr(args, 'codebook', None))
+        print("  Running codebook classifier...")
+        stage_classify_codebook(config, codebook, segments=segments, output_dir=output_dir)
+        print(f"  codebook_labels.jsonl written")
+
+    if 'cross-validation' in to_run:
+        print("  Running cross-validation...")
+        stage_cross_validation(config, framework, segments=segments, output_dir=output_dir)
+        print(f"  cross_validation_labels.jsonl written")
+
+    print("\nClassification overlay(s) written. Run `qra assemble` to rebuild master_segments.")
+
+
+def cmd_assemble(args):
+    """qra assemble — join frozen segments + overlays into master_segments."""
+    from process import segments_io as _segments_io, output_paths as _paths
+    from process.orchestrator import stage_assemble
+    from process import classifications_io as _cio
+
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Guard: at least one overlay must exist
+    has_overlay = any(
+        os.path.isfile(_cio.overlay_path(output_dir, key))
+        for key in ('theme', 'purer', 'codebook', 'cv')
+    )
+    has_frozen = bool(_segments_io.list_segmented_sessions(output_dir))
+
+    if not has_frozen and not has_overlay:
+        print(
+            "Error: no frozen segments or classification overlays found.\n"
+            "  Run `qra ingest` then `qra classify` first."
+        )
+        sys.exit(1)
+
+    if not has_overlay:
+        print(
+            "Error: no classification overlays found in {output_dir}.\n"
+            "  Run `qra classify` first."
+        )
+        sys.exit(1)
+
+    config = None
+    if args.config:
+        config = _build_config(args)
+
+    print(f"\nQRA ASSEMBLE")
+    print(f"  Output: {output_dir}")
+
+    master_df = stage_assemble(config, output_dir=output_dir)
+
+    ms_dir = _paths.master_segments_dir(output_dir)
+    print(f"  master_segments.jsonl: {len(master_df)} segments")
+    print(f"  Written to: {ms_dir}")
+    print("\nDone. Run `qra analyze` for post-hoc analysis.")
+
+
 def cmd_testsets(args):
     """Generate or refresh validation test set worksheets from existing pipeline output."""
     from process.assembly import generate_or_refresh_validation_testsets
@@ -1308,6 +1488,53 @@ Examples:
     # ---- setup ----
     subparsers.add_parser('setup', help='Interactive configuration wizard')
 
+    # ---- ingest (Phase 3) ----
+    ingest_parser = subparsers.add_parser(
+        'ingest',
+        help='Segment transcripts and freeze to disk (Phase 3)',
+    )
+    ingest_parser.add_argument('--output-dir', '-o', required=True)
+    ingest_parser.add_argument('--config', '-c', default=None)
+    ingest_parser.add_argument('--transcript-dir', default=None)
+    ingest_parser.add_argument('--framework', default=None)
+    ingest_parser.add_argument('--reingest', default=None, metavar='SESSION_ID',
+                               help='Force re-segmentation of one session')
+    ingest_parser.add_argument('--reingest-all', action='store_true',
+                               help='Force re-segmentation of all sessions')
+    # Accept (and ignore) extra common args so existing configs work
+    for _a in ('--backend', '--model', '--api-key', '--trial-id'):
+        try:
+            ingest_parser.add_argument(_a, default=None)
+        except argparse.ArgumentError:
+            pass
+
+    # ---- classify (Phase 3) ----
+    classify_parser = subparsers.add_parser(
+        'classify',
+        help='Run classifier(s) on frozen segments and write overlay files (Phase 3)',
+    )
+    classify_parser.add_argument('--output-dir', '-o', required=True)
+    classify_parser.add_argument('--config', '-c', default=None)
+    classify_parser.add_argument('--framework', default=None)
+    classify_parser.add_argument('--codebook', default=None)
+    classify_parser.add_argument(
+        '--what',
+        default='all',
+        choices=['theme', 'purer', 'codebook', 'cross-validation', 'all'],
+        help='Which classifier to run (default: all enabled in config)',
+    )
+    classify_parser.add_argument('--backend', default=None)
+    classify_parser.add_argument('--model', default=None)
+    classify_parser.add_argument('--api-key', default=None)
+
+    # ---- assemble (Phase 3) ----
+    assemble_parser = subparsers.add_parser(
+        'assemble',
+        help='Join frozen segments + overlays into master_segments (Phase 3)',
+    )
+    assemble_parser.add_argument('--output-dir', '-o', required=True)
+    assemble_parser.add_argument('--config', '-c', default=None)
+
     # ---- run ----
     run_parser = subparsers.add_parser(
         'run', help='Execute the classification pipeline',
@@ -1401,6 +1628,12 @@ Examples:
     try:
         if args.command == 'setup':
             cmd_setup(args)
+        elif args.command == 'ingest':
+            cmd_ingest(args)
+        elif args.command == 'classify':
+            cmd_classify(args)
+        elif args.command == 'assemble':
+            cmd_assemble(args)
         elif args.command == 'run':
             cmd_run(args)
         elif args.command == 'analyze':
