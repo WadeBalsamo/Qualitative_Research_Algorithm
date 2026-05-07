@@ -215,15 +215,20 @@ def _build_config(args):
     else:
         config = PipelineConfig()
 
-    # CLI overrides (only override if explicitly provided)
-    if args.transcript_dir is not None:
-        config.transcript_dir = args.transcript_dir
-    if args.output_dir is not None:
-        config.output_dir = args.output_dir
-    if args.trial_id is not None:
-        config.trial_id = args.trial_id
-    if args.resume_from is not None:
-        config.resume_from = args.resume_from
+    # CLI overrides — all accessed via getattr so this function is safe to call
+    # from any subparser namespace (not all subparsers define every flag).
+    _td = getattr(args, 'transcript_dir', None)
+    if _td is not None:
+        config.transcript_dir = _td
+    _od = getattr(args, 'output_dir', None)
+    if _od is not None:
+        config.output_dir = _od
+    _tid = getattr(args, 'trial_id', None)
+    if _tid is not None:
+        config.trial_id = _tid
+    _rf = getattr(args, 'resume_from', None)
+    if _rf is not None:
+        config.resume_from = _rf
 
     # Speaker filter
     sf_mode = getattr(args, 'speaker_filter_mode', None)
@@ -235,59 +240,64 @@ def _build_config(args):
         config.speaker_filter.speakers = exclude_spk
 
     # Feature flags
-    if args.no_theme_labeler:
+    if getattr(args, 'no_theme_labeler', False):
         config.run_theme_labeler = False
-    if args.run_codebook_classifier:
+    if getattr(args, 'run_codebook_classifier', False):
         config.run_codebook_classifier = True
-    if args.no_codebook_classifier:
+    if getattr(args, 'no_codebook_classifier', False):
         config.run_codebook_classifier = False
     if getattr(args, 'verbose_segmentation', False):
         config.segmentation.verbose_segmentation = True
 
     # Backend & model
     tc = config.theme_classification
-    if args.backend is not None:
-        tc.backend = args.backend
-    if args.model is not None:
-        tc.model = args.model
+    _backend = getattr(args, 'backend', None)
+    if _backend is not None:
+        tc.backend = _backend
+    _model = getattr(args, 'model', None)
+    if _model is not None:
+        tc.model = _model
     lmstudio_url = getattr(args, 'lmstudio_url', None)
     if lmstudio_url is not None:
         tc.lmstudio_base_url = lmstudio_url
-    if args.models is not None:
-        tc.models = args.models
-    if args.n_runs is not None:
-        tc.n_runs = args.n_runs
-    if args.temperature is not None:
-        tc.temperature = args.temperature
+    _models = getattr(args, 'models', None)
+    if _models is not None:
+        tc.models = _models
+    _n_runs = getattr(args, 'n_runs', None)
+    if _n_runs is not None:
+        tc.n_runs = _n_runs
+    _temp = getattr(args, 'temperature', None)
+    if _temp is not None:
+        tc.temperature = _temp
 
     # API keys: CLI > env > existing config
-    if args.api_key is not None:
-        tc.api_key = args.api_key
+    _api_key = getattr(args, 'api_key', None)
+    if _api_key is not None:
+        tc.api_key = _api_key
     elif not tc.api_key:
         tc.api_key = os.environ.get('OPENROUTER_API_KEY', '')
 
-
     # Embedding settings
     emb = config.codebook_embedding
-    if args.no_two_pass:
+    if getattr(args, 'no_two_pass', False):
         emb.two_pass = False
     if getattr(args, 'embedding_model', None) is not None:
         emb.embedding_model = args.embedding_model
-    if args.exemplar_import_path is not None:
+    if getattr(args, 'exemplar_import_path', None) is not None:
         emb.exemplar_import_path = args.exemplar_import_path
-    if args.criteria_weight is not None:
+    if getattr(args, 'criteria_weight', None) is not None:
         emb.criteria_weight = args.criteria_weight
-    if args.exemplar_weight is not None:
+    if getattr(args, 'exemplar_weight', None) is not None:
         emb.exemplar_weight = args.exemplar_weight
-    if args.exemplar_confidence_threshold is not None:
+    if getattr(args, 'exemplar_confidence_threshold', None) is not None:
         emb.exemplar_confidence_threshold = args.exemplar_confidence_threshold
-    if args.max_exemplar_tokens is not None:
+    if getattr(args, 'max_exemplar_tokens', None) is not None:
         emb.max_exemplar_tokens = args.max_exemplar_tokens
 
     # Confidence thresholds
-    if args.high_confidence_threshold is not None:
+    if getattr(args, 'high_confidence_threshold', None) is not None:
         config.confidence_tiers.high_confidence = args.high_confidence_threshold
-    if args.medium_confidence_threshold is not None:
+    if getattr(args, 'medium_confidence_threshold', None) is not None:
         config.confidence_tiers.medium_min_confidence = args.medium_confidence_threshold
 
     if getattr(args, 'no_auto_analyze', False):
@@ -873,62 +883,35 @@ def cmd_analyze(args):
 
 def cmd_ingest(args):
     """qra ingest — segment transcripts and freeze them to disk."""
+    from process.orchestrator import stage_ingest, SilentObserver
+
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
-    config = _build_config(args) if args.config else None
-    if config is None:
-        from process.config import PipelineConfig
-        config = PipelineConfig()
-    if args.output_dir:
-        config.output_dir = args.output_dir
+    config = _build_config(args)
+    config.output_dir = output_dir
 
-    framework_arg = getattr(args, 'framework', None)
-    framework = _load_framework(framework_arg)
+    force_reingest = getattr(args, 'reingest', None)
+    force_reingest_all = getattr(args, 'reingest_all', False)
 
     print(f"\nQRA INGEST")
     print(f"  Input:  {config.transcript_dir}")
     print(f"  Output: {output_dir}")
+    if force_reingest:
+        print(f"  Force re-ingest: {force_reingest}")
+    elif force_reingest_all:
+        print(f"  Force re-ingest: ALL sessions")
 
-    # Delegate to the full ingestion logic inside run_full_pipeline.
-    # Phase 3 makes ingest stand-alone by exposing stage_ingest (future work);
-    # for now we call a lightweight ingestion wrapper that only runs Stage 1.
-    from process import segments_io as _segments_io
-    from process.transcript_ingestion import discover_session_files
-    from process import output_paths as _paths
-    from process.speaker_anonymization import load_speaker_map as _load_speaker_map
-    from process.config import PipelineConfig
-
-    reingest_sid = getattr(args, 'reingest', None)
-    reingest_all = getattr(args, 'reingest_all', False)
-
-    session_files = discover_session_files(config.transcript_dir)
-    if not session_files:
-        print(f"No session files found in {config.transcript_dir}")
-        sys.exit(1)
-
-    current_hash = _segments_io.params_hash(config.segmentation)
-
-    n_frozen = 0
-    n_new = 0
-    for sf in session_files:
-        from process.orchestrator import _resolve_session_id
-        sid = _resolve_session_id(sf)
-        force = reingest_all or (reingest_sid == sid)
-        if not force and _segments_io.is_segmentation_fresh(output_dir, sid, current_hash):
-            print(f"  {sid}: reused (frozen)")
-            n_frozen += 1
-        else:
-            print(f"  {sid}: (re-)segmenting...")
-            # For standalone ingest we delegate to _execute_pipeline with only Stage 1.
-            # Full segmentation logic lives in run_full_pipeline; we invoke it but
-            # abort after Stage 1 by checking what's been written.
-            # Future: extract stage_ingest as a proper standalone function.
-            print(f"  {sid}: use `qra run` to run the full segmentation pipeline.")
-            print(f"         (standalone re-segmentation is a Phase 3+ feature)")
-            n_new += 1
-
-    print(f"\nDone: {n_frozen} reused, {n_new} pending full pipeline.")
+    segments = stage_ingest(
+        config,
+        output_dir=output_dir,
+        observer=SilentObserver(),
+        force_reingest=force_reingest,
+        force_reingest_all=force_reingest_all,
+    )
+    n_sess = len(set(s.session_id for s in segments))
+    print(f"\nDone. {len(segments)} segments across {n_sess} sessions.")
+    print("Run `qra classify` to classify, then `qra assemble` to build master_segments.")
 
 
 def cmd_classify(args):
@@ -958,9 +941,7 @@ def cmd_classify(args):
         )
         sys.exit(1)
 
-    config = None
-    if args.config:
-        config = _build_config(args)
+    config = _build_config(args)
     framework = _load_framework(getattr(args, 'framework', None))
 
     print(f"\nQRA CLASSIFY  --what {what}")
@@ -987,9 +968,7 @@ def cmd_classify(args):
         print(f"  purer_labels.jsonl written")
 
     if 'codebook' in to_run:
-        codebook = None
-        if config and getattr(config, 'run_codebook_classifier', False):
-            codebook = _load_codebook(getattr(args, 'codebook', None))
+        codebook = _load_codebook(getattr(args, 'codebook', None))
         print("  Running codebook classifier...")
         stage_classify_codebook(config, codebook, segments=segments, output_dir=output_dir)
         print(f"  codebook_labels.jsonl written")
@@ -1032,9 +1011,7 @@ def cmd_assemble(args):
         )
         sys.exit(1)
 
-    config = None
-    if args.config:
-        config = _build_config(args)
+    config = _build_config(args)
 
     print(f"\nQRA ASSEMBLE")
     print(f"  Output: {output_dir}")
@@ -1044,7 +1021,51 @@ def cmd_assemble(args):
     ms_dir = _paths.master_segments_dir(output_dir)
     print(f"  master_segments.jsonl: {len(master_df)} segments")
     print(f"  Written to: {ms_dir}")
-    print("\nDone. Run `qra analyze` for post-hoc analysis.")
+
+    # Refresh human forms, testsets, and CV answer keys (no new testset creation).
+    from process.orchestrator import stage_validation_artifacts
+    framework = _load_framework(getattr(args, 'framework', None))
+    codebook = None
+    try:
+        codebook = _load_codebook(getattr(args, 'codebook', None))
+    except Exception:
+        pass
+    stage_validation_artifacts(
+        config, framework, codebook,
+        output_dir=output_dir,
+        create_missing=False,
+    )
+    print("Done. Run `qra analyze` for post-hoc analysis.")
+
+
+def cmd_validate(args):
+    """qra validate — refresh validation artifacts (human forms, testsets, CV) without re-classifying."""
+    from process.orchestrator import stage_validation_artifacts
+    from process import segments_io as _segments_io
+
+    output_dir = args.output_dir
+    sessions = _segments_io.list_segmented_sessions(output_dir)
+    if not sessions:
+        print(f"Error: no frozen segments in {output_dir}. Run `qra ingest` first.")
+        sys.exit(1)
+
+    config = _build_config(args)
+    framework = _load_framework(getattr(args, 'framework', None))
+    codebook = None
+    try:
+        codebook = _load_codebook(getattr(args, 'codebook', None))
+    except Exception:
+        pass
+
+    print(f"\nQRA VALIDATE")
+    print(f"  Output: {output_dir}")
+
+    stage_validation_artifacts(
+        config, framework, codebook,
+        output_dir=output_dir,
+        create_missing=False,
+    )
+    print("Done. Human forms, flagged-for-review, and testset/CV answer keys refreshed.")
 
 
 def cmd_testsets(args):
@@ -1284,11 +1305,24 @@ def cmd_cv_refresh(args):
         print("No content-validity testsets found.")
         return
 
+    # Build ThemeClassificationConfig from config file or CLI args.
+    config = _build_config(args)
+    tc = config.theme_classification if config is not None else None
+    _backend = getattr(args, 'backend', None)
+    _model = getattr(args, 'model', None)
+    _lmurl = getattr(args, 'lmstudio_url', None)
+    if _backend or _model or _lmurl:
+        from theme_framework.config import ThemeClassificationConfig as _TCC
+        tc = _TCC(
+            backend=_backend or (tc.backend if tc else 'lmstudio'),
+            model=_model or (tc.model if tc else None),
+            lmstudio_base_url=_lmurl or (getattr(tc, 'lmstudio_base_url', None) if tc else 'http://127.0.0.1:1234/v1'),
+        )
+
     for name in names:
-        import json as _json
         mp = _paths.cv_testset_manifest_path(args.output_dir, name)
         with open(mp) as f:
-            m = _json.load(f)
+            m = json.load(f)
         kind = m.get('kind', 'vaamr')
         if kind == 'purer':
             from theme_framework.purer import get_purer_framework
@@ -1296,7 +1330,7 @@ def cmd_cv_refresh(args):
         else:
             framework = _load_framework(None)
         try:
-            path = refresh_cv_answer_key(args.output_dir, name, None, framework)
+            path = refresh_cv_answer_key(args.output_dir, name, tc, framework)
             print(f"Refreshed: {os.path.relpath(path, args.output_dir)}")
         except Exception as e:
             print(f"Error refreshing {name!r}: {e}")
@@ -1423,26 +1457,39 @@ Examples:
   # Interactive setup wizard
   python qra.py setup
 
-  # Run pipeline with defaults
-  python qra.py run --backend openrouter --model openai/gpt-4o
-
-  # Run with saved config
+  # Full pipeline with saved config
   python qra.py run --config ./qra_config.json
 
-  # Run pipeline and auto-generate analysis reports afterward
-  python qra.py run --backend lmstudio --auto-analyze
+  # Full pipeline with inline model
+  python qra.py run --backend lmstudio --model nvidia/nemotron-3-super -o ./data/output/
 
-  # Analyze existing pipeline output (standalone post-hoc)
-  python qra.py analyze --output-dir ./data/output/
+  # Modular re-classification workflow (existing / legacy project):
+  python qra.py ingest -o ./data/output/
+  python qra.py classify --what theme --backend lmstudio --model <new_model> -o ./data/output/
+  python qra.py classify --what purer --backend lmstudio --model <new_model> -o ./data/output/
+  python qra.py assemble -o ./data/output/
+  python qra.py validate -o ./data/output/
+  python qra.py analyze -o ./data/output/
 
-  # Generate validation test set worksheets from existing output
-  python qra.py testsets --output-dir ./data/output/
-  python qra.py testsets --output-dir ./data/output/ --n-sets 3 --fraction 0.15
+  # Re-classify everything with new models (no config file needed):
+  python qra.py classify --what all --backend lmstudio --model <m> -o ./data/output/
+  python qra.py assemble -o ./data/output/
+
+  # Testset management
+  python qra.py testset create -o ./data/output/ --kind purer --name purer_irr_1
+  python qra.py testset refresh --all -o ./data/output/
+  python qra.py testset list -o ./data/output/
+
+  # Content-validity management
+  python qra.py cv create -o ./data/output/ --framework purer --name cv_purer_v1
+  python qra.py cv refresh --all --model <new_model> -o ./data/output/
+  python qra.py cv list -o ./data/output/
+
+  # Refresh only validation artifacts (after manual label edits)
+  python qra.py validate -o ./data/output/
 
   # Zero-shot content validity test (skips full pipeline)
-  python qra.py run --test-zeroshot --preset small --lmstudio-url http://10.0.0.58:1234/v1 --output-dir ./data/output/
-  python qra.py run --test-zeroshot --backend openrouter --models model-a model-b model-c --api-key $KEY --output-dir ./data/output/
-  python qra.py run --test-zeroshot --backend openrouter --model openai/gpt-4o --api-key $KEY --output-dir ./data/output/
+  python qra.py run --test-zeroshot --preset small --lmstudio-url http://10.0.0.58:1234/v1 -o ./data/output/
         """,
     )
 
@@ -1522,6 +1569,16 @@ Examples:
         help='Path to pipeline output directory containing master_segment_dataset.csv',
     )
 
+    # ---- validate ----
+    validate_parser = subparsers.add_parser(
+        'validate',
+        help='Refresh validation artifacts (human forms, testsets, CV) without re-classifying',
+    )
+    validate_parser.add_argument('--output-dir', '-o', required=True, help='Pipeline output directory')
+    validate_parser.add_argument('--config', '-c', default=None, help='Config JSON path')
+    validate_parser.add_argument('--framework', default=None, help='Framework preset or JSON path')
+    validate_parser.add_argument('--codebook', default=None, help='Codebook preset or JSON path')
+
     # ---- testsets (deprecated alias for testset refresh --all) ----
     testsets_parser = subparsers.add_parser(
         'testsets',
@@ -1576,8 +1633,12 @@ Examples:
 
     _cv_refresh = cv_sub.add_parser('refresh', help='Refresh AI answer key(s)')
     _cv_refresh.add_argument('--output-dir', '-o', required=True)
+    _cv_refresh.add_argument('--config', '-c', default=None)
     _cv_refresh.add_argument('--name', default=None)
     _cv_refresh.add_argument('--all', action='store_true')
+    _cv_refresh.add_argument('--backend', default=None, help='LLM backend override')
+    _cv_refresh.add_argument('--model', default=None, help='Model override')
+    _cv_refresh.add_argument('--lmstudio-url', dest='lmstudio_url', default=None)
 
     _cv_list = cv_sub.add_parser('list', help='List content-validity testsets')
     _cv_list.add_argument('--output-dir', '-o', required=True)
@@ -1601,6 +1662,8 @@ Examples:
             cmd_run(args)
         elif args.command == 'analyze':
             cmd_analyze(args)
+        elif args.command == 'validate':
+            cmd_validate(args)
         elif args.command == 'testsets':
             import warnings
             warnings.warn(
