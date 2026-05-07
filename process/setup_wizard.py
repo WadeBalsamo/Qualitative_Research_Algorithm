@@ -24,6 +24,10 @@ from .config import (
     SegmentationConfig,
     ValidationConfig,
     TestSetConfig,
+    TestSetsConfig,
+    TestSetSpec,
+    ContentValidityConfig,
+    ContentValiditySpec,
     ConfidenceTierConfig,
     TherapistCueConfig,
     PurerCueConfig,
@@ -228,6 +232,7 @@ class SetupWizard:
             self._apply_preset_settings()
 
         self._step_10_testsets()
+        self._step_10b_content_validity()
         self._step_11_analysis()
         self._step_11b_therapist_cues()
         self._step_11c_report_summaries()
@@ -1119,35 +1124,113 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_10_testsets(self):
-        print("--- Step 10/12: Validation Test Sets ---")
-        print("    Cross-session test sets let human raters independently code a random")
-        print("    sample of participant segments drawn proportionally from all cohorts,")
-        print("    for inter-rater reliability comparison against AI classifications.")
+        print("--- Step 10/14: Validation Test Sets ---")
+        print("    Cross-session test sets for human blind-coding and inter-rater reliability.")
+        print("    Each kind samples a stratified fraction of the corresponding segment pool.")
         print()
-        enable = _prompt_yes_no("Generate validation test sets?", True)
-        self.config_data['test_sets'] = {'enabled': enable}
-        if not enable:
+
+        has_purer = self.config_data.get('run_purer_labeler', False)
+        has_codebook = self.config_data.get('pipeline', {}).get('run_codebook_classifier', False)
+
+        # VAAMR (always available)
+        print("  [VAAMR] Participant segment testset")
+        vaamr_enabled = _prompt_yes_no("  Enable VAAMR testset?", True)
+        vaamr_name, vaamr_n, vaamr_frac = 'vaamr_testset', 2, 0.10
+        if vaamr_enabled:
+            vaamr_name = _prompt("    Name", 'vaamr_testset')
+            vaamr_n = _prompt_int("    Number of sets", 2)
+            vaamr_frac = _prompt_float("    Fraction per set", 0.10)
+            if vaamr_n * vaamr_frac > 1.0:
+                vaamr_frac = round(1.0 / vaamr_n, 2)
+                print(f"    Adjusted fraction to {vaamr_frac}")
+            print(f"    → {vaamr_n} set(s) × ~{vaamr_frac:.0%} participant segments, stratified by cohort")
+        print()
+
+        # PURER
+        purer_enabled, purer_name, purer_n, purer_frac = False, 'purer_testset', 1, 0.10
+        if has_purer:
+            print("  [PURER] Therapist cue-block testset")
+            purer_enabled = _prompt_yes_no("  Enable PURER testset?", False)
+            if purer_enabled:
+                purer_name = _prompt("    Name", 'purer_testset')
+                purer_n = _prompt_int("    Number of sets", 1)
+                purer_frac = _prompt_float("    Fraction per set", 0.10)
+                print(f"    → {purer_n} set(s) × ~{purer_frac:.0%} therapist cue blocks, stratified by PURER move")
             print()
-            return
-        n_sets = _prompt_int("Number of test sets", 2)
-        fraction = _prompt_float("Fraction of segments per set (e.g. 0.10 = 10%)", 0.10)
-        if n_sets * fraction > 1.0:
-            fraction = round(1.0 / n_sets, 2)
-            print(f"    Adjusted fraction to {fraction} so sets don't overlap.")
-        self.config_data['test_sets'].update({
-            'n_sets': n_sets,
-            'fraction_per_set': fraction,
-            'random_seed': 42,
-        })
-        print(f"    Will produce {n_sets} test sets × ~{fraction:.0%} of participant segments, stratified by cohort.")
+        else:
+            print("  [PURER] (greyed out — enable PURER classifier in Step 2)")
+            print()
+
+        # Codebook
+        cb_enabled, cb_name, cb_n, cb_frac = False, 'codebook_testset', 1, 0.10
+        if has_codebook:
+            print("  [Codebook] Multi-label participant segment testset")
+            cb_enabled = _prompt_yes_no("  Enable codebook testset?", False)
+            if cb_enabled:
+                cb_name = _prompt("    Name", 'codebook_testset')
+                cb_n = _prompt_int("    Number of sets", 1)
+                cb_frac = _prompt_float("    Fraction per set", 0.10)
+                print(f"    → {cb_n} set(s) × ~{cb_frac:.0%} coded participant segments")
+            print()
+        else:
+            print("  [Codebook] (greyed out — enable codebook classifier in Step 7)")
+            print()
+
+        self.config_data['test_sets'] = {
+            'vaamr':    {'enabled': vaamr_enabled, 'name': vaamr_name,
+                         'n_sets': vaamr_n, 'fraction_per_set': vaamr_frac, 'random_seed': 42},
+            'purer':    {'enabled': purer_enabled, 'name': purer_name,
+                         'n_sets': purer_n, 'fraction_per_set': purer_frac, 'random_seed': 42},
+            'codebook': {'enabled': cb_enabled, 'name': cb_name,
+                         'n_sets': cb_n, 'fraction_per_set': cb_frac, 'random_seed': 42},
+        }
+
+    # -----------------------------------------------------------------
+    # Step 10b: Content-Validity Test Sets (NEW)
+    # -----------------------------------------------------------------
+
+    def _step_10b_content_validity(self):
+        print("--- Step 10b/14: Content-Validity Test Sets ---")
+        print("    Frozen test sets built from framework exemplar/subtle/adversarial utterances.")
+        print("    Tests how well the LLM handles definitional boundary cases.")
         print()
+
+        has_purer = self.config_data.get('run_purer_labeler', False)
+
+        # VAAMR CV
+        print("  [VAAMR] Content-validity from VAAMR framework definitions")
+        cv_vaamr_enabled = _prompt_yes_no("  Enable VAAMR content-validity testset?", True)
+        cv_vaamr_name = 'cv_vaamr_v1'
+        if cv_vaamr_enabled:
+            cv_vaamr_name = _prompt("    Name", 'cv_vaamr_v1')
+        print()
+
+        # PURER CV
+        cv_purer_enabled, cv_purer_name = False, 'cv_purer_v1'
+        if has_purer:
+            print("  [PURER] Content-validity from PURER framework definitions")
+            cv_purer_enabled = _prompt_yes_no("  Enable PURER content-validity testset?", False)
+            if cv_purer_enabled:
+                cv_purer_name = _prompt("    Name", 'cv_purer_v1')
+            print()
+        else:
+            print("  [PURER] (greyed out — enable PURER classifier in Step 2)")
+            print()
+
+        print("  [Codebook] Content-validity — DEFERRED (no exemplar utterances yet)")
+        print()
+
+        self.config_data['content_validity'] = {
+            'vaamr': {'enabled': cv_vaamr_enabled, 'name': cv_vaamr_name},
+            'purer': {'enabled': cv_purer_enabled, 'name': cv_purer_name},
+        }
 
     # -----------------------------------------------------------------
     # Step 11: Post-pipeline Analysis
     # -----------------------------------------------------------------
 
     def _step_11_analysis(self):
-        print("--- Step 11/12: Post-Pipeline Analysis ---")
+        print("--- Step 11/14: Post-Pipeline Analysis ---")
         print("    After the pipeline completes, the analysis module can generate:")
         print("    - Per-participant longitudinal reports (VA-MR progression)")
         print("    - Per-session summaries with prototypical exemplars")
@@ -1171,7 +1254,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_11b_therapist_cues(self):
-        print("--- Step 11b/12: Therapist Cue Summarization ---")
+        print("--- Step 11b/14: Therapist Cue Summarization ---")
         print("    When enabled, therapist dialogue between two participant segments")
         print("    is surfaced as a CUE in state_transition_explanation.txt, and")
         print("    cue_response.txt is generated with averaged cues by transition type.")
@@ -1200,7 +1283,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_11c_report_summaries(self):
-        print("--- Step 11c/12: Session & Participant Summary Reports ---")
+        print("--- Step 11c/14: Session & Participant Summary Reports ---")
         print("    The analysis module can generate LLM-written narrative summaries")
         print("    using the summarization model configured in Step 4.")
         print()
@@ -1240,7 +1323,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_12_save(self) -> str:
-        print("--- Step 12/12: Save Configuration ---")
+        print("--- Step 12/14: Save Configuration ---")
         from . import output_paths as _paths
         default_path = os.path.join(
             _paths.meta_dir(self.config_data['pipeline'].get('output_dir', './data/output/')),
@@ -1255,6 +1338,41 @@ class SetupWizard:
         print()
 
         return save_path
+
+
+def _build_test_sets_config(ts_raw: dict) -> TestSetsConfig:
+    """Build TestSetsConfig from either Phase 2 (nested) or legacy flat format."""
+    if 'vaamr' in ts_raw:
+        return TestSetsConfig(
+            vaamr=TestSetSpec(**{k: v for k, v in ts_raw.get('vaamr', {}).items()
+                                 if k in ('enabled', 'name', 'n_sets', 'fraction_per_set', 'random_seed')}),
+            purer=TestSetSpec(**{k: v for k, v in ts_raw.get('purer', {}).items()
+                                 if k in ('enabled', 'name', 'n_sets', 'fraction_per_set', 'random_seed')}),
+            codebook=TestSetSpec(**{k: v for k, v in ts_raw.get('codebook', {}).items()
+                                    if k in ('enabled', 'name', 'n_sets', 'fraction_per_set', 'random_seed')}),
+        )
+    # Legacy flat format
+    return TestSetsConfig(
+        vaamr=TestSetSpec(
+            enabled=ts_raw.get('enabled', True),
+            name='vaamr_testset',
+            n_sets=ts_raw.get('n_sets', 2),
+            fraction_per_set=ts_raw.get('fraction_per_set', 0.10),
+            random_seed=ts_raw.get('random_seed', 42),
+        ),
+    )
+
+
+def _build_content_validity_config(cv_raw: dict) -> ContentValidityConfig:
+    """Build ContentValidityConfig from wizard output."""
+    if not cv_raw:
+        return ContentValidityConfig()
+    return ContentValidityConfig(
+        vaamr=ContentValiditySpec(**{k: v for k, v in cv_raw.get('vaamr', {}).items()
+                                     if k in ('enabled', 'name')}),
+        purer=ContentValiditySpec(**{k: v for k, v in cv_raw.get('purer', {}).items()
+                                     if k in ('enabled', 'name')}),
+    )
 
 
 def build_config_from_wizard_data(data: dict) -> PipelineConfig:
@@ -1346,12 +1464,8 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             exemplar_import_path=cb_emb.get('exemplar_import_path'),
         ),
         validation=ValidationConfig(),
-        test_sets=TestSetConfig(
-            enabled=data.get('test_sets', {}).get('enabled', True),
-            n_sets=data.get('test_sets', {}).get('n_sets', 2),
-            fraction_per_set=data.get('test_sets', {}).get('fraction_per_set', 0.10),
-            random_seed=data.get('test_sets', {}).get('random_seed', 42),
-        ),
+        test_sets=_build_test_sets_config(data.get('test_sets', {})),
+        content_validity=_build_content_validity_config(data.get('content_validity', {})),
         confidence_tiers=ConfidenceTierConfig(
             high_confidence=ct.get('high_confidence', 0.8),
             medium_min_confidence=ct.get('medium_min_confidence', 0.6),
