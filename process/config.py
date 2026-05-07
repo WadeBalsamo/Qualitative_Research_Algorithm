@@ -18,7 +18,7 @@ from codebook.config import (
 )
 
 # Keys that hold secrets and must never be written to config JSON
-_SECRET_KEYS = frozenset({'api_key', 'replicate_api_token'})
+_SECRET_KEYS = frozenset({'api_key'})
 
 
 @dataclass
@@ -261,7 +261,7 @@ class PipelineConfig:
         """Reconstruct PipelineConfig from a dict (e.g., loaded JSON).
 
         Nested sub-config dicts are converted back to their dataclass types.
-        Secret fields (api_key, replicate_api_token) are resolved from
+        Secret fields (api_key) are resolved from
         environment variables if blank in the data.
         """
         import os
@@ -306,8 +306,6 @@ class PipelineConfig:
         tc = config.theme_classification
         if not tc.api_key:
             tc.api_key = os.environ.get('OPENROUTER_API_KEY', '')
-        if not tc.replicate_api_token:
-            tc.replicate_api_token = os.environ.get('REPLICATE_API_TOKEN', '')
 
         return config
 

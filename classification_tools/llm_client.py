@@ -1,8 +1,14 @@
 """
 llm_client.py
 -------------
-Unified LLM API client for OpenRouter, Replicate, Ollama, LM Studio, and
-Hugging Face backends, plus JSON extraction utilities.
+Unified LLM API client for OpenAI-compatible endpoints, plus JSON extraction
+utilities.
+
+All backends are accessed through an OpenAI-compatible chat completions API
+at their respective base URLs.  LM Studio, Ollama, and OpenRouter all expose
+the same ``/v1/chat/completions`` (or ``/api/chat`` for Ollama-native) interface,
+so any OpenAI-compatible provider can be added by supplying the appropriate
+base URL and model name.
 
 Supports multi-model cross-referencing for consensus-based classification.
 
@@ -32,27 +38,23 @@ from typing import Any, Dict, Optional, Tuple, List
 @dataclass
 class LLMClientConfig:
     """Configuration for the LLM API client."""
-    backend: str = 'huggingface'  # 'openrouter', 'replicate', 'ollama', 'lmstudio', or 'huggingface'
+    backend: str = 'lmstudio'  # 'openrouter', 'ollama', or 'lmstudio'
     api_key: str = ''
-    replicate_api_token: str = ''
-    model: str = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'  # Single model or list for multi-model
+    model: str = 'nvidia/nemotron-3-super'
     models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
     temperature: float = 0.0
-    max_new_tokens: int = 512  # Used by Replicate and HuggingFace only
     timeout: int = 1800
     max_retries: int = 3
     retry_base_delay: float = 2.0
     ollama_host: str = '0.0.0.0'
     ollama_port: int = 11434
     lmstudio_base_url: str = 'http://127.0.0.1:1234/v1'  # LM Studio OpenAI-compatible endpoint
-    use_gpu: bool = True  # Use GPU if available for Hugging Face models
-    batch_size: int = 1  # For future batch processing
     no_reasoning: bool = False  # Disable chain-of-thought tokens (LM Studio, Ollama thinking models)
     process_logger: Optional[Any] = field(default=None, compare=False, repr=False)  # ProcessLogger instance for I/O tracing
 
 
 class LLMClient:
-    """Unified LLM client dispatching to OpenRouter, Replicate, Ollama, LM Studio, or HuggingFace."""
+    """Unified LLM client dispatching to OpenRouter, Ollama, or LM Studio."""
 
     # Class-level cache: (backend_key, model) -> context_length
     # backend_key is a stable string identifying the endpoint (URL or backend name).
@@ -73,12 +75,8 @@ class LLMClient:
         if plog:
             plog.log_llm_prompt(self.config.model, prompt)
 
-        if self.config.backend == 'replicate':
-            result_text, metadata = self._replicate_request(prompt)
-        elif self.config.backend == 'ollama':
+        if self.config.backend == 'ollama':
             result_text, metadata = self._ollama_request(prompt)
-        elif self.config.backend == 'huggingface':
-            result_text, metadata = self._huggingface_request(prompt)
         elif self.config.backend == 'lmstudio':
             result_text, metadata = self._lmstudio_request(prompt)
         else:
@@ -156,8 +154,6 @@ class LLMClient:
                 )
             return LLMClient._context_length_cache[cache_key]
 
-        # HuggingFace context length is read at generation time from the model config.
-        # Replicate doesn't expose metadata; callers use max_new_tokens directly.
         return self._CONTEXT_LENGTH_FALLBACK
 
     @staticmethod
@@ -326,28 +322,6 @@ class LLMClient:
         print(f"  API error after {self.config.max_retries} attempts: {last_error}")
         return None, None
 
-    def _replicate_request(
-        self, prompt: str,
-    ) -> Tuple[Optional[str], Optional[Dict]]:
-        """Send a prompt to Replicate API and return the response text."""
-        try:
-            import replicate
-            client = replicate.Client(api_token=self.config.replicate_api_token)
-
-            output = client.run(
-                self.config.model,
-                input={
-                    "prompt": prompt,
-                    "temperature": self.config.temperature,
-                    "max_new_tokens": self.config.max_new_tokens,
-                },
-            )
-            result_text = ''.join(output)
-            return result_text, None
-        except Exception as e:
-            print(f"  Replicate API error: {e}")
-            return None, None
-
     def _ollama_request(
         self, prompt: str,
     ) -> Tuple[Optional[str], Optional[Dict]]:
@@ -486,63 +460,6 @@ class LLMClient:
 
         print(f"  LM Studio error after {self.config.max_retries} attempts: {last_error}")
         return None, None
-
-    def _huggingface_request(
-        self, prompt: str,
-    ) -> Tuple[Optional[str], Optional[Dict]]:
-        """Send a prompt to a locally-loaded Hugging Face model and return the response."""
-        try:
-            import torch
-            from .model_loader import load_model
-
-            model, tokenizer = load_model(self.config.model)
-
-            # Derive the model's actual context window from its config.
-            model_max_ctx = getattr(model.config, 'max_position_embeddings', None)
-
-            inputs = tokenizer(
-                prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=model_max_ctx or 2048,
-            )
-            inputs = {k: v.to(model.device) for k, v in inputs.items()}
-
-            prompt_len = inputs['input_ids'].shape[1]
-            # Generate up to whatever space remains in the context window.
-            if model_max_ctx:
-                max_new = model_max_ctx - prompt_len
-            else:
-                max_new = self.config.max_new_tokens
-
-            with torch.no_grad():
-                start_time = time.time()
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=max(max_new, 1),
-                    temperature=self.config.temperature if self.config.temperature > 0 else 1.0,
-                    do_sample=self.config.temperature > 0,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
-                end_time = time.time()
-
-            new_tokens = outputs[0][prompt_len:]
-            result_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
-
-            metadata = {
-                'model': self.config.model,
-                'backend': 'huggingface',
-                'generation_time': end_time - start_time,
-                'device': str(model.device),
-            }
-
-            return result_text.strip(), metadata
-
-        except Exception as e:
-            print(f"  Hugging Face model error: {e}")
-            import traceback
-            traceback.print_exc()
-            return None, None
 
 
 def extract_json(output_str: str) -> Dict:

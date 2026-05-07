@@ -101,7 +101,6 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                     _llm_cfg = LLMClientConfig(
                         backend=_tc.backend,
                         api_key=_tc.api_key,
-                        replicate_api_token=_tc.replicate_api_token,
                         model=_summ_model,
                         models=[_summ_model],
                         temperature=_tc.temperature,
