@@ -43,7 +43,7 @@ def _add_common_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         '--backend',
         default=None,
-        choices=['openrouter', 'replicate', 'huggingface', 'ollama', 'lmstudio'],
+        choices=['openrouter', 'ollama', 'lmstudio'],
     )
     parser.add_argument(
         '--lmstudio-url', default=None,
@@ -55,7 +55,6 @@ def _add_common_args(parser: argparse.ArgumentParser):
         help='Multiple model IDs for cross-referencing',
     )
     parser.add_argument('--api-key', default=None)
-    parser.add_argument('--replicate-api-token', default=None)
 
     # Framework & codebook
     parser.add_argument(
@@ -267,10 +266,6 @@ def _build_config(args):
     elif not tc.api_key:
         tc.api_key = os.environ.get('OPENROUTER_API_KEY', '')
 
-    if args.replicate_api_token is not None:
-        tc.replicate_api_token = args.replicate_api_token
-    elif not tc.replicate_api_token:
-        tc.replicate_api_token = os.environ.get('REPLICATE_API_TOKEN', '')
 
     # Embedding settings
     emb = config.codebook_embedding
@@ -381,10 +376,6 @@ def cmd_run(args):
             codebook_arg = cb.get('custom_path') or cb.get('preset', 'phenomenology')
         codebook = _load_codebook(codebook_arg)
 
-    # HuggingFace model preloading
-    if config.theme_classification.backend == 'huggingface':
-        _preload_huggingface_models(config)
-
     _execute_pipeline(config, framework, codebook)
 
 
@@ -409,7 +400,6 @@ def _resolve_test_rater_config(args) -> dict:
             'n_runs': preset['n_runs'],
             'temperature': preset['temperature'],
             'api_key': api_key,
-            'replicate_api_token': '',
             'lmstudio_base_url': lmstudio_url,
             'preset_label': preset['label'],
         }
@@ -421,7 +411,6 @@ def _resolve_test_rater_config(args) -> dict:
     n_runs = getattr(args, 'n_runs', None)
     temperature = getattr(args, 'temperature', None) or 0.0
     api_key = getattr(args, 'api_key', None) or os.environ.get('OPENROUTER_API_KEY', '')
-    replicate_token = getattr(args, 'replicate_api_token', None) or os.environ.get('REPLICATE_API_TOKEN', '')
     lmstudio_url = getattr(args, 'lmstudio_url', None) or 'http://127.0.0.1:1234/v1'
 
     per_run_models: list = []
@@ -439,7 +428,6 @@ def _resolve_test_rater_config(args) -> dict:
         'n_runs': resolved_n_runs,
         'temperature': temperature,
         'api_key': api_key,
-        'replicate_api_token': replicate_token,
         'lmstudio_base_url': lmstudio_url,
         'preset_label': None,
     }
@@ -805,7 +793,6 @@ def cmd_test_zeroshot(args):
         temperature=rater_cfg['temperature'],
         backend=rater_cfg['backend'],
         api_key=rater_cfg['api_key'],
-        replicate_api_token=rater_cfg['replicate_api_token'],
         lmstudio_base_url=rater_cfg['lmstudio_base_url'],
         output_dir=checkpoint_dir,
         context_window_segments=0,
@@ -1414,27 +1401,6 @@ def _execute_pipeline(config, framework, codebook=None):
     return master_df
 
 
-def _preload_huggingface_models(config):
-    """Download and preload HuggingFace models."""
-    from classification_tools.model_loader import ensure_models_ready, load_model
-
-    models = config.theme_classification.models
-    if not models:
-        models = [config.theme_classification.model]
-
-    print("\nPreparing HuggingFace models...")
-    ensure_models_ready(download_if_missing=True)
-
-    for model_id in models:
-        try:
-            print(f"  Loading {model_id}...")
-            load_model(model_id)
-            print(f"  Loaded successfully")
-        except Exception as e:
-            print(f"  Failed to load {model_id}: {e}")
-            sys.exit(1)
-
-
 def _prompt_yes_no_simple(label: str, default: bool = True) -> bool:
     default_str = 'Y/n' if default else 'y/N'
     raw = input(f"\n{label} [{default_str}]: ").strip().lower()
@@ -1462,9 +1428,6 @@ Examples:
 
   # Run with saved config
   python qra.py run --config ./qra_config.json
-
-  # HuggingFace multi-model pipeline
-  python qra.py run --backend huggingface
 
   # Run pipeline and auto-generate analysis reports afterward
   python qra.py run --backend lmstudio --auto-analyze

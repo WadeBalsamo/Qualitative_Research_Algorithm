@@ -726,7 +726,7 @@ class SetupWizard:
 
         backend = _prompt_choice(
             "Backend",
-            ['openrouter', 'replicate', 'huggingface', 'ollama', 'lmstudio'],
+            ['openrouter', 'ollama', 'lmstudio'],
             'lmstudio',
         )
 
@@ -762,10 +762,6 @@ class SetupWizard:
             env_key = os.environ.get('OPENROUTER_API_KEY', '')
             if not env_key:
                 print("    Note: Set OPENROUTER_API_KEY environment variable before running.")
-        elif backend == 'replicate':
-            env_key = os.environ.get('REPLICATE_API_TOKEN', '')
-            if not env_key:
-                print("    Note: Set REPLICATE_API_TOKEN environment variable before running.")
 
         models = []
         if _prompt_yes_no("Use multiple models for cross-referencing?", False):
@@ -1275,11 +1271,8 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
 
     backend = tc.get('backend', 'openrouter')
     api_key = ''
-    replicate_token = ''
     if backend == 'openrouter':
         api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    elif backend == 'replicate':
-        replicate_token = os.environ.get('REPLICATE_API_TOKEN', '')
 
     config = PipelineConfig(
         transcript_dir=pipeline.get('transcript_dir', './data/input/diarized_sessions/'),
@@ -1318,7 +1311,6 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             n_runs=tc.get('n_runs', 3),
             temperature=tc.get('temperature', 0.0),
             api_key=api_key,
-            replicate_api_token=replicate_token,
             lmstudio_base_url=tc.get('lmstudio_base_url', 'http://127.0.0.1:1234/'),
             zero_shot_prompt=tc.get('zero_shot_prompt', False),
             prompt_n_exemplars=tc.get('prompt_n_exemplars'),
@@ -1338,7 +1330,6 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             n_runs=pc.get('n_runs', tc.get('n_runs', 3)),
             temperature=pc.get('temperature', tc.get('temperature', 0.0)),
             api_key=api_key,
-            replicate_api_token=replicate_token,
             lmstudio_base_url=pc.get('lmstudio_base_url', tc.get('lmstudio_base_url', 'http://127.0.0.1:1234/')),
             zero_shot_prompt=pc.get('zero_shot_prompt', tc.get('zero_shot_prompt', False)),
             prompt_n_exemplars=pc.get('prompt_n_exemplars', tc.get('prompt_n_exemplars')),

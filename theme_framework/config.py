@@ -14,7 +14,7 @@ from typing import List, Optional
 @dataclass
 class ThemeClassificationConfig:
     """Parameters for zero-shot LLM theme classification."""
-    model: str = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'  # Primary model (used when models list is empty)
+    model: str = 'nvidia/nemotron-3-super'
     summarization_model: str = 'nvidia/nemotron-3-nano-4b'  # Lighter model for cue/session/participant report summaries
     models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
     # Per-run model assignment: when len == n_runs, run[i] uses per_run_models[i].
@@ -25,8 +25,7 @@ class ThemeClassificationConfig:
     n_runs: int = 3
     randomize_codebook: bool = True
     api_key: str = field(default_factory=lambda: os.environ.get('OPENROUTER_API_KEY', ''))
-    backend: str = 'huggingface'  # 'openrouter', 'replicate', 'ollama', or 'huggingface'
-    replicate_api_token: str = field(default_factory=lambda: os.environ.get('REPLICATE_API_TOKEN', ''))
+    backend: str = 'lmstudio'  # 'openrouter', 'ollama', or 'lmstudio'
     max_new_tokens: int = 512
     output_dir: str = './data/output/llm_labels/'
     save_interval: int = 20
