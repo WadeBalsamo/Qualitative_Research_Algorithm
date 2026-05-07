@@ -86,25 +86,16 @@ QRA supports multiple LLM backends. Choose one that best fits your needs.
 
 **Best for**: User-friendly local LLM interface, no API costs
 
-#### 1. Install LM Studio
-
-Download from lmstudio.ai and install.
-
-#### 2. Load a Model and Start Server
-
-1. Open LM Studio
-2. Go to the **Models** tab and download a model (e.g., `nvidia/nemotron-3-super`, `qwen/qwen3-30b-a3b`)
+1. Download from lmstudio.ai and install.
+2. Open LM Studio, go to the **Models** tab, and download a model (e.g., `nvidia/nemotron-3-super`, `qwen/qwen3-30b-a3b`)
 3. Start the local server (Developer tab → Start Server)
 4. Note the server URL (default: `http://127.0.0.1:1234/v1`)
-
-The setup wizard defaults to LM Studio backend with URL `http://10.0.0.58:1234/v1` — change this to match your server.
 
 ### Option B: OpenRouter (Cloud API)
 
 **Best for**: Quick start, access to top models like GPT-4o, Claude
 
 ```bash
-# Get an API key from openrouter.ai
 export OPENROUTER_API_KEY=sk-or-v1-your-key-here
 ```
 
@@ -112,40 +103,24 @@ The key is resolved automatically from the environment at runtime; it is never s
 
 ### Option C: Replicate (Cloud API)
 
-**Best for**: Access to open-weight models
-
 ```bash
 export REPLICATE_API_TOKEN=r8_your-token-here
 ```
 
 ### Option D: HuggingFace (Local GPU)
 
-**Best for**: Full control, privacy, no API costs after model download
-
-#### 1. Install PyTorch with CUDA
-
 ```bash
 # Check your GPU
 nvidia-smi
 
-# Install PyTorch with CUDA support
+# Install PyTorch with CUDA
 pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
-```
 
-#### 2. Verify GPU
-
-```bash
-python -c "
-import torch
-print(f'CUDA available: {torch.cuda.is_available()}')
-if torch.cuda.is_available():
-    print(f'GPU: {torch.cuda.get_device_name(0)}')
-"
+# Verify GPU
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"
 ```
 
 ### Option E: Ollama (Local)
-
-**Best for**: Easy local LLM with CPU support
 
 ```bash
 # macOS/Linux
@@ -242,41 +217,30 @@ Each entry must have exactly `role` (`"participant"` or `"therapist"`) and `anon
 python qra.py setup
 ```
 
-The wizard walks through 12 steps and saves a config JSON to `07_meta/qra_config.json`.
+The wizard walks through 14 steps and saves a config JSON to `02_meta/qra_config.json`.
 
 ---
 
-### Step 1/12: Input/Output Paths
+### Setup Steps Overview
+
+#### Step 1: Input/Output Paths
 
 - **Transcript directory**: Where your JSON/VTT files are located (default: `./data/input/`)
-- **Output directory**: Where results will be saved — organized into numbered subdirectories (default: `./data/output/`)
+- **Output directory**: Where results will be saved (default: `./data/output/`)
 - **Trial ID**: Identifier for this analysis run (e.g., `baseline_study`)
 
----
+#### Step 1b: Speaker Anonymization Key
 
-### Step 1b/12: Speaker Anonymization Key
+Optionally import a pre-existing speaker ID mapping. The wizard looks for `speaker_anonymization_key.json` in the transcript directory automatically.
 
-Optionally import a pre-existing speaker ID mapping to keep participant IDs consistent across pipeline runs.
-
-- The wizard looks for `speaker_anonymization_key.json` in the transcript directory automatically
-- If found, prompts to use it; otherwise offers a custom path
-- The key is validated for correct format before use
-- New speakers not in the key are assigned `unknownparticipant_N`
-
----
-
-### Step 2/12: Speaker Role Identification
+#### Step 2: Speaker Role Identification
 
 The wizard scans transcripts and discovers speakers, then lets you designate which are therapists/facilitators vs participants.
 
-- Therapist dialogue is **excluded from theme classification** (to focus on participant-expressed content) but is preserved as read-only conversational context for adjacent participant segments
-- You can confirm the default therapist list or manually select from discovered speakers
+- Therapist dialogue is **excluded from VAAMR theme classification** but preserved as conversational context
+- Therapist dialogue is classified separately via **PURER** (see Step 4)
 
----
-
-### Step 3/12: Segmentation Parameters
-
-Configure how transcripts are split into segments. Accept defaults for most studies.
+#### Step 3: Segmentation Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -298,11 +262,9 @@ Configure how transcripts are split into segments. Accept defaults for most stud
 | `coherence_check` | Split oversized segments at natural breaks |
 | `full` | All three passes (default) |
 
----
+#### Step 4: Backend & Model (VAAMR)
 
-### Step 4/12: Backend & Model
-
-Select your LLM backend and primary model. This model is used for all LLM calls: segmentation refinement, theme classification, codebook LLM classification, and rationale summarization.
+Select your LLM backend and primary model for VAAMR classification. PURER classification uses a separate model (default: `nvidia/nemotron-3-nano-4b` for light preset, `nvidia/nemotron-3-super` for heavy).
 
 | Backend | Example Models |
 |---------|----------------|
@@ -312,49 +274,18 @@ Select your LLM backend and primary model. This model is used for all LLM calls:
 | `huggingface` | `meta-llama/Llama-4-Maverick-17B-128E-Instruct` |
 | `ollama` | `llama3`, `qwen2.5:7b` |
 
-For multi-model interrater reliability, you can optionally specify checker models here (continued in Step 8).
-
----
-
-### Step 5/12: Theme Framework
+#### Step 5: Theme Framework
 
 Choose your classification framework:
 
-- **`vammr`**: Default VAMMR framework (Vigilance, Avoidance, Mindfulness, Metacognition, Reappraisal)
+- **`vammr`**: Default VAAMR framework (Vigilance, Avoidance, Attention Regulation, Metacognition, Reappraisal)
 - **`custom`**: Load a custom JSON framework file
 
-Custom framework JSON schema:
+#### Step 6: Exemplar Utterances
 
-```json
-{
-  "framework": "My Framework",
-  "version": "1.0",
-  "description": "...",
-  "themes": [
-    {
-      "theme_id": 0,
-      "key": "stage_a",
-      "name": "Stage A",
-      "short_name": "A",
-      "prompt_name": "stage_a",
-      "definition": "...",
-      "prototypical_features": ["feature 1", "feature 2"],
-      "distinguishing_criteria": "...",
-      "exemplar_utterances": ["Example 1", "Example 2"]
-    }
-  ]
-}
-```
+Optionally customize exemplar utterances for each theme. Skip to use the framework defaults.
 
----
-
-### Step 6/12: Exemplar Utterances
-
-Optionally customize exemplar utterances for each theme. These are included in the classification prompt to guide the LLM. Skip to use the framework defaults.
-
----
-
-### Step 7/12: Codebook Classification
+#### Step 7: Codebook Classification
 
 Optionally enable multi-label codebook classification:
 
@@ -362,91 +293,74 @@ Optionally enable multi-label codebook classification:
 |-----------|-------------|---------|
 | Enable? | Turn on/off codebook classification | No |
 | Codebook preset | `phenomenology` or custom JSON path | `phenomenology` |
-| Embedding model | `Qwen/Qwen3-Embedding-8B` (best) or `all-MiniLM-L6-v2` (lightweight) | `Qwen/Qwen3-Embedding-8B` |
+| Embedding model | `Qwen/Qwen3-Embedding-8B` or `all-MiniLM-L6-v2` | `Qwen/Qwen3-Embedding-8B` |
 | Two-pass | Run embedding classification in two passes | Yes |
 
-**Note**: The embedding model is also used for semantic segmentation. `Qwen/Qwen3-Embedding-8B` is ~16 GB; `all-MiniLM-L6-v2` is 90 MB and needs no GPU.
+**Note**: The embedding model is also used for semantic segmentation.
 
----
-
-### Step 8/12: Classification Parameters
+#### Step 8: Classification Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | Number of runs | Classification passes per segment | 3 |
 | Temperature | Higher = more varied responses | 0.1 |
 
-When `n_runs >= 2`, the wizard prompts for **checker models** for multi-model interrater reliability:
+When `n_runs >= 2`, the wizard prompts for **checker models** for multi-model interrater reliability.
 
-- Run 1 always uses the primary model
-- Runs 2+ use independently specified checker models
-- Checker models act as independent raters; majority-vote consistency reflects genuine cross-model agreement
-- Default checker models for LM Studio: `google/gemma-4-31b`, `qwen/qwen3-next-80b`
-
----
-
-### Step 9/12: Confidence Thresholds
+#### Step 9: Confidence Thresholds
 
 | Tier | Threshold | Description |
 |------|-----------|-------------|
 | High | `high_confidence` (default 0.8) | Unanimous agreement + high confidence score |
 | Medium | `medium_min_confidence` (default 0.6) | Majority agreement or moderate confidence |
 | Low | below medium | Split votes or low confidence |
-| Unclassified | — | No consensus reached |
 
----
+#### Step 10: Validation Test Sets
 
-### Step 10/12: Validation Test Sets
-
-Cross-session test sets draw a stratified random sample of participant segments for human blind-coding, enabling inter-rater reliability comparison with AI classifications.
+Cross-session test sets draw a stratified random sample of participant segments for human blind-coding. The wizard generates VAAMR participant testsets by default. PURER and codebook testsets are also supported but require the respective classifiers to be enabled.
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | Enable? | Generate validation test sets | Yes |
 | Number of sets | How many independent test sets | 2 |
-| Fraction per set | Proportion of participant segments per set | 0.10 (10%) |
+| Fraction per set | Proportion of segments per set | 0.10 (10%) |
 
-Two output worksheets are produced per set: one for human coders (no AI labels) and one for AI classification comparison.
-
-You can also generate test sets from an existing run at any time:
+Test sets can also be managed post-hoc:
 ```bash
-python qra.py testsets --output-dir ./data/output/ --n-sets 3 --fraction 0.15
+# Create a PURER testset
+python qra.py testset create -o ./data/output/ --kind purer --name purer_irr_1
+
+# Refresh existing AI answer keys
+python qra.py testset refresh -o ./data/output/ --all
+
+# List existing testsets
+python qra.py testset list -o ./data/output/
 ```
 
----
+#### Step 11: Post-Pipeline Analysis
 
-### Step 11/12: Post-Pipeline Analysis
-
-Choose whether to automatically run the analysis module after the pipeline completes. When enabled, generates:
-
-- Per-participant longitudinal reports
-- Per-session summaries with prototypical exemplars
-- Per-theme (stage + codebook) analyses
-- Graph-ready CSVs for R/Python visualization
-- Longitudinal summary and transition explanation
-
-Analysis can also be run manually at any time:
+Choose whether to automatically run the analysis module after the pipeline completes. Analysis can also be run manually:
 ```bash
 python qra.py analyze --output-dir ./data/output/
 ```
 
----
+#### Step 11b: Therapist Cue Summarization
 
-### Step 11b/12: Therapist Cue Summarization
-
-When enabled, therapist dialogue between two participant segments is surfaced as a **CUE** in `state_transition_explanation.txt`, and `cue_response.txt` is generated with averaged cues grouped by transition type.
+When enabled, therapist dialogue between two participant segments is surfaced as a **CUE** in transition analysis reports.
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | Enable? | Surface therapist cues in transition analysis | Yes |
 | Max words per inline cue | Longer cues are LLM-summarized | 250 |
-| Max words per averaged block | Cap per block in `cue_response.txt` | 1000 |
+| Max words per averaged block | Cap per block in `cue_response.txt` | 500 |
 
----
+#### Step 11c: Session & Participant Summaries
 
-### Step 12/12: Save Configuration
+LLM-generated summaries of therapist language and participant language per session, shown in participant reports.
 
-Saves the complete configuration to `07_meta/qra_config.json` in the output directory. This file can be reloaded with `python qra.py run --config <path>` for fully reproducible runs.
+#### Step 12: Save Configuration
+
+Saves the complete configuration to `02_meta/qra_config.json` in the output directory.
 
 **Note**: API keys are never written to the config file. They are resolved from environment variables at runtime.
 
@@ -454,7 +368,7 @@ Saves the complete configuration to `07_meta/qra_config.json` in the output dire
 
 ## Configuration Reference
 
-### Full Config File Structure
+### Key Config Sections
 
 ```json
 {
@@ -463,62 +377,39 @@ Saves the complete configuration to `07_meta/qra_config.json` in the output dire
     "output_dir": "./data/output/",
     "trial_id": "standard",
     "run_theme_labeler": true,
+    "run_purer_labeler": true,
     "run_codebook_classifier": false,
-    "speaker_anonymization_key_path": null,
     "auto_analyze": true
   },
-  "segmentation": {
-    "max_gap_seconds": 15.0,
-    "min_words_per_sentence": 20,
-    "max_segment_duration_seconds": 60.0,
-    "min_segment_words_conversational": 60,
-    "max_segment_words_conversational": 500,
-    "use_adaptive_threshold": true,
-    "min_prominence": 0.05,
-    "broad_window_size": 7,
-    "use_topic_clustering": true,
-    "use_llm_refinement": true,
-    "llm_refinement_mode": "full",
-    "llm_ambiguity_threshold": 0.15,
-    "llm_batch_size": 5
-  },
-  "speaker_filter": {
-    "mode": "exclude",
-    "speakers": ["Therapist", "Instructor"]
-  },
+  "segmentation": { ... },
+  "speaker_filter": { ... },
   "theme_classification": {
     "backend": "lmstudio",
     "model": "nvidia/nemotron-3-super",
-    "models": [],
     "per_run_models": ["nvidia/nemotron-3-super", "google/gemma-4-31b", "qwen/qwen3-next-80b"],
     "n_runs": 3,
-    "temperature": 0.1,
-    "lmstudio_base_url": "http://127.0.0.1:1234/v1"
+    "temperature": 0.1
   },
-  "codebook_embedding": {
-    "two_pass": true,
-    "embedding_model": "Qwen/Qwen3-Embedding-8B",
-    "exemplar_import_path": null
+  "purer_classification": {
+    "backend": "lmstudio",
+    "model": "nvidia/nemotron-3-nano-4b",
+    "n_runs": 1,
+    "context_window_segments": 6
   },
-  "confidence_tiers": {
-    "high_confidence": 0.8,
-    "medium_min_confidence": 0.6
+  "purer_cue": {
+    "skip_lesson_content": true,
+    "max_lesson_words": 400,
+    "therapist_max_gap_seconds": 120.0,
+    "max_context_words": 1000
   },
   "test_sets": {
-    "enabled": true,
-    "n_sets": 2,
-    "fraction_per_set": 0.10,
-    "random_seed": 42
+    "vaamr": {"enabled": true, "name": "vaamr_testset", "n_sets": 2, "fraction_per_set": 0.10},
+    "purer": {"enabled": false, "name": "purer_testset"},
+    "codebook": {"enabled": false, "name": "codebook_testset"}
   },
-  "therapist_cues": {
-    "enabled": true,
-    "max_length_per_cue": 250,
-    "max_length_of_average_cue_responses": 1000
-  },
-  "validation": {
-    "n_per_class": 50,
-    "min_kappa": 0.70,
-    "min_agreement": 0.75
+  "content_validity": {
+    "vaamr": {"enabled": true, "name": "cv_vaamr_v1"},
+    "purer": {"enabled": false, "name": "cv_purer_v1"}
   },
   "framework": {
     "preset": "vammr"
@@ -555,75 +446,47 @@ config = PipelineConfig(
 
 #### 1. OOM (Out of Memory) Errors
 
-**Symptoms**: Process crashes with CUDA out of memory or system memory allocation errors.
-
 **Solutions**:
 - Use the lightweight embedding model: set `embedding_model` to `all-MiniLM-L6-v2`
 - Reduce `max_segment_words_conversational` to limit segment size
-- For HuggingFace backends: close other GPU-intensive applications
-- Set `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512` environment variable
+- Set `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512`
 
 #### 2. LM Studio Connection Failed
-
-**Symptoms**: Error "Connection refused" or pipeline hangs waiting for the server.
 
 **Solutions**:
 - Verify LM Studio server is running: `http://127.0.0.1:1234/v1/models` should return JSON
 - Ensure a model is loaded in LM Studio (not just downloaded)
 - Check `lmstudio_base_url` in your config matches the actual server port
-- QRA will wait up to ~9 hours for LM Studio to start — you can interrupt with Ctrl+C
 
 #### 3. HuggingFace Model Download Fails
 
-**Symptoms**: `HFCacheDownloadError` or connection timeout during model download.
-
 ```bash
 # Pre-download the embedding model manually
-python -c "
-from sentence_transformers import SentenceTransformer
-SentenceTransformer('Qwen/Qwen3-Embedding-8B', trust_remote_code=True)
-"
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('Qwen/Qwen3-Embedding-8B', trust_remote_code=True)"
 ```
 
 #### 4. LLM Returns Empty/Invalid Responses
-
-**Symptoms**: Classification results show `null` for all segments, or `agreement_level` is `none`.
 
 **Solutions**:
 - Check API key environment variables are set
 - Verify model name is correct for the chosen backend
 - Try increasing temperature slightly (e.g., 0.1 → 0.3)
-- Check context window — very long segments may exceed the model's limit; reduce `max_segment_words_conversational`
+- Reduce `max_segment_words_conversational` if segments exceed the model's context window
 
 #### 5. Speaker Names Not Normalizing Consistently
 
-**Symptoms**: Participant IDs change between runs (e.g., `participant_1` vs `participant_3`).
+**Solution**: Create a `speaker_anonymization_key.json` file in your input directory with explicit mappings. The key in `02_meta/` always takes precedence on re-runs.
 
-**Solution**: Create a `speaker_anonymization_key.json` file in your input directory with explicit mappings and provide it in Step 1b of the wizard. The key in `07_meta/` always takes precedence on re-runs.
+#### 6. PURER Classification Errors
 
-#### 6. Segmentation Produces Too Many / Too Few Segments
-
-**Solutions**:
-- Adjust `min_segment_words_conversational` and `max_segment_words_conversational`
-- Reduce `max_gap_seconds` to merge fewer utterances into each segment
-- Enable `--verbose-segmentation` to inspect the process log: `07_meta/process_log.txt`
-
-### Debug Mode
-
-Enable verbose logging to capture every LLM prompt/response and segmentation decision:
-
-```bash
-python qra.py run --config ./data/output/07_meta/qra_config.json --verbose-segmentation
-```
-
-This writes `07_meta/process_log.txt` with detailed processing information.
+If PURER classification fails during the pipeline, a `purer_classification_error.txt` is written to the output directory. The pipeline continues with VAAMR results only.
 
 ### Getting Help
 
-1. Check the output index: `output_dir/00_index.txt` (lists all files and sizes)
-2. Review the process log: `output_dir/07_meta/process_log.txt`
-3. Check flagged segments: `output_dir/05_validation/flagged_for_review.txt`
-4. Verify input data format matches the expected schema above
+1. Check the output index: `output_dir/00_index.txt`
+2. Review the process log: `output_dir/02_meta/auditable_logs/segmentation_process_log.txt`
+3. Check flagged segments: `output_dir/04_validation/flagged_for_review.txt`
+4. Check PURER failures: `output_dir/purer_classification_error.txt`
 
 ---
 
@@ -648,26 +511,15 @@ mkdir -p data/input
 python qra.py setup
 
 # 6. Review saved config
-cat ./data/output/07_meta/qra_config.json
+cat ./data/output/02_meta/qra_config.json
 
 # 7. Run pipeline
-python qra.py run --config ./data/output/07_meta/qra_config.json
+python qra.py run --config ./data/output/02_meta/qra_config.json
 
-# 8. Analyze results (if not using --auto-analyze)
+# 8. Analyze results (or use --auto-analyze in step 7)
 python qra.py analyze --output-dir ./data/output/
 
-# 9. Check output index
-cat ./data/output/00_index.txt
+# 9. Manage test sets
+python qra.py testset list -o ./data/output/
+python qra.py cv list -o ./data/output/
 ```
-
----
-
-## Next Steps
-
-After setup is complete:
-
-1. **Run a small test**: Start with 2–3 short transcripts to validate segmentation and classification quality
-2. **Review initial results**: Check `05_validation/flagged_for_review.txt` and coded transcript files in `01_transcripts/coded/`
-3. **Tune parameters**: Adjust segmentation bounds and confidence thresholds based on the test run
-4. **Scale up**: Run the full dataset after parameter tuning
-5. **Human validation**: Use the test set worksheets in `05_validation/testsets/` for inter-rater reliability studies

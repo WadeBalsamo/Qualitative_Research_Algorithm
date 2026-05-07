@@ -460,7 +460,6 @@ def _write_cv_answer_key_graded(ai_path, items, framework, theme_classification_
     client_cfg = LLMClientConfig(
         backend=tc.backend,
         api_key=tc.api_key,
-        replicate_api_token=getattr(tc, 'replicate_api_token', ''),
         model=tc.model,
         temperature=getattr(tc, 'temperature', 0.0),
         lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),

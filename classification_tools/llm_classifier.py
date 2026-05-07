@@ -215,11 +215,9 @@ def classify_purer_cue_units(
     llm_config = LLMClientConfig(
         backend=config.backend,
         api_key=config.api_key,
-        replicate_api_token=config.replicate_api_token,
         model=config.model,
         models=multi_models or [config.model],
         temperature=config.temperature,
-        max_new_tokens=config.max_new_tokens,
         ollama_host=getattr(config, 'ollama_host', '0.0.0.0'),
         ollama_port=getattr(config, 'ollama_port', 11434),
         lmstudio_base_url=getattr(config, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
@@ -573,11 +571,9 @@ def classify_segments_zero_shot(
     llm_config = LLMClientConfig(
         backend=config.backend,
         api_key=config.api_key,
-        replicate_api_token=config.replicate_api_token,
         model=config.model,
         models=multi_models or [config.model],
         temperature=config.temperature,
-        max_new_tokens=config.max_new_tokens,
         ollama_host=getattr(config, 'ollama_host', '0.0.0.0'),
         ollama_port=getattr(config, 'ollama_port', 11434),
         lmstudio_base_url=getattr(config, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),

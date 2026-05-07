@@ -34,4 +34,14 @@ references/
 references/*
 plan.md
 .gitignore
-.prompt.txt
+prompt.txt
+refactor-plan-implemented.txt
+documentation-prompt.txt
+PROCESS.md
+prompt.txt
+prompt.md
+tests/
+tests/*
+__pycache__/
+*.pyc
+__pycache__

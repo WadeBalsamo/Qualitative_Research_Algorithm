@@ -384,7 +384,6 @@ def _purer_llm_classify(config, segments, output_dir, observer):
         purer_cfg.model = tc.model
         purer_cfg.backend = tc.backend
         purer_cfg.api_key = tc.api_key
-        purer_cfg.replicate_api_token = tc.replicate_api_token
         purer_cfg.lmstudio_base_url = getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')
         purer_cfg.temperature = tc.temperature
     if not getattr(purer_cfg, 'per_run_models', None):
@@ -524,7 +523,6 @@ def _codebook_classify(config, codebook, segments, output_dir, observer):
     llm_cfg = LLMClientConfig(
         backend=tc.backend,
         api_key=tc.api_key,
-        replicate_api_token=tc.replicate_api_token,
         model=tc.model,
         temperature=tc.temperature,
         lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
@@ -676,7 +674,6 @@ def run_full_pipeline(
         refiner_llm_cfg = LLMClientConfig(
             backend=theme_cfg.backend,
             api_key=theme_cfg.api_key,
-            replicate_api_token=theme_cfg.replicate_api_token,
             model=theme_cfg.model,
             lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
             no_reasoning=True,  # Segmentation uses simple true/false prompts; CoT wastes tokens
@@ -984,7 +981,6 @@ def run_full_pipeline(
             purer_cfg.model    = tc.model
             purer_cfg.backend  = tc.backend
             purer_cfg.api_key  = tc.api_key
-            purer_cfg.replicate_api_token = tc.replicate_api_token
             purer_cfg.lmstudio_base_url   = getattr(tc, 'lmstudio_base_url',
                                                      'http://127.0.0.1:1234/v1')
             purer_cfg.temperature = tc.temperature
@@ -1257,7 +1253,6 @@ def run_full_pipeline(
         llm_cfg = LLMClientConfig(
             backend=theme_cfg.backend,
             api_key=theme_cfg.api_key,
-            replicate_api_token=theme_cfg.replicate_api_token,
             model=codebook_model,
             temperature=theme_cfg.temperature,
             lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
@@ -1443,7 +1438,6 @@ def run_full_pipeline(
             _sum_client = LLMClient(LLMClientConfig(
                 backend=tc.backend,
                 api_key=tc.api_key,
-                replicate_api_token=getattr(tc, 'replicate_api_token', ''),
                 model=tc.model,
                 temperature=0.0,
                 lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
