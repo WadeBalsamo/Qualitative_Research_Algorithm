@@ -1,14 +1,15 @@
 """
 orchestrator.py
 ---------------
-Top-level pipeline orchestrator.
+Top-level 8-stage pipeline orchestrator.
 
-Generalized from vamr_labeling/pipeline.py. Key changes:
-- Accepts a ThemeFramework parameter (not hardcoded to VA-MR)
-- Optionally runs codebook classification alongside theme labeling
-- Uses generalized shared/ validation utilities
-- Uses pipeline/ sub-modules instead of vamr_labeling/ modules
-- Accepts optional observer (for UI feedback) and validator (for human-in-the-loop)
+Coordinates transcript ingestion (Stage 1), construct operationalization
+(Stage 2), zero-shot LLM theme classification (Stage 3), PURER cue-unit
+classification (Stage 3c), codebook classification (Stage 3b), cross-
+validation (Stage 4), human validation set export (Stage 5), dataset
+assembly (Stage 6), report generation (Stage 7), and optional post-hoc
+analysis (Stage 8). Exposes modular stage_* functions for Phase 3
+standalone operation. Interacts with every process/ submodule.
 """
 
 import json
@@ -573,6 +574,311 @@ def _run_cv_stats(segments, framework, output_dir, observer):
     export_cross_validation_results(cooccurrence, associations_by_theme, _cv_params, output_dir)
 
 
+def stage_validation_artifacts(
+    config,
+    framework,
+    codebook=None,
+    *,
+    segments: Optional[List[Segment]] = None,
+    output_dir: Optional[str] = None,
+    observer: Optional[PipelineObserver] = None,
+    create_missing: bool = True,
+) -> None:
+    """
+    Stage 7 (validation sub-stage) — human classification forms, flagged-for-review,
+    validation testsets, and content-validity testset refresh.
+
+    When segments=None, loads from frozen disk state with all overlays applied.
+    When create_missing=False, only refreshes existing testsets/CV (does not create new ones).
+    """
+    if observer is None:
+        observer = SilentObserver()
+
+    _od = _resolve_output_dir(output_dir, config)
+
+    if segments is None:
+        segments = segments_io.load_segments_for_stage(
+            _od, apply=('theme', 'purer', 'codebook', 'cv'),
+        )
+
+    if framework is None:
+        from theme_framework.vaamr import get_vaamr_framework
+        framework = get_vaamr_framework()
+
+    # Human classification forms (blind-coding, no results)
+    export_human_classification_forms(segments, framework, _od)
+
+    # Dataset-wide flagged-for-review report
+    export_flagged_for_review(segments, framework, _od)
+
+    # Cross-session validation testsets
+    if config is not None:
+        ts_cfg = getattr(config, 'test_sets', None)
+        if ts_cfg is not None:
+            generate_or_refresh_validation_testsets(
+                segments,
+                framework,
+                _od,
+                test_sets_config=ts_cfg,
+                codebook_enabled=getattr(config, 'run_codebook_classifier', False),
+                codebook=codebook,
+                create_missing=create_missing,
+            )
+
+        # Content-validity testsets
+        cv_cfg = getattr(config, 'content_validity', None)
+        if cv_cfg is not None:
+            framework_purer = None
+            if getattr(getattr(cv_cfg, 'purer', None), 'enabled', False):
+                try:
+                    from theme_framework.purer import get_purer_framework
+                    framework_purer = get_purer_framework()
+                except Exception:
+                    pass
+            generate_or_refresh_content_validity_testsets(
+                _od,
+                cv_config=cv_cfg,
+                framework_vaamr=framework if getattr(getattr(cv_cfg, 'vaamr', None), 'enabled', False) else None,
+                framework_purer=framework_purer,
+                theme_classification_cfg=getattr(config, 'theme_classification', None),
+            )
+
+
+def stage_ingest(
+    config: PipelineConfig,
+    *,
+    output_dir: Optional[str] = None,
+    observer: Optional[PipelineObserver] = None,
+    force_reingest: Optional[str] = None,
+    force_reingest_all: bool = False,
+) -> List[Segment]:
+    """
+    Stage 1 — Transcript Ingestion and Segmentation.
+
+    Segments every session whose frozen segments are missing or stale.
+    Legacy projects are auto-migrated on first call.
+
+    force_reingest: session_id to force re-segmentation for (ignores frozen guard).
+    force_reingest_all: if True, re-segments all sessions.
+
+    Returns the full interleaved list of all segments (participant + therapist).
+    """
+    if observer is None:
+        observer = SilentObserver()
+
+    _od = _resolve_output_dir(output_dir, config)
+    os.makedirs(_od, exist_ok=True)
+
+    meta_dir = _paths.meta_dir(_od)
+    os.makedirs(meta_dir, exist_ok=True)
+    _auditable_dir = _paths.auditable_logs_dir(_od)
+    os.makedirs(_auditable_dir, exist_ok=True)
+
+    _verbose = getattr(config.segmentation, 'verbose_segmentation', False)
+    _plog_path = os.path.join(_auditable_dir, 'segmentation_process_log.txt') if _verbose else None
+    _llm_log_path = _paths.llm_prompts_path(_od)
+    plog = ProcessLogger(_plog_path, llm_log_path=_llm_log_path)
+
+    _existing_speaker_map, _use_unknown_prefix = _load_speaker_map(meta_dir, config)
+
+    observer.on_stage_start(
+        "Transcript Ingestion and Segmentation", "1",
+        explanation_key='ingestion',
+    )
+
+    sf = config.speaker_filter
+    excluded_speakers = sf.speakers if sf.mode == 'exclude' else []
+
+    seg_config = {
+        'embedding_model': config.segmentation.embedding_model,
+        'silence_threshold_ms': config.segmentation.silence_threshold_ms,
+        'semantic_shift_percentile': config.segmentation.semantic_shift_percentile,
+        'min_segment_words_conversational': config.segmentation.min_segment_words_conversational,
+        'max_segment_words_conversational': config.segmentation.max_segment_words_conversational,
+        'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
+        'min_words_per_sentence': getattr(config.segmentation, 'min_words_per_sentence', 10),
+        'max_segment_duration_seconds': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
+        'excluded_speakers': excluded_speakers,
+        'speaker_filter_mode': config.speaker_filter.mode,
+        'use_adaptive_threshold': getattr(config.segmentation, 'use_adaptive_threshold', True),
+        'min_prominence': getattr(config.segmentation, 'min_prominence', 0.05),
+        'broad_window_size': getattr(config.segmentation, 'broad_window_size', 7),
+        'use_topic_clustering': getattr(config.segmentation, 'use_topic_clustering', False),
+        'process_logger': plog,
+        'existing_speaker_map': _existing_speaker_map,
+        'use_unknown_prefix': _use_unknown_prefix,
+    }
+    use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', True)
+    segmenter = ConversationalSegmenter(seg_config)
+
+    llm_refiner = None
+    if use_llm_refine:
+        theme_cfg = config.theme_classification
+        refiner_llm_cfg = LLMClientConfig(
+            backend=theme_cfg.backend,
+            api_key=theme_cfg.api_key,
+            model=theme_cfg.model,
+            lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+            no_reasoning=True,
+            process_logger=plog,
+        )
+        llm_refiner = LLMSegmentationRefiner(
+            LLMClient(refiner_llm_cfg),
+            {
+                'mode': getattr(config.segmentation, 'llm_refinement_mode', 'full'),
+                'ambiguity_threshold': getattr(config.segmentation, 'llm_ambiguity_threshold', 0.15),
+                'batch_size': getattr(config.segmentation, 'llm_batch_size', 5),
+                'excluded_speakers': excluded_speakers,
+                'max_context_words': config.segmentation.max_segment_words_conversational,
+                'max_context_duration_s': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
+                'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
+                'embedding_model': config.segmentation.embedding_model,
+                'process_logger': plog,
+            },
+            speaker_normalizer=segmenter.speaker_norm,
+        )
+
+    if legacy_migration.is_legacy_project(_od):
+        _n_segs = legacy_migration.migrate_legacy_segments(_od)
+        _n_ts = legacy_migration.migrate_legacy_testsets(_od)
+        observer.on_stage_progress(
+            "Transcript Ingestion and Segmentation",
+            f"Auto-migrated {_n_segs} sessions and {_n_ts} testsets from legacy layout",
+        )
+
+    current_hash = segments_io.params_hash(config.segmentation)
+
+    session_files = discover_session_files(config.transcript_dir)
+    if not session_files:
+        observer.on_stage_progress(
+            "Transcript Ingestion and Segmentation",
+            f"Warning: No session files found in {config.transcript_dir}",
+        )
+        observer.on_stage_progress(
+            "Transcript Ingestion and Segmentation",
+            "Looking for JSON and VTT files directly...",
+        )
+        import glob as _glob
+        session_files = sorted(
+            set(_glob.glob(os.path.join(config.transcript_dir, '**/*.json'), recursive=True))
+            | set(_glob.glob(os.path.join(config.transcript_dir, '**/*.vtt'), recursive=True))
+        )
+
+    all_segments: List[Segment] = []
+    for session_file in session_files:
+        sid = _resolve_session_id(session_file)
+
+        _force_this = force_reingest_all or (force_reingest is not None and force_reingest == sid)
+
+        if not _force_this and segments_io.is_segmentation_fresh(_od, sid, current_hash):
+            observer.on_stage_progress(
+                "Transcript Ingestion and Segmentation",
+                f"Reusing frozen segments for {sid}",
+            )
+            all_segments.extend(segments_io.read_session_segments(_od, sid))
+            continue
+
+        if session_file.lower().endswith('.vtt'):
+            session_data = load_vtt_session(session_file)
+        else:
+            session_data = load_diarized_session(session_file)
+        metadata = session_data['metadata']
+        metadata.setdefault('trial_id', config.trial_id)
+
+        if session_file.lower().endswith('.vtt'):
+            stem = os.path.splitext(os.path.basename(session_file))[0]
+            parsed = parse_session_id_metadata(stem)
+            metadata.setdefault('session_id', stem)
+            metadata.setdefault('session_number', parsed['session_number'])
+            metadata.setdefault('cohort_id', parsed['cohort_id'])
+            metadata.setdefault('session_variant', parsed['session_variant'])
+        else:
+            default_session_id = os.path.basename(os.path.dirname(session_file))
+            parsed = parse_session_id_metadata(default_session_id)
+            metadata.setdefault('session_id', default_session_id)
+            metadata.setdefault('session_number', parsed['session_number'])
+            metadata.setdefault('cohort_id', parsed['cohort_id'])
+            metadata.setdefault('session_variant', parsed['session_variant'])
+        metadata.setdefault('source_file', session_file)
+
+        if llm_refiner:
+            result = segmenter.segment_session(
+                session_data['sentences'], metadata,
+                return_intermediates=True,
+            )
+            session_segments = result['segments']
+            session_segments = llm_refiner.refine(
+                session_segments,
+                result['sentences'],
+                result['sim_curve'],
+                result['embeddings'],
+                result.get('boundary_confidence'),
+                original_sentences=result.get('original_sentences'),
+            )
+        else:
+            session_segments = segmenter.segment_session(
+                session_data['sentences'], metadata
+            )
+
+        _th_gap = getattr(getattr(config, 'purer_cue', None), 'therapist_max_gap_seconds', 120.0)
+        therapist_segs = segmenter.extract_therapist_segments(
+            session_data['sentences'], metadata, max_gap_seconds=_th_gap,
+        )
+        if therapist_segs:
+            combined = sorted(session_segments + therapist_segs, key=lambda s: s.start_time_ms)
+            for i, seg in enumerate(combined):
+                seg.segment_index = i
+            session_segments = combined
+        else:
+            for i, seg in enumerate(session_segments):
+                seg.segment_index = i
+
+        import shutil as _shutil
+        _diar_dir = _paths.transcripts_diarized_dir(_od)
+        os.makedirs(_diar_dir, exist_ok=True)
+        _diar_dest = os.path.join(_diar_dir, os.path.basename(session_file))
+        if not os.path.exists(_diar_dest):
+            _shutil.copy2(session_file, _diar_dest)
+
+        segments_io.write_session_segments(_od, sid, session_segments, current_hash,
+                                           force=_force_this)
+        all_segments.extend(session_segments)
+
+    session_counts = Counter(s.session_id for s in all_segments)
+    for seg in all_segments:
+        seg.total_segments_in_session = session_counts[seg.session_id]
+
+    plog.close()
+
+    observer.on_stage_complete(
+        "Transcript Ingestion and Segmentation",
+        f"Produced {len(all_segments)} segments from {len(session_files)} sessions",
+    )
+
+    # Write speaker anonymization key while segmenter is still live (speaker_map is in-memory).
+    _speaker_key_path = os.path.join(_paths.meta_dir(_od), 'speaker_anonymization_key.json')
+    _speaker_key = {
+        orig: {'role': role, 'anonymized_id': anon_id}
+        for orig, (role, anon_id) in segmenter.speaker_norm.speaker_map.items()
+    }
+    with open(_speaker_key_path, 'w') as _f:
+        json.dump(_speaker_key, _f, indent=2)
+    _write_anonymization_key_txt(_speaker_key, _paths.anonymization_key_txt_path(_od))
+
+    # Release GPU memory held by segmenter and refiner before classification stages.
+    segmenter.release_gpu_memory()
+    if llm_refiner is not None and hasattr(llm_refiner, '_embed_model'):
+        llm_refiner._embed_model = None
+    try:
+        import gc, torch
+        gc.collect()
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    return all_segments
+
+
 def run_full_pipeline(
     config: PipelineConfig,
     framework: ThemeFramework,
@@ -613,234 +919,10 @@ def run_full_pipeline(
     print(f"  Checking embedding model: {seg_emb_model}")
     ensure_embedding_model_ready(seg_emb_model)
 
-    # Process logger (verbose segmentation mode)
-    _verbose = getattr(config.segmentation, 'verbose_segmentation', False)
-    meta_dir = _paths.meta_dir(output_dir)
-    os.makedirs(meta_dir, exist_ok=True)
-    _auditable_dir = _paths.auditable_logs_dir(output_dir)
-    os.makedirs(_auditable_dir, exist_ok=True)
-    _plog_path = os.path.join(_auditable_dir, 'segmentation_process_log.txt') if _verbose else None
-    _llm_log_path = _paths.llm_prompts_path(output_dir)
-    plog = ProcessLogger(_plog_path, llm_log_path=_llm_log_path)
-
-    # Load speaker anonymization key, with priority: meta/ > imported config
-    speaker_key_path = os.path.join(meta_dir, 'speaker_anonymization_key.json')
-    _existing_speaker_map, _use_unknown_prefix = _load_speaker_map(meta_dir, config)
-
-    # ------------------------------------------------------------------
-    # Stage 1: Transcript Ingestion and Segmentation
-    # ------------------------------------------------------------------
-    observer.on_stage_start(
-        "Transcript Ingestion and Segmentation", "1",
-        explanation_key='ingestion',
-    )
-
-    # Build speaker exclusion list from SpeakerFilterConfig
-    sf = config.speaker_filter
-    excluded_speakers = sf.speakers if sf.mode == 'exclude' else []
-
-    seg_config = {
-        'embedding_model': config.segmentation.embedding_model,
-        'silence_threshold_ms': config.segmentation.silence_threshold_ms,
-        'semantic_shift_percentile': config.segmentation.semantic_shift_percentile,
-        'min_segment_words_conversational': config.segmentation.min_segment_words_conversational,
-        'max_segment_words_conversational': config.segmentation.max_segment_words_conversational,
-        # Advanced grouping parameters
-        'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
-        'min_words_per_sentence': getattr(config.segmentation, 'min_words_per_sentence', 10),
-        'max_segment_duration_seconds': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
-        # Speaker filtering applied at sentence level before segmentation
-        'excluded_speakers': excluded_speakers,
-        'speaker_filter_mode': config.speaker_filter.mode,
-        # Adaptive threshold / dual-window / clustering
-        'use_adaptive_threshold': getattr(config.segmentation, 'use_adaptive_threshold', True),
-        'min_prominence': getattr(config.segmentation, 'min_prominence', 0.05),
-        'broad_window_size': getattr(config.segmentation, 'broad_window_size', 7),
-        'use_topic_clustering': getattr(config.segmentation, 'use_topic_clustering', False),
-        # Process logger
-        'process_logger': plog,
-        # Persistent speaker map — ensures stable participant_N IDs across runs
-        'existing_speaker_map': _existing_speaker_map,
-        # Use unknown prefix for new speakers when key is imported
-        'use_unknown_prefix': _use_unknown_prefix,
-    }
-    use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', True)
-    segmenter = ConversationalSegmenter(seg_config)
-
-    # Lazily create LLM refiner if enabled (reuses theme classification backend)
-    llm_refiner = None
-    if use_llm_refine:
-        theme_cfg = config.theme_classification
-        refiner_llm_cfg = LLMClientConfig(
-            backend=theme_cfg.backend,
-            api_key=theme_cfg.api_key,
-            model=theme_cfg.model,
-            lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
-            no_reasoning=True,  # Segmentation uses simple true/false prompts; CoT wastes tokens
-            process_logger=plog,
-        )
-        llm_refiner = LLMSegmentationRefiner(
-            LLMClient(refiner_llm_cfg),
-            {
-                'mode': getattr(config.segmentation, 'llm_refinement_mode', 'full'),
-                'ambiguity_threshold': getattr(config.segmentation, 'llm_ambiguity_threshold', 0.15),
-                'batch_size': getattr(config.segmentation, 'llm_batch_size', 5),
-                'excluded_speakers': excluded_speakers,
-                'max_context_words': config.segmentation.max_segment_words_conversational,
-                'max_context_duration_s': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
-                'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
-                'embedding_model': config.segmentation.embedding_model,
-                'process_logger': plog,
-            },
-            speaker_normalizer=segmenter.speaker_norm,
-        )
-
-    # LEGACY-MIGRATION CALL SITE — Phase 3 cleanup target
-    if legacy_migration.is_legacy_project(output_dir):
-        _n_segs = legacy_migration.migrate_legacy_segments(output_dir)
-        _n_ts = legacy_migration.migrate_legacy_testsets(output_dir)
-        observer.on_stage_progress(
-            "Transcript Ingestion and Segmentation",
-            f"Auto-migrated {_n_segs} sessions and {_n_ts} testsets from legacy layout",
-        )
-
-    current_hash = segments_io.params_hash(config.segmentation)
-
-    session_files = discover_session_files(config.transcript_dir)
-    if not session_files:
-        observer.on_stage_progress(
-            "Transcript Ingestion and Segmentation",
-            f"Warning: No session files found in {config.transcript_dir}",
-        )
-        observer.on_stage_progress(
-            "Transcript Ingestion and Segmentation",
-            "Looking for JSON and VTT files directly...",
-        )
-        import glob as _glob
-        session_files = sorted(
-            set(_glob.glob(os.path.join(config.transcript_dir, '**/*.json'), recursive=True))
-            | set(_glob.glob(os.path.join(config.transcript_dir, '**/*.vtt'), recursive=True))
-        )
-
-    all_segments: List[Segment] = []
-    for session_file in session_files:
-        sid = _resolve_session_id(session_file)
-
-        if segments_io.is_segmentation_fresh(output_dir, sid, current_hash):
-            observer.on_stage_progress(
-                "Transcript Ingestion and Segmentation",
-                f"Reusing frozen segments for {sid}",
-            )
-            all_segments.extend(segments_io.read_session_segments(output_dir, sid))
-            continue
-
-        if session_file.lower().endswith('.vtt'):
-            session_data = load_vtt_session(session_file)
-        else:
-            session_data = load_diarized_session(session_file)
-        metadata = session_data['metadata']
-        metadata.setdefault('trial_id', config.trial_id)
-
-        # For VTT files, use the filename stem as session_id and parse cohort/session metadata
-        if session_file.lower().endswith('.vtt'):
-            stem = os.path.splitext(os.path.basename(session_file))[0]
-            parsed = parse_session_id_metadata(stem)
-            metadata.setdefault('session_id', stem)
-            metadata.setdefault('session_number', parsed['session_number'])
-            metadata.setdefault('cohort_id', parsed['cohort_id'])
-            metadata.setdefault('session_variant', parsed['session_variant'])
-        else:
-            default_session_id = os.path.basename(os.path.dirname(session_file))
-            parsed = parse_session_id_metadata(default_session_id)
-            metadata.setdefault('session_id', default_session_id)
-            metadata.setdefault('session_number', parsed['session_number'])
-            metadata.setdefault('cohort_id', parsed['cohort_id'])
-            metadata.setdefault('session_variant', parsed['session_variant'])
-        metadata.setdefault('source_file', session_file)
-
-        if llm_refiner:
-            result = segmenter.segment_session(
-                session_data['sentences'], metadata,
-                return_intermediates=True,
-            )
-            session_segments = result['segments']
-            session_segments = llm_refiner.refine(
-                session_segments,
-                result['sentences'],
-                result['sim_curve'],
-                result['embeddings'],
-                result.get('boundary_confidence'),
-                original_sentences=result.get('original_sentences'),
-            )
-        else:
-            session_segments = segmenter.segment_session(
-                session_data['sentences'], metadata
-            )
-
-        # Interleave therapist segments so _collect_therapist_cue() can find
-        # them between participant segment indices in the master dataset.
-        # Use therapist_max_gap_seconds (from purer_cue config) so long pauses
-        # within guided meditation or psychoeducation don't create artificial splits.
-        _th_gap = getattr(getattr(config, 'purer_cue', None), 'therapist_max_gap_seconds', 120.0)
-        therapist_segs = segmenter.extract_therapist_segments(
-            session_data['sentences'], metadata, max_gap_seconds=_th_gap,
-        )
-        if therapist_segs:
-            combined = sorted(session_segments + therapist_segs, key=lambda s: s.start_time_ms)
-            for i, seg in enumerate(combined):
-                seg.segment_index = i
-            session_segments = combined
-        else:
-            for i, seg in enumerate(session_segments):
-                seg.segment_index = i
-
-        import shutil as _shutil
-        _diar_dir = _paths.transcripts_diarized_dir(output_dir)
-        os.makedirs(_diar_dir, exist_ok=True)
-        _diar_dest = os.path.join(_diar_dir, os.path.basename(session_file))
-        if not os.path.exists(_diar_dest):
-            _shutil.copy2(session_file, _diar_dest)
-
-        segments_io.write_session_segments(output_dir, sid, session_segments, current_hash)
-        all_segments.extend(session_segments)
-
-    session_counts = Counter(s.session_id for s in all_segments)
-    for seg in all_segments:
-        seg.total_segments_in_session = session_counts[seg.session_id]
-
-    plog.close()
-
-    observer.on_stage_complete(
-        "Transcript Ingestion and Segmentation",
-        f"Produced {len(all_segments)} segments from {len(session_files)} sessions",
-    )
-
-    # ------------------------------------------------------------------
-    # GPU memory hand-off: segmenter → codebook classifier
-    #
-    # ConversationalSegmenter holds ~16 GB of VRAM (Qwen3-8B float16).
-    # If Stage 3b uses the same model ID we steal that instance rather
-    # than loading a second 16-GB copy, which would OOM a 24-GB GPU.
-    # If a different model is configured we release the segmenter's model
-    # and clear the CUDA cache before Stage 3b loads its own model.
-    # ------------------------------------------------------------------
-    _preloaded_embedding_model = None
-    if config.run_codebook_classifier:
-        seg_model_id = getattr(config.segmentation, 'embedding_model', None)
-        cb_model_id = config.codebook_embedding.embedding_model
-        if seg_model_id and seg_model_id == cb_model_id and hasattr(segmenter, 'embedding_model'):
-            _preloaded_embedding_model = segmenter.embedding_model
-            segmenter.embedding_model = None
-        else:
-            segmenter.release_gpu_memory()
-        if llm_refiner is not None and hasattr(llm_refiner, '_embed_model'):
-            llm_refiner._embed_model = None
-        try:
-            import gc, torch
-            gc.collect()
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
+    # Stage 1 — delegated to extracted stage_ingest function.
+    # speaker_key_path is retained here because Stage 7 writes the anonymization key.
+    speaker_key_path = os.path.join(_paths.meta_dir(output_dir), 'speaker_anonymization_key.json')
+    all_segments = stage_ingest(config, output_dir=output_dir, observer=observer)
 
     # ------------------------------------------------------------------
     # Stage 2: Construct Operationalization
@@ -894,48 +976,10 @@ def run_full_pipeline(
     # Stage 3: Zero-Shot LLM Theme Classification
     # ------------------------------------------------------------------
     if config.run_theme_labeler:
-        observer.on_stage_start(
-            "Zero-Shot LLM Theme Classification", "3",
-            explanation_key='theme_classification',
+        all_segments = stage_classify_theme(
+            config, framework,
+            segments=all_segments, output_dir=output_dir, observer=observer,
         )
-
-        theme_config = config.theme_classification
-        theme_config.output_dir = _paths.auditable_logs_dir(output_dir)
-
-        segments_to_classify = _apply_speaker_filter(all_segments, config.speaker_filter)
-        n_filtered = len(all_segments) - len(segments_to_classify)
-        if n_filtered:
-            observer.on_stage_progress(
-                "Zero-Shot LLM Theme Classification",
-                f"Speaker filter ({config.speaker_filter.mode}): "
-                f"{len(segments_to_classify)} of {len(all_segments)} segments selected "
-                f"({n_filtered} excluded)",
-            )
-
-        results_all, metadata_all = classify_segments_zero_shot(
-            segments=segments_to_classify,
-            framework=framework,
-            config=theme_config,
-            resume_from=config.resume_from,
-            process_logger=plog,
-        )
-
-        # Response Parsing
-        observer.on_stage_progress(
-            "Zero-Shot LLM Theme Classification",
-            "Parsing LLM responses...",
-        )
-
-        name_to_id = framework.build_name_to_id_map()
-        all_segments, parse_stats = parse_all_results(
-            results_all, all_segments, name_to_id
-        )
-
-        observer.on_stage_complete(
-            "Zero-Shot LLM Theme Classification",
-            "Theme classification and response parsing complete",
-        )
-
     else:
         observer.on_stage_progress(
             "Zero-Shot LLM Theme Classification",
@@ -944,236 +988,12 @@ def run_full_pipeline(
 
     # ------------------------------------------------------------------
     # Stage 3c: PURER Cue-Unit Classification (optional)
-    #
-    # Classifies therapist cue blocks — one PURER label per therapist
-    # response between two consecutive participant turns — rather than
-    # classifying every individual therapist segment in isolation.
-    #
-    # Workflow:
-    #   1. Identify all participant segments with VAMMR labels (Stage 3 done)
-    #   2. For each consecutive pair (from, to), collect all therapist segments
-    #      whose timestamps fall between them → one cue block
-    #   3. If skip_lesson_content=True and the cue text exceeds max_lesson_words
-    #      → skip (long didactic stretch, not an interactive response cue)
-    #   4. Build exchange context for each cue (N preceding back-and-forths)
-    #   5. Classify each cue block with PURER as a single unit
-    #   6. Write the resulting label back to all constituent therapist segments
     # ------------------------------------------------------------------
     _has_therapists = any(s.speaker == 'therapist' for s in all_segments)
     if config.run_purer_labeler and _has_therapists:
-        observer.on_stage_start(
-            "PURER Cue-Unit Classification", "3c",
-            explanation_key='purer_classification',
+        all_segments = stage_classify_purer(
+            config, segments=all_segments, output_dir=output_dir, observer=observer,
         )
-
-        from theme_framework.purer import get_purer_framework
-        purer_framework = get_purer_framework()
-
-        purer_cfg    = config.purer_classification
-        purer_cue    = getattr(config, 'purer_cue', None)
-        purer_cfg.output_dir = _paths.auditable_logs_dir(output_dir)
-
-        # Inherit backend/model/credentials from VAAMR when purer_cfg was not
-        # explicitly configured (e.g. old configs without purer_classification key).
-        tc = config.theme_classification
-        _purer_default_model = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'
-        if not purer_cfg.model or purer_cfg.model == _purer_default_model:
-            purer_cfg.model    = tc.model
-            purer_cfg.backend  = tc.backend
-            purer_cfg.api_key  = tc.api_key
-            purer_cfg.lmstudio_base_url   = getattr(tc, 'lmstudio_base_url',
-                                                     'http://127.0.0.1:1234/v1')
-            purer_cfg.temperature = tc.temperature
-        if not getattr(purer_cfg, 'per_run_models', None):
-            inherited = list(getattr(tc, 'per_run_models', []))
-            if inherited:
-                purer_cfg.per_run_models = inherited
-                purer_cfg.n_runs = len(inherited)
-            else:
-                # No multi-model setup: degrade to single-run
-                purer_cfg.n_runs = 1
-
-        skip_lessons      = getattr(purer_cue, 'skip_lesson_content', False)
-        max_lesson_words  = getattr(purer_cue, 'max_lesson_words', 400)
-        max_ctx_words     = getattr(purer_cue, 'max_context_words', 1000)
-        th_gap_secs       = getattr(purer_cue, 'therapist_max_gap_seconds', 120.0)
-        # Context window: how many preceding segments to include.
-        # Uses purer_classification.context_window_segments (default 6) rather
-        # than the hardcoded VAMMR default of 2, giving PURER wider conversational
-        # context through the same _build_context_block() logic.
-        ctx_window        = getattr(purer_cfg, 'context_window_segments', 6)
-
-        # Sort the interleaved list by start time for reliable context lookup
-        sorted_segs = sorted(all_segments, key=lambda s: s.start_time_ms)
-
-        # Build a fast segment_id → index map over the sorted list so we can
-        # call _build_context_block(sorted_segs, from_idx, ctx_window) cheaply.
-        seg_id_to_idx = {s.segment_id: i for i, s in enumerate(sorted_segs)}
-
-        # Gather participant segments that have VAMMR labels, grouped by session
-        from collections import defaultdict as _dd
-        segs_by_session: dict = _dd(list)
-        for s in sorted_segs:
-            if s.speaker == 'participant' and s.primary_stage is not None:
-                segs_by_session[s.session_id].append(s)
-
-        # Index therapist segments by session for fast range lookup
-        th_by_session: dict = _dd(list)
-        for s in sorted_segs:
-            if s.speaker == 'therapist':
-                th_by_session[s.session_id].append(s)
-
-        # Build cue units across all sessions
-        cue_units = []        # list of dicts passed to classify_purer_cue_units
-        cue_constituents = [] # parallel list: list of therapist Segments per cue
-
-        skipped_lessons = 0
-        skipped_empty   = 0
-
-        for session_id, p_segs in segs_by_session.items():
-            th_segs = th_by_session.get(session_id, [])
-            if not th_segs:
-                skipped_empty += len(p_segs) - 1
-                continue
-
-            for i in range(len(p_segs) - 1):
-                from_seg = p_segs[i]
-                to_seg   = p_segs[i + 1]
-
-                # Collect therapist segments whose timestamps fall in this window.
-                # Use the therapist_max_gap_seconds to collapse gaps within the
-                # window (sequential therapist sentences are already merged by
-                # extract_therapist_segments, so this is mostly for safety).
-                between = [
-                    t for t in th_segs
-                    if t.start_time_ms < to_seg.start_time_ms    # segment starts before window ends
-                    and t.end_time_ms > from_seg.end_time_ms      # segment ends after window starts
-                ]
-
-                if not between:
-                    skipped_empty += 1
-                    continue
-
-                # Concatenate all therapist turns in the window
-                cue_text = '\n'.join(t.text.strip() for t in between if t.text.strip())
-                cue_words = len(cue_text.split())
-
-                if skip_lessons and cue_words > max_lesson_words:
-                    skipped_lessons += 1
-                    continue
-
-                # Build conversational context using the same _build_context_block
-                # logic as VAMMR participant classification, but with the wider
-                # ctx_window and larger max_ctx_words configured for PURER.
-                from_idx = seg_id_to_idx.get(from_seg.segment_id, -1)
-                if from_idx >= 0:
-                    exchange_ctx = _build_context_block_for_purer(
-                        sorted_segs, from_idx,
-                        window_size=ctx_window,
-                        max_words=max_ctx_words,
-                    )
-                else:
-                    exchange_ctx = ''
-
-                # Create a synthetic Segment representing the whole cue block
-                synthetic_id = f'purer_cue_{from_seg.segment_id}_to_{to_seg.segment_id}'
-                synthetic = Segment(
-                    segment_id=synthetic_id,
-                    trial_id=from_seg.trial_id,
-                    session_id=session_id,
-                    session_number=from_seg.session_number,
-                    cohort_id=from_seg.cohort_id,
-                    speaker='therapist',
-                    text=cue_text,
-                    word_count=cue_words,
-                    start_time_ms=between[0].start_time_ms,
-                    end_time_ms=between[-1].end_time_ms,
-                )
-
-                cue_units.append({
-                    'segment':       synthetic,
-                    'from_segment':  from_seg,
-                    'to_segment':    to_seg,
-                    'context_block': exchange_ctx,
-                })
-                cue_constituents.append(between)
-
-        observer.on_stage_progress(
-            "PURER Cue-Unit Classification",
-            f"{len(cue_units)} cue blocks to classify  "
-            f"({skipped_empty} empty, {skipped_lessons} lesson-content skipped)",
-        )
-
-        if cue_units:
-            try:
-                purer_results, _ = _classify_purer_cue_units(
-                    cue_units=cue_units,
-                    framework=purer_framework,
-                    config=purer_cfg,
-                    resume_from=config.resume_from,
-                    process_logger=plog,
-                )
-            except Exception as _purer_err:
-                import traceback as _tb
-                _err_path = os.path.join(output_dir, 'purer_classification_error.txt')
-                with open(_err_path, 'w') as _ef:
-                    _ef.write(f"PURER Stage 3c failed: {_purer_err}\n\n")
-                    _ef.write(_tb.format_exc())
-                observer.on_stage_complete(
-                    "PURER Cue-Unit Classification",
-                    f"PURER FAILED — {_purer_err}. "
-                    f"Error written to purer_classification_error.txt. "
-                    "Pipeline continues with VAAMR results only.",
-                )
-                purer_results = {}
-
-            # Propagate the cue-level PURER label to every constituent
-            # therapist segment so that all downstream report code that reads
-            # purer_primary from individual segments continues to work.
-            total_propagated = 0
-            for cu, constituents in zip(cue_units, cue_constituents):
-                sid = cu['segment'].segment_id
-                result = purer_results.get(sid)
-                if not isinstance(result, dict):
-                    continue
-                consensus = result.get('consensus', {})
-                primary   = consensus.get('primary_stage')
-                if primary is None:
-                    continue
-                for th_seg in constituents:
-                    th_seg.purer_primary            = primary
-                    th_seg.purer_secondary          = consensus.get('secondary_stage')
-                    th_seg.purer_confidence_primary = consensus.get('primary_confidence', 0.0)
-                    th_seg.purer_confidence_secondary = consensus.get('secondary_confidence')
-                    th_seg.purer_justification      = consensus.get('justification', '')
-                    th_seg.purer_run_consistency    = consensus.get('n_agree', 0)
-                    th_seg.purer_agreement_level    = consensus.get('agreement_level')
-                    n_agree  = consensus.get('n_agree', 0)
-                    n_raters = consensus.get('n_raters', 1) or 1
-                    th_seg.purer_agreement_fraction = n_agree / n_raters
-                    th_seg.purer_needs_review       = bool(consensus.get('needs_review', False))
-                    th_seg.purer_rater_ids          = result.get('rater_ids') or []
-                    th_seg.purer_rater_votes        = result.get('rater_votes') or []
-                    total_propagated += 1
-
-            if purer_results:
-                n_classified = sum(
-                    1 for cu in cue_units
-                    if purer_results.get(cu['segment'].segment_id, {})
-                                 .get('consensus', {})
-                                 .get('primary_stage') is not None
-                )
-                observer.on_stage_complete(
-                    "PURER Cue-Unit Classification",
-                    f"PURER complete — {n_classified}/{len(cue_units)} cue blocks classified, "
-                    f"{total_propagated} constituent therapist segments labeled",
-                )
-        else:
-            observer.on_stage_complete(
-                "PURER Cue-Unit Classification",
-                "No cue blocks to classify (all cues empty or skipped)",
-            )
-
     elif config.run_purer_labeler and not _has_therapists:
         observer.on_stage_progress(
             "PURER Cue-Unit Classification",
@@ -1185,22 +1005,16 @@ def run_full_pipeline(
             "Skipping PURER classification (run_purer_labeler=False)",
         )
 
+
     # ------------------------------------------------------------------
     # Stage 3b: Codebook Classification (optional)
     # ------------------------------------------------------------------
     if config.run_codebook_classifier:
-        observer.on_stage_start(
-            "Codebook Classification", "3b",
-            explanation_key='codebook_classification',
-        )
-
         if codebook is None:
             from codebook.phenomenology_codebook import get_phenomenology_codebook
             codebook = get_phenomenology_codebook()
-
-        # Persist codebook definitions so standalone `qra analyze` can build
-        # the human-readable codebook reference report without the in-memory object.
-        _cb_def_path = os.path.join(meta_dir, 'codebook_definitions.json')
+        # Persist codebook definitions for downstream `qra analyze` (no equivalent in _codebook_classify).
+        _cb_def_path = os.path.join(_paths.meta_dir(output_dir), 'codebook_definitions.json')
         if not os.path.exists(_cb_def_path):
             _cb_defs = {
                 'name': codebook.name,
@@ -1222,134 +1036,18 @@ def run_full_pipeline(
             }
             with open(_cb_def_path, 'w') as _f:
                 json.dump(_cb_defs, _f, indent=2)
-
-        # Set up codebook output directory and exemplar export path
-        codebook_output_dir = _paths.codebook_raw_dir(output_dir)
-        os.makedirs(codebook_output_dir, exist_ok=True)
-        config.codebook_embedding.exemplar_export_path = os.path.join(
-            codebook_output_dir, 'found_exemplar_utterances.json'
-        )
-
-        # Embedding classification
-        observer.on_stage_progress("Codebook Classification", "Running embedding-based classification...")
-        cb_segments = _apply_speaker_filter(all_segments, config.speaker_filter)
-
-        embedding_classifier = EmbeddingCodebookClassifier(config.codebook_embedding)
-        if _preloaded_embedding_model is not None:
-            # Reuse the model already loaded by the segmenter — no second GPU allocation
-            embedding_classifier._model = _preloaded_embedding_model
-            _dim = _preloaded_embedding_model.get_embedding_dimension()
-            embedding_classifier._embed_dim = _dim or 4096
-        embedding_results = embedding_classifier.classify_segments(
-            cb_segments, codebook
-        )
-
-        # LLM classification — reuses the same backend/model as theme classification
-        observer.on_stage_progress("Codebook Classification", "Running LLM-based classification...")
-        theme_cfg = config.theme_classification
-        # Use the primary model (not per-run models) for codebook LLM classification.
-        # Per-run model rotation is a theme-classification feature; codebook uses one model.
-        codebook_model = theme_cfg.model
-        llm_cfg = LLMClientConfig(
-            backend=theme_cfg.backend,
-            api_key=theme_cfg.api_key,
-            model=codebook_model,
-            temperature=theme_cfg.temperature,
-            lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
-            ollama_host=getattr(theme_cfg, 'ollama_host', '0.0.0.0'),
-            ollama_port=getattr(theme_cfg, 'ollama_port', 11434),
-            process_logger=plog,
-        )
-        llm_client = LLMClient(llm_cfg)
-        # Set the output dir on the codebook_llm config so checkpoints land in the right place
-        config.codebook_llm.output_dir = codebook_output_dir
-        llm_classifier = LLMCodebookClassifier(llm_client, config.codebook_llm)
-        try:
-            llm_results = llm_classifier.classify_segments(
-                cb_segments, codebook, output_dir=codebook_output_dir,
-            )
-        except Exception as _llm_exc:
-            import datetime as _dt
-            _fail_note = os.path.join(codebook_output_dir, 'codebook_llm_FAILED.txt')
-            with open(_fail_note, 'w') as _f:
-                _f.write(
-                    f"Codebook LLM classification failed at {_dt.datetime.now().isoformat()}\n\n"
-                    f"Error: {_llm_exc}\n"
-                )
-            print(f"\n  [WARNING] Codebook LLM classification failed: {_llm_exc}")
-            print(f"  Failure note written to: {_fail_note}")
-            print("  Continuing with embedding-only codebook results.\n")
-            observer.on_stage_progress(
-                "Codebook Classification",
-                f"LLM classification failed — using embedding-only results (see {_fail_note})",
-            )
-            llm_results = {}
-
-        # Ensemble reconciliation
-        observer.on_stage_progress("Codebook Classification", "Running ensemble reconciliation...")
-        ensemble = CodebookEnsemble(config.codebook_ensemble)
-        ensemble_results = ensemble.reconcile(embedding_results, llm_results)
-
-        # Populate Segment codebook fields
-        for seg in all_segments:
-            if seg.segment_id in ensemble_results:
-                ens = ensemble_results[seg.segment_id]
-                seg.codebook_labels_embedding = sorted(
-                    a.code_id for a in embedding_results.get(seg.segment_id, [])
-                )
-                seg.codebook_labels_llm = sorted(
-                    a.code_id for a in llm_results.get(seg.segment_id, [])
-                )
-                seg.codebook_labels_ensemble = ens.final_codes
-                seg.codebook_disagreements = [
-                    d['code_id'] for d in ens.disagreement_details
-                ]
-                seg.codebook_confidence = {
-                    a.code_id: a.confidence for a in ens.final_assignments
-                }
-
-
-        n_coded = sum(
-            1 for s in all_segments
-            if s.codebook_labels_ensemble and len(s.codebook_labels_ensemble) > 0
-        )
-
-        observer.on_stage_complete(
-            "Codebook Classification",
-            f"Codebook classification complete: {n_coded} segments with codes",
+        all_segments = stage_classify_codebook(
+            config, codebook,
+            segments=all_segments, output_dir=output_dir, observer=observer,
         )
 
     # ------------------------------------------------------------------
     # Stage 4: Cross-Validation (optional, when both theme and codebook)
     # ------------------------------------------------------------------
     if config.run_theme_labeler and config.run_codebook_classifier:
-        observer.on_stage_start(
-            "Cross-Validation (Theme <-> Codebook)", "4",
-            explanation_key='cross_validation',
-        )
-
-        segments_df = pd.DataFrame([vars(s) for s in all_segments])
-        cooccurrence = compute_theme_codebook_cooccurrence(
-            segments_df, framework,
-            codebook_label_column='codebook_labels_ensemble',
-            theme_label_column='primary_stage',
-        )
-        _cv_params = {'min_lift': 1.5, 'min_count': 3, 'top_n': 10}
-        associations_by_theme = summarize_theme_code_associations(
-            cooccurrence, **_cv_params
-        )
-
-        # Export results
-        cv_output, _ = export_cross_validation_results(
-            cooccurrence, associations_by_theme, _cv_params, output_dir
-        )
-        observer.on_stage_progress(
-            "Cross-Validation (Theme <-> Codebook)",
-            f"Exported cross-validation results to {os.path.relpath(cv_output, output_dir)}",
-        )
-        observer.on_stage_complete(
-            "Cross-Validation (Theme <-> Codebook)",
-            "Cross-validation complete",
+        all_segments = stage_cross_validation(
+            config, framework,
+            segments=all_segments, output_dir=output_dir, observer=observer,
         )
 
     # ------------------------------------------------------------------
@@ -1414,17 +1112,14 @@ def run_full_pipeline(
     # ------------------------------------------------------------------
     observer.on_stage_start("Report Generation", "7", explanation_key='report_generation')
 
-    # Write speaker anonymization key atomically with coded transcripts so both
-    # always reflect the same run.  Writing here (not at Stage 1) means a
-    # failed run between ingestion and report generation cannot leave a stale
-    # key that mismatches older coded transcripts.
-    speaker_key = {
-        original: {'role': role, 'anonymized_id': anon_id}
-        for original, (role, anon_id) in segmenter.speaker_norm.speaker_map.items()
-    }
-    with open(speaker_key_path, 'w') as _f:
-        json.dump(speaker_key, _f, indent=2)
-    _write_anonymization_key_txt(speaker_key, _paths.anonymization_key_txt_path(output_dir))
+    # Speaker anonymization key was written by stage_ingest; just log its presence.
+    speaker_key: dict = {}
+    if os.path.isfile(speaker_key_path):
+        try:
+            with open(speaker_key_path) as _f:
+                speaker_key = json.load(_f)
+        except (OSError, json.JSONDecodeError):
+            pass
     observer.on_stage_progress(
         "Report Generation",
         "  Speaker anonymization key: 02_meta/speaker_anonymization_key.json + anonymization_key.txt",
@@ -1443,7 +1138,6 @@ def run_full_pipeline(
                 lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
                 ollama_host=getattr(tc, 'ollama_host', '0.0.0.0'),
                 ollama_port=getattr(tc, 'ollama_port', 11434),
-                process_logger=plog,
             ))
         except Exception:
             _sum_client = None
@@ -1460,57 +1154,15 @@ def run_full_pipeline(
             f"  Coded transcript: 01_transcripts/coded/coded_transcript_{session_id}.txt",
         )
 
-    # Human classification forms (blind-coding, no results)
-    export_human_classification_forms(all_segments, framework, output_dir)
+    # Human forms, flagged-for-review, testsets, CV testsets
+    stage_validation_artifacts(
+        config, framework, codebook,
+        segments=all_segments, output_dir=output_dir, observer=observer,
+    )
     observer.on_stage_progress(
         "Report Generation",
-        "  Human classification forms: 04_validation/human_classification_<session>.txt",
+        "  Human forms, flagged-for-review, and testset/CV answer keys written.",
     )
-
-    # Dataset-wide flagged-for-review report
-    export_flagged_for_review(all_segments, framework, output_dir)
-    observer.on_stage_progress(
-        "Report Generation",
-        "  Flagged for review: 04_validation/flagged_for_review.txt",
-    )
-
-    # Cross-session validation test sets (VAAMR, PURER, codebook)
-    ts_cfg = getattr(config, 'test_sets', None)
-    if ts_cfg is not None and ts_cfg.any_enabled():
-        generate_or_refresh_validation_testsets(
-            all_segments,
-            framework,
-            output_dir,
-            test_sets_config=ts_cfg,
-            codebook_enabled=config.run_codebook_classifier,
-            codebook=codebook,
-        )
-        observer.on_stage_progress(
-            "Report Generation",
-            "  Validation test sets: 04_validation/testsets/",
-        )
-
-    # Content-validity testsets (VAAMR, PURER)
-    cv_cfg = getattr(config, 'content_validity', None)
-    if cv_cfg is not None and cv_cfg.any_enabled():
-        framework_purer = None
-        if cv_cfg.purer.enabled:
-            try:
-                from theme_framework.purer import get_purer_framework
-                framework_purer = get_purer_framework()
-            except Exception:
-                pass
-        generate_or_refresh_content_validity_testsets(
-            output_dir,
-            cv_config=cv_cfg,
-            framework_vaamr=framework if cv_cfg.vaamr.enabled else None,
-            framework_purer=framework_purer,
-            theme_classification_cfg=config.theme_classification if config.run_theme_labeler else None,
-        )
-        observer.on_stage_progress(
-            "Report Generation",
-            "  Content-validity testsets: 04_validation/content_validity/",
-        )
 
     # Per-transcript stats (one JSON per session)
     export_per_transcript_stats(master_df, framework, codebook, output_dir)
@@ -1554,7 +1206,7 @@ def run_full_pipeline(
             from analysis.runner import run_analysis
             observer.on_stage_start("Results Analysis", "8",
                                     explanation_key='results_analysis')
-            analysis_result = run_analysis(output_dir, verbose=False, llm_log_path=_llm_log_path)
+            analysis_result = run_analysis(output_dir, verbose=False, llm_log_path=_paths.llm_prompts_path(output_dir))
             observer.on_stage_complete(
                 "Results Analysis",
                 f"Analysis complete: {len(analysis_result['files_generated'])} files "
@@ -1572,9 +1224,6 @@ def run_full_pipeline(
         write_index(output_dir)
     except Exception:
         pass
-
-    # Close LLM prompts log after all pipeline stages (including auto-analyze) complete.
-    plog.close_llm_log()
 
     return master_df
 
