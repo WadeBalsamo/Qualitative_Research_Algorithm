@@ -6,7 +6,11 @@ LLM classification of transcript segments (theme and codebook).
 Contains both:
 - Theme classification: single-label zero-shot using any ThemeFramework
 - Codebook classification: multi-label LLM-based using any Codebook
+- PURER cue-unit classification: therapist response classification at the dialogue turn level
 
+All modules use a unified interface with the llm_client for backend compatibility
+and majority_vote for inter-rater reliability aggregation. Integrates with theme_framework
+for framework definitions and data_structures for segment objects.
 """
 
 import json

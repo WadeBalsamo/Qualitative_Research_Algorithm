@@ -113,7 +113,13 @@ Exemplar utterances are drawn from the MORE-for-LRP clinical trial corpus
 recordings of the MORE qualitative study analyzed during framework development.
 """
 
+
+
+
+
 from .theme_schema import ThemeFramework, ThemeDefinition
+
+VAAMR_FRAMEWORK_VERSION = "4.0"
 
 
 def get_vaamr_framework() -> ThemeFramework:
@@ -362,7 +368,7 @@ def get_vaamr_framework() -> ThemeFramework:
         theme_id=2,
         key='attention',
         name='Attention Regulation',
-        short_name='Attention',
+        short_name='Attention Regulation',
         prompt_name='attention regulation',
         definition=(
             "The developing capacity to direct attention as an adaptive skill: stable, "
@@ -776,7 +782,7 @@ def get_vaamr_framework() -> ThemeFramework:
     )
 
     return ThemeFramework(
-        name="VAAMR — Vigilance, Avoidance, Attention Regulation, Metacognition, Reappraisal",
+        name="VAAMR",
         version="4.0",
         description=(
             "Five-stage framework of contemplative transformation in "

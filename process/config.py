@@ -109,7 +109,7 @@ class ContentValiditySpec:
 class ContentValidityConfig:
     """Multi-kind content-validity configuration."""
     vaamr: ContentValiditySpec = field(
-        default_factory=lambda: ContentValiditySpec(enabled=True, name='cv_vaamr_v1')
+        default_factory=lambda: ContentValiditySpec(enabled=False, name='cv_vaamr_v1')
     )
     purer: ContentValiditySpec = field(
         default_factory=lambda: ContentValiditySpec(enabled=False, name='cv_purer_v1')
@@ -256,6 +256,13 @@ class PipelineConfig:
         _blank_secrets(data)
         return data
 
+    def to_dict(self) -> Dict:
+        return self.to_json()
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'PipelineConfig':
+        return cls.from_json(data)
+
     @classmethod
     def from_json(cls, data: Dict) -> 'PipelineConfig':
         """Reconstruct PipelineConfig from a dict (e.g., loaded JSON).
@@ -284,6 +291,14 @@ class PipelineConfig:
 
         kwargs = {}
         valid_field_names = {f.name for f in fields(cls)}
+
+        # Flatten legacy working-branch format: top-level PipelineConfig fields
+        # may be nested under a "pipeline" key.
+        if 'pipeline' in data and isinstance(data['pipeline'], dict):
+            merged = dict(data)
+            merged.update(data['pipeline'])
+            del merged['pipeline']
+            data = merged
 
         for key, value in data.items():
             if key not in valid_field_names:

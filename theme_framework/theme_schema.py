@@ -42,6 +42,10 @@ class ThemeFramework:
     categories: Optional[Dict[str, List[str]]] = None
 
     @property
+    def stages(self) -> 'List[ThemeDefinition]':
+        return self.themes
+
+    @property
     def num_themes(self) -> int:
         return len(self.themes)
 

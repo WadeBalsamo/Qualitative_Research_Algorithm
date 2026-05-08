@@ -76,6 +76,8 @@ ThemeDefinition objects.
 
 from theme_framework.theme_schema import ThemeDefinition, ThemeFramework
 
+PURER_FRAMEWORK_VERSION = "3.0"
+
 
 _PURER_DEFINITIONS = [
     # =========================================================================
@@ -370,7 +372,7 @@ _PURER_DEFINITIONS = [
     ThemeDefinition(
         theme_id=3,
         key='E',
-        name='Educate and Build Expectancy',
+        name='Educate/Expectancy',
         short_name='Educate',
         prompt_name='Educate and Build Expectancy (E)',
         definition=(

@@ -135,9 +135,12 @@ def assemble_master_dataset(
     df.to_json(output_path, orient='records', lines=True)
 
     # Print class distribution
-    participant_labeled = df[
-        (df['speaker'] == 'participant') & (df['final_label'].notna())
-    ]
+    if not df.empty and 'speaker' in df.columns:
+        participant_labeled = df[
+            (df['speaker'] == 'participant') & (df['final_label'].notna())
+        ]
+    else:
+        participant_labeled = pd.DataFrame()
     print("\nFinal label distribution:")
     if len(participant_labeled) > 0:
         print(participant_labeled['final_label'].value_counts().sort_index())

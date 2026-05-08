@@ -4,11 +4,18 @@ qra.py
 ------
 Unified CLI entry point for the QRA classification pipeline.
 
-Subcommands:
-    setup     Interactive wizard that saves a config JSON
-    run       Execute pipeline (always auto mode)
-    analyze   Post-hoc analysis on an existing output directory
-    testsets  Generate validation test set worksheets from existing output
+Manages all command-line operations for the Qualitative Research Algorithm:
+- setup: Interactive configuration wizard that generates qra_config.json
+- run: Executes complete 8-stage pipeline (ingest → classify → assemble → analyze)
+- analyze: Runs post-hoc analysis on existing output directory
+- ingest: Segments transcripts only (Phase 3, Stage 1)
+- classify: Runs theme/PURER/codebook classifiers on frozen segments (Phase 3, Stages 3/3b/3c)
+- assemble: Joins frozen segments with overlays into master_segments.jsonl (Phase 3, Stage 6)
+- testset: Manages validation test sets (create/refresh/list)
+- cv: Manages content-validity test sets (create/refresh/list)
+- validate: Refreshes human forms and answer keys without re-classifying
+
+Interacts with all modules in process/, classification_tools/, analysis/, and theme_framework/.
 """
 
 import argparse
@@ -115,6 +122,12 @@ def _add_common_args(parser: argparse.ArgumentParser):
         '--no-auto-analyze',
         action='store_true',
         help='Skip the results analysis stage after the pipeline completes',
+    )
+    parser.add_argument(
+        '--zero-shot',
+        action='store_true',
+        help='Run classification with zero-shot prompts (no exemplar/subtle/adversarial '
+             'utterances in prompt). Per-invocation; not persisted to config.',
     )
 
     # Zero-shot test mode
@@ -314,20 +327,23 @@ def _flatten_wizard_config(data: dict) -> dict:
     # Lift pipeline-level keys to top level
     pipeline = data.get('pipeline', {})
     for key in ('transcript_dir', 'output_dir', 'trial_id',
-                'run_theme_labeler', 'run_codebook_classifier'):
+                'run_theme_labeler', 'run_codebook_classifier',
+                'auto_analyze', 'speaker_anonymization_key_path'):
         if key in pipeline:
             result[key] = pipeline[key]
 
     # Pass through sub-config dicts directly
     for key in ('segmentation', 'speaker_filter', 'theme_classification', 'codebook_embedding',
                 'codebook_llm', 'codebook_ensemble', 'validation', 'confidence_tiers',
-                'test_sets', 'purer_classification', 'purer_cue'):
+                'test_sets', 'content_validity', 'purer_classification', 'purer_cue',
+                'therapist_cues', 'session_summaries', 'participant_summaries'):
         if key in data:
             result[key] = data[key]
 
     # Copy top-level keys that are already flat
-    for key in ('resume_from', 'autoresearch_dir', 'run_purer_labeler'):
-        if key in data:
+    for key in ('resume_from', 'autoresearch_dir', 'run_purer_labeler',
+                'auto_analyze', 'speaker_anonymization_key_path'):
+        if key in data and key not in result:
             result[key] = data[key]
 
     return result
@@ -365,6 +381,11 @@ def cmd_run(args):
         return
 
     config = _build_config(args)
+
+    # --zero-shot: per-invocation override (applies to both VAAMR + PURER for `run`).
+    if getattr(args, 'zero_shot', False):
+        config.theme_classification.zero_shot_prompt = True
+        config.purer_classification.zero_shot_prompt = True
 
     # Load framework
     framework_arg = args.framework
@@ -944,6 +965,14 @@ def cmd_classify(args):
     config = _build_config(args)
     framework = _load_framework(getattr(args, 'framework', None))
 
+    # --zero-shot: per-invocation override scoped by --what.
+    if getattr(args, 'zero_shot', False):
+        if what in ('theme', 'all'):
+            config.theme_classification.zero_shot_prompt = True
+        if what in ('purer', 'all'):
+            config.purer_classification.zero_shot_prompt = True
+        print("  Zero-shot prompting: ON (no exemplars in prompt)")
+
     print(f"\nQRA CLASSIFY  --what {what}")
     print(f"  Output: {output_dir}")
     print(f"  Sessions: {len(sessions)}")
@@ -1447,7 +1476,8 @@ def _prompt_yes_no_simple(label: str, default: bool = True) -> bool:
 # Main
 # =========================================================================
 
-def main():
+def _build_parser() -> tuple:
+    """Build and return the top-level ArgumentParser (extracted for testability)."""
     parser = argparse.ArgumentParser(
         prog='qra',
         description='QRA: Qualitative Research Algorithm pipeline',
@@ -1536,6 +1566,13 @@ Examples:
     classify_parser.add_argument('--backend', default=None)
     classify_parser.add_argument('--model', default=None)
     classify_parser.add_argument('--api-key', default=None)
+    classify_parser.add_argument(
+        '--zero-shot',
+        action='store_true',
+        help='Run classification with zero-shot prompts (definitions only, no exemplar/'
+             'subtle/adversarial utterances). Per-invocation; not persisted to config. '
+             'Scope follows --what (theme → VAAMR only, purer → PURER only, all → both).',
+    )
 
     # ---- assemble (Phase 3) ----
     assemble_parser = subparsers.add_parser(
@@ -1643,10 +1680,16 @@ Examples:
     _cv_list = cv_sub.add_parser('list', help='List content-validity testsets')
     _cv_list.add_argument('--output-dir', '-o', required=True)
 
+    return parser, testset_parser, cv_parser
+
+
+def main():
+    parser, testset_parser, cv_parser = _build_parser()
     args = parser.parse_args()
 
     if args.command is None:
-        parser.print_help()
+        from process.interactive_tui import run_tui
+        run_tui()
         sys.exit(0)
 
     try:

@@ -22,7 +22,7 @@ class ThemeClassificationConfig:
     # Required when n_runs is 2 or 3 (wizard enforces this).
     per_run_models: List[str] = field(default_factory=list)
     temperature: float = 0.0
-    n_runs: int = 3
+    n_runs: int = 1
     randomize_codebook: bool = True
     api_key: str = field(default_factory=lambda: os.environ.get('OPENROUTER_API_KEY', ''))
     backend: str = 'lmstudio'  # 'openrouter', 'ollama', or 'lmstudio'

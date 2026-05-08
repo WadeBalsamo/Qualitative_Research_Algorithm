@@ -5,7 +5,9 @@ Core data structures for the qualitative research classification pipeline.
 
 The Segment dataclass is the atomic unit shared across both the
 theme_labeler (single-label stage classification) and codebook_classifier
-(multi-label phenomenology coding) modules.
+(multi-label phenomenology coding) modules. Contains all fields used by
+the pipeline stages, including theme labels, PURER labels, codebook labels,
+and validation information.
 """
 
 from dataclasses import dataclass, field
