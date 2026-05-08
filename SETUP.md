@@ -100,27 +100,8 @@ export OPENROUTER_API_KEY=sk-or-v1-your-key-here
 ```
 
 The key is resolved automatically from the environment at runtime; it is never saved to the config JSON.
-
-### Option C: Replicate (Cloud API)
-
-```bash
-export REPLICATE_API_TOKEN=r8_your-token-here
-```
-
-### Option D: HuggingFace (Local GPU)
-
-```bash
-# Check your GPU
-nvidia-smi
-
-# Install PyTorch with CUDA
-pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu124
-
-# Verify GPU
-python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"
-```
-
-### Option E: Ollama (Local)
+ 
+### Option C: Ollama (Local)
 
 ```bash
 # macOS/Linux
