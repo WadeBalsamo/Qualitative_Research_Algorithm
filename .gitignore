@@ -40,8 +40,11 @@ documentation-prompt.txt
 PROCESS.md
 prompt.txt
 prompt.md
-tests/
-tests/*
 __pycache__/
 *.pyc
 __pycache__
+.clawd-todos.json
+/references/
+/references
+/tests
+theme-framework-refactor.md

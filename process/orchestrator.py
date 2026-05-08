@@ -3,13 +3,20 @@ orchestrator.py
 ---------------
 Top-level 8-stage pipeline orchestrator.
 
-Coordinates transcript ingestion (Stage 1), construct operationalization
-(Stage 2), zero-shot LLM theme classification (Stage 3), PURER cue-unit
-classification (Stage 3c), codebook classification (Stage 3b), cross-
-validation (Stage 4), human validation set export (Stage 5), dataset
-assembly (Stage 6), report generation (Stage 7), and optional post-hoc
-analysis (Stage 8). Exposes modular stage_* functions for Phase 3
-standalone operation. Interacts with every process/ submodule.
+Coordinates the complete QRA classification pipeline across eight stages:
+
+Stage 1: Transcript Ingestion & Segmentation - Loads and segments diarized transcripts
+Stage 2: Construct Operationalization - Builds framework definitions and content-validity test sets
+Stage 3: Theme Classification (VAAMR) - Zero-shot LLM classification of participant segments
+Stage 3b: Codebook Classification - Multi-label codebook classification using embedding + LLM ensemble
+Stage 3c: PURER Classification - Therapist cue-unit classification at the dialogue turn level
+Stage 4: Cross-Validation - Computes theme-code co-occurrence statistics
+Stage 5: Human Validation Set Export - Creates frozen human coding evaluation sets
+Stage 6: Dataset Assembly - Joins frozen segments with all overlays into master_segments.jsonl
+Stage 7: Report Generation - Produces coded transcripts, stats reports, and visualization data
+Stage 8: Analysis (optional) - Generates longitudinal summaries and figures
+
+Exposes modular stage_* functions for Phase 3 standalone operation. Interacts with every process/ submodule.
 """
 
 import json
@@ -1058,11 +1065,14 @@ def run_full_pipeline(
         explanation_key='human_validation_set',
     )
 
-    segments_df = pd.DataFrame([vars(s) for s in all_segments])
-    participant_labeled = segments_df[
-        (segments_df['speaker'] == 'participant')
-        & (segments_df['primary_stage'].notna())
-    ]
+    if all_segments:
+        segments_df = pd.DataFrame([vars(s) for s in all_segments])
+        participant_labeled = segments_df[
+            (segments_df['speaker'] == 'participant')
+            & (segments_df['primary_stage'].notna())
+        ]
+    else:
+        participant_labeled = pd.DataFrame()
 
     if len(participant_labeled) > 0:
         eval_set = create_balanced_evaluation_set(
@@ -1143,7 +1153,9 @@ def run_full_pipeline(
             _sum_client = None
 
     # Per-session coded transcripts
-    for session_id, session_df in master_df.groupby('session_id'):
+    for session_id, session_df in (master_df.groupby('session_id')
+                                   if not master_df.empty and 'session_id' in master_df.columns
+                                   else []):
         segs_for_session = [s for s in all_segments if s.session_id == session_id]
         export_coded_transcript(
             segs_for_session, framework, codebook, output_dir, session_id,
