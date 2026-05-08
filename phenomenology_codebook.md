@@ -1,0 +1,1492 @@
+---
+codebook: Meditation Phenomenology Codebook
+version: "1.0"
+constant: PHENOMENOLOGY_CODEBOOK_VERSION
+codebook_description: >-
+  Qualitative codebook for phenomenological experiences associated with meditation practice, 
+  covering affective, cognitive, perceptual, sense-of-self, social, and somatic domains. 
+  Based on the Varieties of Contemplative Experience (VCE) codebook. Contains 54 codes across 
+  6 domains. Multi-label, applied to participant segments as optional enrichment to VAAMR stage labels.
+domains:
+  Affective:
+    - Affective Flattening, Emotional Detachment, or Alexithymia
+    - Affective Lability
+    - Agitation or Irritability
+    - Change in Doubt, Faith, Trust, or Commitment
+    - Crying or Laughing
+    - Depression, Dysphoria, or Grief
+    - Empathic or Affiliative Changes
+    - Fear, Anxiety, Panic, or Paranoia
+    - Positive Affect
+    - Rage, Anger, or Aggression
+    - Re-experiencing of Traumatic Memories or Affect Without Recollection
+    - Self-Conscious Emotions
+    - Suicidality
+  Cognitive:
+    - Change in Executive Functioning
+    - Change in Worldview
+    - Clarity
+    - Delusional, Irrational, or Paranormal Beliefs
+    - Disintegration of Conceptual Meaning Structures
+    - Mental Stillness
+    - Meta-Cognition
+    - Scrupulosity
+    - Vivid Imagery
+  Perceptual:
+    - Derealization
+    - Dissolution of Objects or Phenomena
+    - Distortions in Time or Space
+    - Hallucinations, Visions, or Illusions
+    - Perceptual Hypersensitivity
+    - Somatosensory Changes
+  "Sense of Self":
+    - Change in Self-Other or Self-World Boundaries
+    - Change in Narrative Self
+    - Change in Sense of Embodiment
+    - Loss of Sense of Agency
+    - Loss of Sense of Ownership
+    - Loss of Sense of Basic Self
+  Social:
+    - Change in Relationship to Meditation Community
+    - Increased Sociality
+    - Integration Following Retreat or Intensive Practice
+    - Occupational Impairment
+    - Social Impairment
+  Somatic:
+    - Appetitive or Weight Changes
+    - Breathing Changes
+    - Cardiac Changes
+    - Dizziness or Syncope
+    - Fatigue or Weakness
+    - Gastrointestinal Distress or Nausea
+    - Headaches or Head Pressure
+    - Involuntary Movements
+    - Pain
+    - Parasomnias
+    - Pressure, Tension or Release of Pressure, Tension
+    - Sexuality-Related Changes
+    - Sleep Changes
+    - Somatic Energy
+    - Thermal Changes
+---
+
+<!--
+PARSER CONTRACT
+===============
+This file is the source-of-truth definition for the Meditation Phenomenology Codebook.
+It is designed to be parsed into the Python data structures defined in
+codebook_schema.py (CodeDefinition, Codebook).
+
+YAML FRONTMATTER  →  Codebook scalar fields + module constant name.
+
+## Codebook Notes  →  Module docstring (maps-to: module-docstring).
+  Any ## heading that does NOT match the code category heading pattern is ignored
+  for CodeDefinition extraction.
+
+## Domain Name  →  Section grouping (for document organization; the "domains" 
+                   YAML field lists domain memberships).
+  Parser regex: ^## (.+)$  (any heading under this level is category heading)
+
+### CategoryName  →  Start of a CodeDefinition block.
+  Parser regex: ^### (.+)$
+  Code entry heading must match a key in the domains YAML field.
+
+Within each Code block, parse in this fixed order:
+
+  ```yaml block```          code_id (slugified category), category, domain, 
+                            description  →  CodeDefinition scalar fields
+                            (code_id auto-slugified from category if not explicit)
+
+  ### Subcodes              bullet list  →  subcodes
+                            (each "- item" line → one list element)
+
+  ### Inclusive Criteria    prose paragraph(s)  →  inclusive_criteria
+                            (normalize: collapse whitespace/newlines to single space,
+                            strip leading/trailing whitespace)
+
+  ### Exclusive Criteria    prose paragraph(s)  →  exclusive_criteria
+                            (same normalization as Inclusive Criteria)
+-->
+
+## Codebook Notes
+
+<!-- maps-to: module-docstring -->
+
+Meditation Phenomenology Codebook — 54 codes, 6 domains:
+
+| Domain | Code Count |
+|--------|-----------|
+| Affective | 13 |
+| Cognitive | 9 |
+| Perceptual | 6 |
+| Sense of Self | 6 |
+| Social | 5 |
+| Somatic | 15 |
+
+Based on the Varieties of Contemplative Experience (VCE) codebook. Applied as optional multi-label enrichment to participant segments after VAAMR stage classification. Multi-label: a single segment may receive multiple codes across multiple domains.
+
+---
+
+## Affective
+
+### Affective Flattening, Emotional Detachment, or Alexithymia
+
+```yaml
+code_id: affective-flattening-emotional-detachment-or-alexithymia
+category: Affective Flattening, Emotional Detachment, or Alexithymia
+domain: Affective
+description: A narrowed or diminished affective range, a lack of affective charge, and/or an inability to identify/distinguish emotions.
+```
+
+### Subcodes
+
+- Diminished affective range
+- Emotional detachment
+- Alexithymia
+
+### Inclusive Criteria
+
+Descriptions of affective flattening indicate a narrowed affective range (the opposite of Affective Lability). Affective flattening may also reflect a lack of affect arising and/or the absence of a typical affective response to an experience that usually evokes one. Emotional detachment may be expressed as a disidentification with the emotional charge of experiences or circumstances, having emotions but not feeling them, and/or having emotions only as body sensations without a sense of affect. Descriptions of alexithymia indicate an inability to identify, understand, process, describe or distinguish emotions, or to distinguish between the somatic dimensions of emotions and other bodily sensations. Double-code with Mental Stillness when affective flattening or emotional detachment is described as also having a cognitive dimension, for instance in relation to descriptions of "equanimity" associated with progress in meditation. Double-code with Meta-Cognition when emotional detachment is associated with cognitive distancing.
+
+### Exclusive Criteria
+
+Emotional detachment, flattening, or alexithymia that arises due to causal circumstances other than meditation practice. Distinguish from Depression, which is characterized by low and negative mood rather than an absence of affect or a diminished affective range. Differentiate from (or double-code with) Anhedonia (lack of interest or motivation), which is a Conative change.
+
+---
+
+### Affective Lability
+
+```yaml
+code_id: affective-lability
+category: Affective Lability
+domain: Affective
+description: Rapid shifts in mood, mood swings, increased range of emotions, or strong, unwarranted reactions to situations.
+```
+
+### Subcodes
+
+- Mood swings
+- Increased emotional range
+- Strong emotional reactions
+
+### Inclusive Criteria
+
+Being emotionally reactive or triggered, or strong shifts in mood. This may manifest as strong reactions to situations that would not have previously elicited such a reaction, or a greater range of both positive and negative emotions than ordinarily experienced. May be double-coded with Agitation or Irritability, or Rage, Anger, or Aggression, or conversely with Positive Affect.
+
+### Exclusive Criteria
+
+Affective lability that is mentioned prior to meditation experience or that can be attributed to other causes. For unusually strong or unwarranted reactions to situations arising beyond the context of meditation, do not code instances in which meditation-related changes are not playing an influencing role. For moods that are primarily ruminative or depressive in nature, code as Depression.
+
+---
+
+### Agitation or Irritability
+
+```yaml
+code_id: agitation-or-irritability
+category: Agitation or Irritability
+domain: Affective
+description: An agitated or irritable mood, possibly accompanied by restlessness, distractibility, or uneasiness.
+```
+
+### Subcodes
+
+- Agitation
+- Irritability
+- Restlessness
+
+### Inclusive Criteria
+
+Agitation and irritability are types of affective reactivity and may include descriptions of restlessness, distractibility, or uneasiness. Agitation and restlessness described with somatic language would still be coded here if an affective dimension is mentioned and would be double-coded with Somatic Energy or other Somatic domain categories in cases of intense psychomotor agitation. Other common double-codes include Increased Cognitive Processing, Perceptual Hypersensitivity, Affective Lability, Rage, or Fear or Anxiety.
+
+### Exclusive Criteria
+
+Excitation or a restless mind not attributed to meditation practice. Distinguish from Rage, Anger, or Aggression, which is higher in intensity and degree and more likely to be associated with behavioral change, though these may be coded in proximity if agitation and irritability develop into anger, for instance.
+
+---
+
+### Change in Doubt, Faith, Trust, or Commitment
+
+```yaml
+code_id: change-in-doubt-faith-trust-or-commitment
+category: Change in Doubt, Faith, Trust, or Commitment
+domain: Affective
+description: Changes (increase or decrease) in doubt, faith, trust, or commitment in relation to religious doctrines, practices, goals, community, or in relation to oneself in any dimension of life, such as self-confidence.
+```
+
+### Subcodes
+
+- Change in doubt
+- Change in faith
+- Change in trust
+- Change in commitment
+
+### Inclusive Criteria
+
+May include an increase or decrease of faith with respect to religious matters, such as particular teachings or worldviews. Also includes doubt in one's ability to attain enlightenment or to be a successful meditator or, conversely, descriptions of self-assurance and self-confidence in practice-related or other domains. May be double-coded with Change in Worldview, Change in Relationship to Meditation Community, or categories in the Conative domain, such as Change in Motivation or Goal.
+
+### Exclusive Criteria
+
+Changes in doubt, faith, trust, or commitment prior to meditation or regarding issues unrelated to meditation or to one's identity as a meditation practitioner.
+
+---
+
+### Crying or Laughing
+
+```yaml
+code_id: crying-or-laughing
+category: Crying or Laughing
+domain: Affective
+description: Crying and laughing, and associated vocalizations.
+```
+
+### Subcodes
+
+- Crying
+- Laughing
+- Associated vocalizations
+
+### Inclusive Criteria
+
+Crying or laughing—for any reason or none, associated with emotional content or not, and either during formal meditation or not—that is causally attributed to meditation. Include descriptions of associated vocalizations such as wailing, moaning, or others. May be double-coded with Affective Lability, Depression, or Positive Affect.
+
+### Exclusive Criteria
+
+Crying or laughing that is not attributed (in whole or in part) to meditation practice. For instance, crying or laughing due to an environmental stimulus or social situation that is not impacted in some way by the effects of meditation.
+
+---
+
+### Depression, Dysphoria, or Grief
+
+```yaml
+code_id: depression-dysphoria-or-grief
+category: Depression, Dysphoria, or Grief
+domain: Affective
+description: Low, depressed, or sad moods, usually coupled with physical and behavioral manifestations that may or may not affect normal functioning. Depression includes feelings of intense sadness, emptiness, hopelessness, helplessness, guilt, or unworthiness. Dysphoria includes feelings of unease or dissatisfaction with life. Grief includes feelings of sorrow or longing associated with loss.
+```
+
+### Subcodes
+
+- Depression
+- Dysphoria
+- Grief
+
+### Inclusive Criteria
+
+May also be characterized by a problems concentrating on the task at hand, forgetfulness, insomnia, loss of appetite, and/or general loss of energy, drive, or motivation. Thus, where relevant, double-code with Change in Executive Functioning, Self-Conscious Emotions, Anhedonia, Appetitive Changes or Sleep Changes. Grief in particular may be double-coded with Change in Relationship to Meditation Community, Change in Doubt, Faith, Trust, or Commitment or changes in the Conative Domain.
+
+### Exclusive Criteria
+
+Feelings of lowered mood without explicit connection to meditation practice. Loss of meaning or doubt are coded under Change in Doubt. Differentiate from (or double-code with) Anhedonia (lack of interest or motivation), which is a Conative change.
+
+---
+
+### Empathic or Affiliative Changes
+
+```yaml
+code_id: empathic-or-affiliative-changes
+category: Empathic or Affiliative Changes
+domain: Affective
+description: Increased or decreased empathic connection to other people or to environmental stimuli.
+```
+
+### Subcodes
+
+- Increased empathic connection
+- Decreased empathic connection
+
+### Inclusive Criteria
+
+Descriptions of increased empathic connection may include references to social emotions (love, attachment, union), valuing social communities or interpersonal relationships and, at the more extreme end, affective sensitivity and contagion (being impacted by or taking on the feelings of others). Descriptions of decreased empathic connection may include references to indifference about or increased aversion to social situations or relationships, in which case consider double-coding with Affective Flattening. May be double-coded with categories in the Social Domain (if behavioral changes are also reported) and/or Change in Self-Other Boundaries (when the change in boundaries also results in affective contagion).
+
+### Exclusive Criteria
+
+Empathic or affiliative changes not attributed to or exaggerated by meditation practice. Affective contagion (reports of taking on the emotions of others) may need to be differentiated from or double-coded with both Perceptual Hypersensitivity as well as Change in Self-Other Boundaries, a category in the Sense of Self Domain.
+
+---
+
+### Fear, Anxiety, Panic, or Paranoia
+
+```yaml
+code_id: fear-anxiety-panic-or-paranoia
+category: Fear, Anxiety, Panic, or Paranoia
+domain: Affective
+description: Feelings of fright or distress—with or without an external referent—and their corresponding physiological and behavior responses.
+```
+
+### Subcodes
+
+- Fear
+- Anxiety
+- Panic
+- Paranoia
+
+### Inclusive Criteria
+
+Some feeling of fright or distress—ranging from anxiety to fear, terror, panic, or paranoia—usually stimulated by a phenomenon that the subject is unused to, whether an external stimulus or a dimension of their meditation experience. Fear should be coded when it is reported as a response to other meditation-related changes in this codebook. However, fear or terror may also appear as a strong feeling on its own, without known or specified content or cause. Also includes intense negative emotions such as panic or paranoia and their behavioral changes that emerge from unpleasant experiences attributed wholly or in part as effects of meditation. Consider double-coding with Delusional, Irrational, or Paranormal Beliefs when paranoia influences thought content.
+
+### Exclusive Criteria
+
+Fear, anxiety, panic, or paranoia prior to meditation-related experiences, arising outside of the context of meditation, or arising due to another identifiable cause that does not become amplified or exaggerated by meditation. General references to being afraid of/about something not accompanied by a clear affective phenomenology should not be included.
+
+---
+
+### Positive Affect
+
+```yaml
+code_id: positive-affect
+category: Positive Affect
+domain: Affective
+description: A state of positive or elevated mood or energy level, ranging on a continuum from low to high arousal.
+```
+
+### Subcodes
+
+- Positive affect
+
+### Inclusive Criteria
+
+Positive affect attributed to meditation practice. Possible descriptions of positive feelings ranging from low to high levels of arousal include: peace, joy, love, gratitude, happiness, awe, wonder, excitation, enthusiasm, effusiveness, bliss, euphoria, ecstasy, rapture, grandeur, grandiosity, mania, or others. At the high arousal level, particularly with mania, positive affect may be accompanied by intense productivity or insight, in which case a double-code with Change in Worldview may be warranted. Mania may also be reported in conjunction with delusions of grandeur (or other delusions), or impairment in rational thinking such that one acts with overconfidence or disregard for ones safety, finances, etc., in which cases double-coding with Increased Cognitive Processing or Delusional, Irrational, or Paranormal Beliefs may be warranted.
+
+### Exclusive Criteria
+
+Positive affect stimulated by external circumstances without clear association with meditative practice. General references to an experience being positive that don't clearly reference an elevated mood or other criteria denoting an affective change.
+
+---
+
+### Rage, Anger, or Aggression
+
+```yaml
+code_id: rage-anger-or-aggression
+category: Rage, Anger, or Aggression
+domain: Affective
+description: Feelings of intense displeasure or a retaliatory response, often caused by some adverse stimulus provoking an uncomfortable emotion.
+```
+
+### Subcodes
+
+- Rage
+- Anger
+- Aggression
+
+### Inclusive Criteria
+
+Extreme feelings of displeasure, retaliation, anger or aggression, either in reaction to a stimulus or in the absence of a known specific stimulus. Rage, anger, and aggression may arise on their own as primary phenomenology, or they may be in response to meditation-related experiences or how such experiences were managed. A double-code with Affective Lability is warranted when the response is stronger than it would be under typical conditions. May also be double-coded with or coded in proximity to Agitation or Irritability. May lead to or correspond with various changes in the Social Domain.
+
+### Exclusive Criteria
+
+Feelings of anger arising outside of a meditation-related context, in the past (before onset), or for reasons not causally linked to meditation. Differentiate Agitation or Irritability, which is marked primarily by reactivity, from Rage, Anger or Aggression, which is higher in intensity and degree and has different behavioral manifestations.
+
+---
+
+### Re-experiencing of Traumatic Memories or Affect Without Recollection
+
+```yaml
+code_id: re-experiencing-of-traumatic-memories-or-affect-without-recollection
+category: Re-experiencing of Traumatic Memories or Affect Without Recollection
+domain: Affective
+description: Either a recollection of some past traumatic event in the subject's life that may or may not have been repressed, and which is generally associated with strong emotions, or the upwelling of strong emotions without any corresponding memory, content, thought or other identifiable stimulus.
+```
+
+### Subcodes
+
+- Traumatic memory recall
+- Emotional upwelling without recollection
+
+### Inclusive Criteria
+
+Re-experiencing of traumatic memories or traumatic flashbacks include references to the recollection of some past traumatic event in the subject's life. These can also be coupled with the explicit mention of its relation to powerful emotional content such as grief, terror, or shame, in which case double-coding for those may also be warranted. Affect without recollection includes references to an experience of an unexpected, or sudden onset or upwelling of emotions without an identifiable stimulus or typical causal factor, such as a memory, a thought, or an evocative external circumstance. When re-experiencing is associated with specific locations in the body, double-code for (Release of) Pressure, Tension or Somatic Energy, accordingly.
+
+### Exclusive Criteria
+
+Reference to some past event in the subject's life but without mention of it being emotionally intense or traumatic. Reference to emotions or affective response which have clear causal relationship to thoughts, memories, or external circumstances and are not unexpected. Re-experiencing of trauma or emotion not attributed to meditation practices and/or arising in non-practice contexts would also be excluded.
+
+---
+
+### Self-Conscious Emotions
+
+```yaml
+code_id: self-conscious-emotions
+category: Self-Conscious Emotions
+domain: Affective
+description: Emotions relating to one's sense of self and identity, as well as the awareness of reactions of others to oneself, whether real or imagined.
+```
+
+### Subcodes
+
+- Guilt
+- Shame
+- Embarrassment
+- Envy
+- Pride
+
+### Inclusive Criteria
+
+Include descriptions of notable increases or decreases in self-conscious emotions (guilt, shame, embarrassment, envy or pride) caused or intensified by meditation practice. Code self-conscious emotions arising as primary phenomenology, as responses to other specific meditation-related experiences, or as responses to how those experiences were responded to. May be double-coded with categories in the Social Domain when impacting the practitioner's relationship to social, occupational, or meditation communities.
+
+### Exclusive Criteria
+
+Self-conscious emotions arising prior to meditation or in a context in no way related to meditation-related experiences should not be coded. Changes related to self-confidence or self-esteem should be coded under Change in Doubt, Faith, Trust, or Commitment.
+
+---
+
+### Suicidality
+
+```yaml
+code_id: suicidality
+category: Suicidality
+domain: Affective
+description: Suicide, an affect-driven wanting to die, not wanting to continue with life, wishing to no longer being alive, thinking about dying and killing oneself.
+```
+
+### Subcodes
+
+- Passive suicidal ideation
+- Active suicidal ideation
+
+### Inclusive Criteria
+
+Includes thoughts of contemplating the ending of one's own life, whether they arise briefly and spontaneously or are a consequence of other affective states. Passive ideation includes wanting to die, thinking about no longer wanting to be alive or taking one's own life. Active ideation includes making specific plans for taking one's own life or making an attempt at taking one's own life.
+
+### Exclusive Criteria
+
+This is distinct from dealing with pain, coping, adapting to become comfortable with the discomfort or disability, or not being able to live the life that one had wanted due to external circumstances or illnesses.
+
+---
+
+## Cognitive
+
+### Change in Executive Functioning
+
+```yaml
+code_id: change-in-executive-functioning
+category: Change in Executive Functioning
+domain: Cognitive
+description: Either an inability to perform cognitive functions of decision making, concentration, and memory that the person used to be able to perform, or an enhanced ability in these domains of executive functioning.
+```
+
+### Subcodes
+
+- Cognitive change
+- Memory impairment
+- Enhanced cognition
+
+### Inclusive Criteria
+
+A noticeable increase or decrease in any capacity to think, make decisions, memory recall, or the performance of other cognitive tasks. Such changes may have been noted by the subject themselves or by another observer (such as family, friends, coworkers, etc.). Diminished capacities in executive functioning also co-occur with extreme forms of Mental Stillness. When the person is prevented from normal functioning, work, or the ability to relate to others, double-code with Social or Occupational Impairment.
+
+### Exclusive Criteria
+
+Any symptomology related to emotions, such as Depression, would not belong in this category, unless it also affected cognitive abilities, in which case double-coding would be appropriate. Disambiguate from Disintegration of Conceptual Meaning Structures, otherwise known as cognitive defusion.
+
+---
+
+### Change in Worldview
+
+```yaml
+code_id: change-in-worldview
+category: Change in Worldview
+domain: Cognitive
+description: A shift in ways of thinking about the nature of self or reality, including a change in understanding or confusion about the nature of self or reality.
+```
+
+### Subcodes
+
+- Shift in self-perception
+- Change in understanding of reality
+
+### Inclusive Criteria
+
+A change in worldview as a result of contemplative practice, for instance a change in relationship to or understanding of Buddhist teachings, doctrines, or views. Change in worldview may arise during a content-driven practice, a content-minimal practice, or following a practice session so long as the influence of prior meditation is apparent. May have many associated effects, including changes in the Conative domain such as Change in Effort or Change in Motivation or Goal, changes in the Sense of Self Domain, or Scrupulosity. May also be double-coded with Change in Relationship to Meditation Community.
+
+### Exclusive Criteria
+
+Change in worldview due to learning or an interpersonal influence not associated with meditation or the associated teachings that are implemented in practice. Reports of beliefs held independent of meditation-related changes or interpretations of prior phenomenology should not be coded. Ordinary confusion (not pertaining to views of self or reality) should be coded under Change in Executive Functioning. Causal attributions made to the effect of worldviews on meditation-experiences would be coded as Influencing Factors.
+
+---
+
+### Clarity
+
+```yaml
+code_id: clarity
+category: Clarity
+domain: Cognitive
+description: Reports of clarity or lucidity as a mental state, quality of attention, or quality of consciousness, in which there is a heightened cognition of relevant stimuli and a diminished interference from non-relevant stimuli.
+```
+
+### Subcodes
+
+- Mental clarity
+- Lucidity
+- Heightened cognition
+
+### Inclusive Criteria
+
+Primarily described as a pervasive quality of mind, consciousness, or awareness or attention. Often associated with a figure-ground shift such that the practitioner attends more to the field of awareness rather than or in addition to discrete perceptual objects. May also be thought of as the opposite of the fogginess or dullness of Mental Stillness, in the sense of a clarity of cognitive or perceptual processing. May be reported in conjunction with Increased Cognitive Processing, Perceptual Hypersensitivity or other changes in the Perceptual Domain, in which case double-code accordingly.
+
+### Exclusive Criteria
+
+The perception of an environmental clarity (such as space or air) that is not attributed to a change in the quality of awareness should not be coded. Brightening of the visual field should be primarily coded under Visual Lights. Other forms of Perceptual Hypersensitivity may coarise with Clarity; if the change is described exclusively in perceptual terms with no cognitive dimension, code under the relevant Perceptual category instead. Some reports of expansiveness/spaciousness may be more appropriately coded under Change in Self-Other or Self-World Boundaries.
+
+---
+
+### Delusional, Irrational, or Paranormal Beliefs
+
+```yaml
+code_id: delusional-irrational-or-paranormal-beliefs
+category: Delusional, Irrational, or Paranormal Beliefs
+domain: Cognitive
+description: Holding with conviction and being influenced by one or more beliefs despite evidence to the contrary. Ascriptions of significance or meaning that are later disregarded or that might seem unusual or concerning to members of the practitioners broader culture or particular subculture. Attributions of paranormal agency, origin, or explanation for cognitive experiences.
+```
+
+### Subcodes
+
+- Delusion
+- Irrational belief
+- Paranormal belief
+
+### Inclusive Criteria
+
+Reports of distortions of grandiosity, paranoia, or mania that lead to some form of misapprehending or no longer participating in consensual reality. Beliefs that were reported as being strongly held as true despite feedback from others to the contrary or based upon rational or empirical evidence. Or beliefs that were described by the subject in retrospect as delusional or irrational in nature. Subjects may or may not have "insight" into the delusional nature of their beliefs at the time they are describing, and subsequent attributions or reflections on their prior experience should be taken into account. Also include here beliefs that are reported as seeming unusual or concerning to an authority in their culture or subculture (such as a meditation teacher), a friend or family member, or a mental health professional. Includes beliefs that affect the structuring of perceptual, cognitive, affective, or interpersonal experiences. Includes magical thinking and paranormal beliefs such as communication with agents, paranormal powers, access to forms of knowledge that would not be verifiable by a second-person source or experiences of hypersalience (anomalous gnostic events). Paranormal beliefs may also be double-coded with Change in Worldview, especially in cases where paranormal experiences are valued as indicating a contact with a deeper, truer, and/or usually hidden reality. When non-consensual changes in perception cooccur with changes in belief, double-code for Hallucinations, Visions or Illusions.
+
+### Exclusive Criteria
+
+Statements that appear far-fetched but are not demonstrated to have been viewed as delusional at the time or in retrospect by the practitioner, and were not be deemed delusional, irrational, or paranormal by a member of the practitioners subculture or broader culture (including Western psychiatry). Associated beliefs must have clear phenomenological referent or intersect with phenomenological reports. Casual post-hoc descriptions of prior events as "delusional" or "irrational" should not be coded unless the events themselves indicate clear cognitive changes meeting inclusion criteria. Delusions that manifest with a percept-like experience in the absence of perceptual input would be coded as Hallucinations, Visions, or Illusions. Should be disambiguated from the manic dimensions of Positive Affect, which may arise without delusional cognitive content.
+
+---
+
+### Disintegration of Conceptual Meaning Structures
+
+```yaml
+code_id: disintegration-of-conceptual-meaning-structures
+category: Disintegration of Conceptual Meaning Structures
+domain: Cognitive
+description: Percepts arise but are processed without their associated conceptual meaning, resulting in an inability to form conceptual representations of the perceptual world.
+```
+
+### Subcodes
+
+- Loss of conceptual meaning
+- Difficulty forming representations
+
+### Inclusive Criteria
+
+Reports in which percepts arise but are processed without their usual associated conceptual meaning, resulting in difficulty forming or accessing conceptual representations. May include reports of words losing their meaning, objects appearing unfamiliar despite being recognized, or a general sense that the usual conceptual overlay on experience has been disrupted. Also known as cognitive defusion. May be double-coded with Derealization when accompanied by feelings of unreality, or with Meta-Cognition when the practitioner is observing this process.
+
+### Exclusive Criteria
+
+Simple confusion or forgetfulness should be coded under Change in Executive Functioning. Perceptual distortions without a cognitive dimension should be coded under the relevant Perceptual category.
+
+---
+
+### Mental Stillness
+
+```yaml
+code_id: mental-stillness
+category: Mental Stillness
+domain: Cognitive
+description: A state in which there are few identifiable thoughts, a perceived absence of thought, or a poor awareness about the thinking process in general.
+```
+
+### Subcodes
+
+- Absence of thought
+- Mental quiescence
+- Cognitive obscurity
+
+### Inclusive Criteria
+
+Mention of an absence of thought, whether positively or negatively valenced, intentionally sought or involuntarily experienced. Includes both target states of "calm abiding," or "mental quiescence" associated with concentration practice, as well as unexpected, prolonged, or undesirable states of "spacing out without mind wandering," "fogginess," or a general obscuration of cognitive processes. Lack of access to thought (inability to generate thought) is an extreme and often involuntary version of Mental Stillness.
+
+### Exclusive Criteria
+
+In cases of mental fog, attempt to differentiate absence or thought from a Change in Executive Functioning. Corresponding flattening of emotions or a lack of affect should be coded under Affective Flattening. Expected cycles of drowsiness or dullness should not be coded here.
+
+---
+
+### Meta-Cognition
+
+```yaml
+code_id: meta-cognition
+category: Meta-Cognition
+domain: Cognitive
+description: Meta-cognition, or meta-awareness, refers to an explicit knowledge of the content of thoughts or the thinking process. Meta-cognition can also entail a higher-order cognition of processes in other domains of experience, such affective, perceptual, somatic or sense of self.
+```
+
+### Subcodes
+
+- Meta-awareness
+- Distancing from thoughts
+- Monitoring awareness
+
+### Inclusive Criteria
+
+Sustained meta-cognition or meta-awareness resulting from the practice of meditation. Includes reports of a "distancing" from thoughts, seeing thoughts as "just thoughts," or as seeing thoughts as transient events in the mind. Also includes the explicit reference of a "monitoring" awareness witnessing transient somatic, affective, or perceptual events.
+
+### Exclusive Criteria
+
+A brief moment of meta-cognition, or meta-cognition not related to meditation or to particular views and values associated with meditation. Prolonged and intense forms of meta-cognition may develop into a Loss of Sense of Ownership over thoughts, emotions, or body sensations or a Loss of Agency over actions, at which point those codes would be more appropriate. Some forms of distancing from thoughts and the content of thoughts in which a cognitive event is no longer processed with associated meaning or significance may be better coded (or double-coded) as Disintegration of Conceptual Meaning Structures.
+
+---
+
+### Scrupulosity
+
+```yaml
+code_id: scrupulosity
+category: Scrupulosity
+domain: Cognitive
+description: Obsessive thinking, specifically about moral or religious issues and behaviors.
+```
+
+### Subcodes
+
+- Moral obsession
+- Religious obsession
+- Change in self-perception
+
+### Inclusive Criteria
+
+A change in self-perception or behavior in relation to religious teachings or moral values associated with contemplative practices. Also includes the exacerbation of existing dispositional tendency towards obsession over moral or religious issues when influenced by meditation or being in a meditation context. May often be precipitated by or result in Change in Worldview or Change in Effort, and may also be co-occurring with behavioral changes in the Social Domain.
+
+### Exclusive Criteria
+
+Changes in self-perception and behavior coming from other religious contexts (such as a practitioner's former religious tradition), unless those tendencies are exaggerated by meditation. Only beliefs and associated behaviors related to morality or religious codes of conduct should be coded here. Disambiguate from Delusional, Irrational, or Paranormal Beliefs, Change in Doubt, Faith, Trust or Commitment, and Change in Worldview.
+
+---
+
+### Vivid Imagery
+
+```yaml
+code_id: vivid-imagery
+category: Vivid Imagery
+domain: Cognitive
+description: An experience of intense, vivid and/or clear thoughts or mental images that arise involuntarily, or a report of an increased ability to visualize.
+```
+
+### Subcodes
+
+- Vivid thoughts
+- Mental image clarity
+- Increased visualization
+
+### Inclusive Criteria
+
+Intense and potentially disconcerting thoughts that arise involuntarily and which are accompanied by an increased clarity or vividness. Vivid imagery or thought intrusions may also be accompanied by strong emotions such as Fear or bliss (Positive Affect).
+
+### Exclusive Criteria
+
+Vivid fantastical images that are perceived as if external objects would be coded under Hallucinations. Vivid imagery that is associated with traumatic memories should primarily be coded as Re-experiencing of Traumatic Memories. Disambiguate from Clarity, which may be a coinciding quality of consciousness, but mentioned independent of vivid imagery. Disambiguate from Hallucinations, Visions, or Illusions which are percept-like changes in the Perceptual Domain.
+
+---
+
+## Perceptual
+
+### Derealization
+
+```yaml
+code_id: derealization
+category: Derealization
+domain: Perceptual
+description: Surroundings are perceived as strange, unreal, or dreamlike, or perception is experienced as mediated by a fog, a lens, or some other filter that results in feeling cut off from the world.
+```
+
+### Subcodes
+
+- Feeling of unreality
+- Strange surroundings
+- Dreamlike quality
+
+### Inclusive Criteria
+
+Mentioning a feeling of unreality, strangeness, unfamiliarity or dreamlike quality of surroundings, or reports of feeling cut off or alienated from the perceptual world. Includes confusion concerning whether one is dreaming or awake.
+
+### Exclusive Criteria
+
+Changes in sense perception without the sense of feeling dreamlike, or unreal would be coded under the appropriate change in the Perceptual domain.
+
+---
+
+### Dissolution of Objects or Phenomena
+
+```yaml
+code_id: dissolution-of-objects-or-phenomena
+category: Dissolution of Objects or Phenomena
+domain: Perceptual
+description: The dissolving or complete disappearance of visual objects or the entire visual field.
+```
+
+### Subcodes
+
+- Dissolving objects
+- Disappearing visual field
+- Pixelating objects
+
+### Inclusive Criteria
+
+An experience in which parts of objects, entire objects, or the entire visual field is distorted to the point of seeming composed of points of scintillating light, pixelating, dissolving, or entirely disappearing.
+
+### Exclusive Criteria
+
+Differentiate from Distortions in Time or Space, which does not include objects.
+
+---
+
+### Distortions in Time or Space
+
+```yaml
+code_id: distortions-in-time-or-space
+category: Distortions in Time or Space
+domain: Perceptual
+description: An alteration in the subjective experience of spatial boundaries or relations and/or temporal causality or sequencing.
+```
+
+### Subcodes
+
+- Distortion of time
+- Distortion of space
+- Distortion of personal history
+
+### Inclusive Criteria
+
+Abnormalities in one's perception of space and/or time. May refer to one's perception of distance, scale, time, causality, or personal history. Includes references to temporal gaps or absences.
+
+### Exclusive Criteria
+
+Discussion of time and space that do not describe distortions but ordinary experiences of time and/or space.
+
+---
+
+### Hallucinations, Visions, or Illusions
+
+```yaml
+code_id: hallucinations-visions-or-illusions
+category: Hallucinations, Visions, or Illusions
+domain: Perceptual
+description: A hallucination is an experience of a percept that is not externally stimulated, is not shared by others, and is not taken to be veridical. When a visual percept that is not shared by others is taken to be veridical, it is a vision. An illusion involves a percept that is distorted, changed, or has features added to the raw percept.
+```
+
+### Subcodes
+
+- Hallucinations
+- Visions
+- Illusions
+
+### Inclusive Criteria
+
+A hallucination is the experience of a percept in the absence of a corresponding sensory stimuli. Hallucinations can occur in any modality: visual, auditory, gustatory, olfactory, or proprioceptive.
+
+### Exclusive Criteria
+
+Hallucinations or illusions not reported either in the context of meditation practice or in the context of post-meditation effects.
+
+---
+
+### Perceptual Hypersensitivity
+
+```yaml
+code_id: perceptual-hypersensitivity
+category: Perceptual Hypersensitivity
+domain: Perceptual
+description: Unusual or atypical sensitivity to certain frequencies or volumes of sound (hyperacusis), to color (hyperchromia), to visual details, to light, to taste, to smell, or to embodiment.
+```
+
+### Subcodes
+
+- Hyperacusis
+- Hyperchromia
+- Hyper-sensitivity
+
+### Inclusive Criteria
+
+Being extremely sensitive to sounds, light, colors, tactile sensations or other environmental stimuli. Also commonly described as difficulty tolerating everyday sounds, lights, or other sensory stimuli.
+
+### Exclusive Criteria
+
+Sensitivity to sound, lights, colors, smells etc. that are not produced by externally present stimuli—that is, which are Hallucinations, Visions, or Illusions—would be coded there.
+
+---
+
+### Somatosensory Changes
+
+```yaml
+code_id: somatosensory-changes
+category: Somatosensory Changes
+domain: Perceptual
+description: A change in proprioceptive information that affects one's perception of relative positions or dimensions of body parts or the body more generally.
+```
+
+### Subcodes
+
+- Change in body schema
+- Distorted body perception
+- Change in body scale
+
+### Inclusive Criteria
+
+Increased proprioceptive information, or increased awareness of or sensitivity to the body schema. Distortions in the body schema resulting in a change in scale of body parts or the body in general, disappearance of body boundaries (such as feeling that arms are missing), inaccurate perception of position of body parts (such as feeling that legs as being twisted when they are not), or changes in body scale (such as body parts feeling larger or smaller or dissolving).
+
+### Exclusive Criteria
+
+Mentioning the body in a way unrelated to one's perception of it.
+
+---
+
+## Sense of Self
+
+### Change in Self-Other or Self-World Boundaries
+
+```yaml
+code_id: change-in-self-other-or-self-world-boundaries
+category: Change in Self-Other or Self-World Boundaries
+domain: Sense of Self
+description: Expansion beyond or distortions in the typical sense of where the boundaries between self and other or self and world are delineated.
+```
+
+### Subcodes
+
+- Expanded boundaries
+- Dissolved boundaries
+- Altered self-other boundaries
+
+### Inclusive Criteria
+
+Includes references to being expanded beyond one's body schema, or the sense of boundaries between self and other or self and world being dissolved. May also be described in terms of merging with, being porous or permeable to either the world or other people. Alteration of self-other boundaries includes experiencing other people's mind states or emotions, in which case double-coding with Empathic or Affiliative Changes may be appropriate. References to awareness as spacious, expansive, centerless, non-local, all-pervading, or non-dual with the world of experience would be coded here, as would references to a sense of unity or oneness with nature, the environment, the world, or the universe. Conversely, feeling more separated from the world or feelings as if distant from it could also be coded here. Expansiveness may have associated phenomenology from other domains, such as increases in Clarity, Positive Affect, or Affective Lability.
+
+### Exclusive Criteria
+
+Does not include reports of cessation of consciousness or a sense of 'not being there.' Be careful to disambiguate with Change in Sense of Embodiment for reports where the sense of self is displaced to an atypical location within or in relation to the body schema. Hypersensitivity to others' emotions without reference to a change in boundaries should be coded as Empathic or Affiliative Changes. Hypersensitivity to the body schema without corresponding alterations in boundaries between self and other or self and world would be coded as Somatosensory Changes. Feeling more distant from others or from the world should be coded as Derealization when this is attributed to the visual sense of a filter or opaque medium, or to a loss of sense of reality.
+
+---
+
+### Change in Narrative Self
+
+```yaml
+code_id: change-in-narrative-self
+category: Change in Narrative Self
+domain: Sense of Self
+description: A report of a change in how the practitioner conceives of himself or herself as a person. Or, a change in the content of or their perspective on their story or personal identity.
+```
+
+### Subcodes
+
+- Changed self-perception
+- Change in personal story
+
+### Inclusive Criteria
+
+References that compare how a practitioner used to think about themselves as a person or their story that are in contrast with how they currently feel or felt after a shift associated with meditation practice. Also includes references to a complete loss of narrative identity. The narrative self is temporally extended in reference to past or future conceptions of self or personhood. Thus, changes in narrative self include the impact of different perspectives cultivated through the theory and practice of meditation on the stories practitioners tell about themselves. Such instances may benefit from double-coding with Change in Worldview. Stories may include descriptions of changes in how they view the motivations for their behaviors, the type of person that they think they are, or the type of person that they think they should be, in which cases double-coding with Change in Motivation or Goal may also be appropriate.
+
+### Exclusive Criteria
+
+References to stories of self that do not appear to be emergent from meditation or changed by the theory and practice of meditation should not be coded. Statements in which a practitioner describes himself or herself only in the present moment, without implicit or explicit suggestions of a shift or change from previous conceptions of themselves. Theoretical discussion of topics related to the inclusion criteria but not explicitly connected to the practitioner's sense of himself or herself as a person or to a 'story of me.' Strictly doctrinal or theoretical conceptions of self or person might be better coded as Change in Worldview or as Influencing Factors.
+
+---
+
+### Change in Sense of Embodiment
+
+```yaml
+code_id: change-in-sense-of-embodiment
+category: Change in Sense of Embodiment
+domain: Sense of Self
+description: Feeling of being disembodied, located outside or at a distance from one's body, or located in an unusual location within one's body schema.
+```
+
+### Subcodes
+
+- Disembodied feeling
+- Altered self-location
+
+### Inclusive Criteria
+
+Includes any change in where one's sense of self is located relative to the body schema. Includes references to a change in perspective of location within the body schema, such as from behind the eyes, to the middle of the head or to the heart. May also refer to a distance from the body schema, where the sense of self or perspective is located behind the body or in space, as in 'out-of-body' experiences.
+
+### Exclusive Criteria
+
+Distinct from reports of expansiveness associated with Change in Self-Other or Self-World Boundaries, as disembodiment still has a particular vantage point or location, and is not everywhere/nowhere. Changes or distortions in body image that do not reflect a change in locatedness of the sense of self would be coded in Somatosensory Changes.
+
+---
+
+### Loss of Sense of Agency
+
+```yaml
+code_id: loss-of-sense-of-agency
+category: Loss of Sense of Agency
+domain: Sense of Self
+description: A loss of a sense of ownership or sense of control over one's actions.
+```
+
+### Subcodes
+
+- Lack of control
+- Loss of agency
+
+### Inclusive Criteria
+
+Mention of the lack of a 'doer,' or a sense that there is 'no one' in the body who decides, controls, or executes actions, whether habitual or intentional. References to actions happening on their own or to feeling like a 'puppet,' an automaton, or subject to (the will of) an external force. Also includes references to disconnect from and disidentification with embodied actions such as movement, or to a sense of a being a detached witness/observer to action, but in these cases must also be suggestive of a diminished sense of or loss of agency.
+
+### Exclusive Criteria
+
+Loss of Sense of Ownership not pertaining to actions should be coded in that category instead. Also to be distinguished from an expanded sense of self in Change in Self-Other or Self-World Boundaries. Care should be taken to disambiguate from or double-code with Meta-Cognition, through which similar changes can occur in a more transient, and less enduring manner, especially in relation to habitual actions. Discussions of energy running through the body and resulting in bodily movements should be coded as or double-coded with Somatic Energy and Involuntary Movements.
+
+---
+
+### Loss of Sense of Ownership
+
+```yaml
+code_id: loss-of-sense-of-ownership
+category: Loss of Sense of Ownership
+domain: Sense of Self
+description: A loss of the usual sense of owning one's thoughts, body sensations, emotions, and/or memories.
+```
+
+### Subcodes
+
+- Loss of ownership
+- Impersonal experiences
+- Anomalous recall
+
+### Inclusive Criteria
+
+Reports that thoughts, body sensations, and/or emotions dont feel like "mine" or like they "belong to me." This may include the feeling that they belong to someone else, or they may be experienced as "impersonal." May include seeing "thoughts as just thoughts" or emotions as impersonal events in the mind or body. Thoughts may no longer become personally relevant and may lose their emotional charge or salience, in which case double-coding with Emotional Detachment may be warranted. Includes the experience of anomalous subjective recall—the experiencing of personal events such that they feel impersonal, or as if they happened to someone else, or to oneself but feel unusually distant in time.
+
+### Exclusive Criteria
+
+Some mild forms of "seeing thoughts as thoughts" may be better coded (or double-coded) as Meta-Cognition. Similarly, some forms of distancing from thoughts and the content of thoughts in which a cognitive event is no longer processed with associated meaning or significance may be better coded (or double-coded) as Disintegration of Conceptual Meaning Structures.
+
+---
+
+### Loss of Sense of Basic Self
+
+```yaml
+code_id: loss-of-sense-of-basic-self
+category: Loss of Sense of Basic Self
+domain: Sense of Self
+description: A loss of the sense of existing, of being a self, or of having a self.
+```
+
+### Subcodes
+
+- Loss of basic self
+- Sense of absence
+- Altered unity
+
+### Inclusive Criteria
+
+References to "not being there," to "disappearing," to "being absent," or to "not being present." These changes in sense of self are reported as happening at a very basic level of the sense of self. They may be associated with other types of changes in sense of self, whether concerning embodiment, ownership, or agency, but references should signal an alteration at this basic level of existence or being. Includes references to changes in or problems with the "unity" of various sensory, affective, and cognitive dimensions of experience.
+
+### Exclusive Criteria
+
+Changes in sense of self happening at other levels should be coded accordingly. If a loss of ownership or agency is specified, code Loss of Sense of Ownership or Agency. If associated with a change in embodiment is referenced, code Change in Sense of Embodiment or Change in Self-Other or Self-World Boundaries. Unspecified references to changes in sense of self that do not seem to be altering the core sense of existence or being should be coded as Other.
+
+---
+
+## Social
+
+### Change in Relationship to Meditation Community
+
+```yaml
+code_id: change-in-relationship-to-meditation-community
+category: Change in Relationship to Meditation Community
+domain: Social
+description: Changes in relationship with the meditation community (Sangha), whether increasing or decreasing degrees of affiliation with the community of teacher(s) and other practitioners.
+```
+
+### Subcodes
+
+- Change in affiliation
+- Increased trust in community
+- Decreased trust in community
+
+### Inclusive Criteria
+
+Can include an increased sense of affiliation, belonging or commitment, or an increased sense of trust or faith in the community or teacher, in which cases double-coding with Change in Doubt, Faith, Trust, or Commitment may be warranted. Can also include a change in role towards increasing participation such as becoming a monk or teacher or taking on other institutional roles. Conversely, can also include a decreased sense of affiliation, belonging or commitment, a decreased sense of trust or faith in the community or teacher.
+
+### Exclusive Criteria
+
+Social isolation or impairments that are not related to the meditation community, or Sangha. Increased or decreased relationships to other communities would be coded under Increased Sociality or Social Impairment, respectively.
+
+---
+
+### Increased Sociality
+
+```yaml
+code_id: increased-sociality
+category: Increased Sociality
+domain: Social
+description: Increased extraversion, social contact, friendships or other behavioral manifestations indicating an increased valuing of social engagement.
+```
+
+### Subcodes
+
+- Increased extraversion
+- Increased social contact
+- New social activities
+
+### Inclusive Criteria
+
+Clear behavioral manifestations of an increased valuing of social engagement. Examples include increased extraversion, increased social contact or friendships, new social activities, or resuming social activities previously neglected.
+
+### Exclusive Criteria
+
+Does not include rhetoric from Buddhist traditions about prosocial values such as compassion or the bodhisattva vow unless accompanied by behavioral changes. Increased sociality not attributed to meditation practice would also not be coded.
+
+---
+
+### Integration Following Retreat or Intensive Practice
+
+```yaml
+code_id: integration-following-retreat-or-intensive-practice
+category: Integration Following Retreat or Intensive Practice
+domain: Social
+description: A destabilizing transition from intensive formal practice to informal practice, daily life, or life circumstances.
+```
+
+### Subcodes
+
+- Transition from practice
+- Re-engagement challenges
+- Desirable retreat experiences
+
+### Inclusive Criteria
+
+Includes any destabilizing transition from formal practice, daily life, or life circumstances, typically following retreat but also including the transition from any period of formal practice back into daily life.
+
+### Exclusive Criteria
+
+Any difficulty that arises within a retreat or within daily practice that doesn't specifically have to do with re-engagement with one's life duties or with actions in daily life.
+
+---
+
+### Occupational Impairment
+
+```yaml
+code_id: occupational-impairment
+category: Occupational Impairment
+domain: Social
+description: An impaired ability to perform in an occupational environment.
+```
+
+### Subcodes
+
+- Decreased work function
+- Occupational role impairment
+
+### Inclusive Criteria
+
+Describing a decreased ability to function in a normal work environment or fulfill the roles of a job.
+
+### Exclusive Criteria
+
+Social impairment or personal feelings of isolation or loneliness that are unrelated to impairment in occupational functioning. If social impairment is directly causing occupational impairment, double-code with Social Impairment.
+
+---
+
+### Social Impairment
+
+```yaml
+code_id: social-impairment
+category: Social Impairment
+domain: Social
+description: Behaviors indicative of a change in relationship to social networks or social situations that inhibits ordinary or desired functioning or level of engagement.
+```
+
+### Subcodes
+
+- Decreased social engagement
+- Loss of friendships
+- Decreased social interaction
+
+### Inclusive Criteria
+
+Behavioral manifestations of a subjective feeling of disconnection from social networks (including friends, family, institutions, cultures, religious groups, etc.), or of a general sense of loneliness within said networks, possibly stemming from religious, cultural, emotional, or intellectual differences, or from novel experiences.
+
+### Exclusive Criteria
+
+References to social isolation that are voluntary and desired, such as periods of retreat or disassociating from unhealthy relationships, would not be coded here. Describing physical isolation but not including subjective feelings of disconnection from social networks.
+
+---
+
+## Somatic
+
+### Appetitive or Weight Changes
+
+```yaml
+code_id: appetitive-or-weight-changes
+category: Appetitive or Weight Changes
+domain: Somatic
+description: Decreased or increased appetite, weight loss or gain.
+```
+
+### Subcodes
+
+- Decreased appetite
+- Increased appetite
+- Weight loss
+- Weight gain
+
+### Inclusive Criteria
+
+Decreased or increased appetite, weight loss or gain attributed to meditation practice. Includes a general disgust with or increased attraction to food. Decreased appetite may be double-coded with Anhedonia or Depression when these co-occur.
+
+### Exclusive Criteria
+
+Decreased or increased appetite, weight loss or gain attributed to a cause unrelated to meditation.
+
+---
+
+### Breathing Changes
+
+```yaml
+code_id: breathing-changes
+category: Breathing Changes
+domain: Somatic
+description: Altered respiration rates that may manifest as a temporary cessation, or speeding up or slowing down of breathing.
+```
+
+### Subcodes
+
+- Respiration changes
+- Breathing irregularity
+- Labored breathing
+- Suffocating feeling
+
+### Inclusive Criteria
+
+Breathing irregularity, either during formal meditation or not, that is attributed to meditation practice. Pre-existing breathing irregularity made worse by meditation practice. Can also include symptoms like labored breathing or a feeling of suffocating. Breathing irregularity may be valenced as positive (calming, relaxing, feeling that it is easier to breathe) or negatively valenced (distressing, feeling of suffocating, etc.)
+
+### Exclusive Criteria
+
+Breathing irregularity not attributed to meditation practice. Pre-existing breathing irregularity not made worse by meditation practice. Intentionally controlling or regulating the breathing should not be coded.
+
+---
+
+### Cardiac Changes
+
+```yaml
+code_id: cardiac-changes
+category: Cardiac Changes
+domain: Somatic
+description: Irregular heartbeat, heart palpitations, or other significant irregularities.
+```
+
+### Subcodes
+
+- Irregular heartbeat
+- Heart palpitations
+- Tachycardia
+- Brachycardia
+
+### Inclusive Criteria
+
+Cardiac irregularity attributed to meditation practice or pre-existing cardiac irregularity made worse by meditation practice. Cardiac changes include tachycardia (unusually rapid heart beat, even at rest), brachycardia (unusually slow heart beat), and heart palpitations.
+
+### Exclusive Criteria
+
+Cardiac irregularity not attributed to meditation practice; pre-existing cardiac irregularity not made worse by meditation practice.
+
+---
+
+### Dizziness or Syncope
+
+```yaml
+code_id: dizziness-or-syncope
+category: Dizziness or Syncope
+domain: Somatic
+description: Dizziness, vertigo (feeling one is spinning or off-balance), lightheadedness (feeling one is about to faint), or syncope (a brief loss of consciousness and muscle strength, commonly called fainting, passing out or blacking out).
+```
+
+### Subcodes
+
+- Dizziness
+- Vertigo
+- Lightheadedness
+- Syncope
+
+### Inclusive Criteria
+
+Dizziness, vertigo, lightheadedness, or syncope attributed to meditation practice or associated with other meditation-related symptoms such as cardiac or breathing irregularities.
+
+### Exclusive Criteria
+
+Dizziness, vertigo, lightheadedness, or syncope not attributed to meditation practice. Nausea not resulting from dizziness, lightheadedness or vertigo might be more appropriately coded under or double-coded with Gastrointestinal Distress or Nausea.
+
+---
+
+### Fatigue or Weakness
+
+```yaml
+code_id: fatigue-or-weakness
+category: Fatigue or Weakness
+domain: Somatic
+description: A feeling of exhaustion, fatigue or weakness (general or localized).
+```
+
+### Subcodes
+
+- Exhaustion
+- Fatigue
+- Weakness
+- Chronic fatigue
+
+### Inclusive Criteria
+
+Feelings of exhaustion, fatigue or weakness (general or localized) attributed to meditation practice. Also includes (but not limited to) statements about chronic fatigue, which may co-occur with increased sleep need (and therefore should be double-coded with Sleep Changes). Fatigue may also correlate with cognitive impairments such as Change in Executive Functioning.
+
+### Exclusive Criteria
+
+Pre-existing conditions that involve fatigue, or the development of fatigue that is attributed to a source other than meditation (such as Lyme Disease or other medical history).
+
+---
+
+### Gastrointestinal Distress or Nausea
+
+```yaml
+code_id: gastrointestinal-distress-or-nausea
+category: Gastrointestinal Distress or Nausea
+domain: Somatic
+description: Gastrointestinal problems including (but not limited to) diarrhea, bloating, cramping, nausea and vomiting.
+```
+
+### Subcodes
+
+- Diarrhea
+- Bloating
+- Cramping
+- Nausea
+- Vomiting
+
+### Inclusive Criteria
+
+GI distress or nausea attributed to meditation practice or viewed as a consequence of other physiological effects caused by meditation.
+
+### Exclusive Criteria
+
+GI distress attributed to diet, location, or other non-meditation causes (e.g., GI issues related to food while on retreat in India). Nausea associated with dizziness, lightheadedness, or vertigo should be double-coded with Dizziness or Syncope.
+
+---
+
+### Headaches or Head Pressure
+
+```yaml
+code_id: headaches-or-head-pressure
+category: Headaches or Head Pressure
+domain: Somatic
+description: Ache, sharp pain, or pressure in the region of the head or neck.
+```
+
+### Subcodes
+
+- Headaches
+- Head pressure
+- Migraines
+
+### Inclusive Criteria
+
+Headaches or head pressure attributed to or exacerbated by meditation. Headaches include migraines or head pressure often associated with breathing. Includes any brief, prolonged, or intermittent sensations of pressure in the head as well as any associated or subsequent pain or discomfort.
+
+### Exclusive Criteria
+
+Headaches or head pressure not attributed to or exacerbated by meditation practice, such as from head trauma or a sinus headache. Pain and Pressure or Tension elsewhere in the body should be coded accordingly with the general categories.
+
+---
+
+### Involuntary Movements
+
+```yaml
+code_id: involuntary-movements
+category: Involuntary Movements
+domain: Somatic
+description: A motor movement usually under voluntary control that occurs without a conscious decision for movement.
+```
+
+### Subcodes
+
+- Tics
+- Spasms
+- Twitching
+- Rocking
+- Shaking
+
+### Inclusive Criteria
+
+Involuntary movements that are attributed to meditation practice. This includes spontaneous movements such as: tics, spasms, twitching, rocking, shaking, seizing up, twisting of the torso or head, fidgeting, or others. Includes involuntary vocalizations. May be repetitive or a single involuntary movement. When occurring with reports of Somatic Energy, double-code or code sequentially.
+
+### Exclusive Criteria
+
+Involuntary movements not attributed to meditation practice. Differentiate from Loss of Sense of Agency, which is a change in the sense of feeling of ownership over typical or ordinary actions; double-code in cases where it is unclear if the action was considered typical or sporadic, or where involuntary movements subsequently impacted feelings related to sense of self.
+
+---
+
+### Pain
+
+```yaml
+code_id: pain
+category: Pain
+domain: Somatic
+description: Pain is an unpleasant physical sensation, either diffuse or acute, and lasting for variable amounts of time.
+```
+
+### Subcodes
+
+- Diffuse pain
+- Acute pain
+- Postural aches
+
+### Inclusive Criteria
+
+Pain of any kind attributed to meditation practice beyond typical and expected postural aches and pain. Include also the relieving of pain attributed to meditation. When pain or the alleviation of pain is mentioned in conjunction with Pressure, Tension or Release of Pressure, Tension double-code these two together.
+
+### Exclusive Criteria
+
+Pain not attributed to meditation practice. Expected or anticipated levels of postural pain arising on account of the somatic immobility entailed in the practice of meditation and that is casually mentioned without attribution of significance or downstream consequences. Pain in the head and neck area should be coded under Headaches.
+
+---
+
+### Parasomnias
+
+```yaml
+code_id: parasomnias
+category: Parasomnias
+domain: Somatic
+description: Nightmares, vivid dreams, sleep paralysis or the alleviation of these symptoms.
+```
+
+### Subcodes
+
+- Nightmares
+- Vivid dreams
+- Sleep paralysis
+
+### Inclusive Criteria
+
+Includes nightmares, vivid dreams or sleep paralysis (or experiences that resemble sleep paralysis), or the alleviation of these symptoms, attributed to meditation practice. Nightmares or vivid dreams includes either unpleasant dreams that can cause a strong negative emotional response or dreams with unusually good recall that are often perceived as if a recent experience. Sleep paralysis occurs as one falls asleep or as one wakes: an open-eyed paralysis that can last from seconds to minutes and is often accompanied by a sense of terror, danger and/or hallucinations.
+
+### Exclusive Criteria
+
+Nightmares, vivid dreams or sleep paralysis or the alleviation of these symptoms attributed to a cause unrelated to meditation—for instance, cases of ongoing sleep paralysis unaffected by meditation practice. Changes in sleep amount, need, or insomnia should be coded under Sleep Changes.
+
+---
+
+### Pressure, Tension or Release of Pressure, Tension
+
+```yaml
+code_id: pressure-tension-or-release-of-pressure-tension
+category: Pressure, Tension or Release of Pressure, Tension
+domain: Somatic
+description: Bodily pressure or tension, or release of bodily pressure or tension, that can vary according to location (general or specific), intensity, or length of time.
+```
+
+### Subcodes
+
+- Pressure
+- Tension
+- Release of pressure
+- Release of tension
+
+### Inclusive Criteria
+
+Pressure or tension, or release of pressure or tension, attributed to meditation practice. Pressure or tension includes pressure "knots," which are sensations of intense energy in acute body locations that feel as though there are energy blockages, and may include a sensation of twisting. It also includes experiences of tightness, constriction, squeezing, contraction, locking of muscles, and other manifestations of pressure or tension. Release of pressure or tension may be described as "opening," "relaxation" or "release," and is sometimes but not necessarily linked to Re-experiencing of Traumatic Memories and may be double-coded there or with Somatic Energy or Involuntary Movements.
+
+### Exclusive Criteria
+
+Pressure or tension, or release of pressure or tension, not attributed to meditation practice. Head Pressure connected to breathing is coded in its own category. Ordinary states of physical relaxation not characterized as a release of pressure or tension in specific areas of the body.
+
+---
+
+### Sexuality-Related Changes
+
+```yaml
+code_id: sexuality-related-changes
+category: Sexuality-Related Changes
+domain: Somatic
+description: Hypersexuality (very frequent or suddenly increased sexual urges or activity) or hyposexuality (notably decreased sexual urges or activity).
+```
+
+### Subcodes
+
+- Hypersexuality
+- Hyposexuality
+- Unwanted sexual thoughts
+
+### Inclusive Criteria
+
+Sexuality-related changes attributed to meditation practice. Hypersexuality can also include increased intensity of sexual urges or activity, a sense of being sexually out of control (or that one is not controlling sexual activity oneself), unwanted or disturbing thoughts that are sexual in content, or otherwise notably unusual changes related to increases in sexual urges or activity. Subjects may connect hypersexuality to "tantric" insights, to "kundalini" awakenings, or other Somatic Energy experiences and effects. Thus, double-code with Somatic Energy where appropriate.
+
+### Exclusive Criteria
+
+Sexuality-related changes not attributed to meditation practice. Descriptions of sexual energy not leading to a change in sexual desire or sexual behavior might be more appropriately coded as Somatic Energy.
+
+---
+
+### Sleep Changes
+
+```yaml
+code_id: sleep-changes
+category: Sleep Changes
+domain: Somatic
+description: Changes in sleep amount, sleep need, or sleep depth.
+```
+
+### Subcodes
+
+- Insomnia
+- Decreased sleep need
+- Hypersomnia
+
+### Inclusive Criteria
+
+Changes in sleep amount or depth (including intensification of existing symptoms) attributed to meditation practice. Includes (but not limited to): difficulty falling asleep or staying asleep through the night, insomnia, decreased or increased sleep need, hypersomnia (excessive daytime sleepiness or prolonged nighttime sleep), or other related symptoms. May be double-coded with Fatigue or with Parasomnias.
+
+### Exclusive Criteria
+
+Changes in sleep amount or depth not attributed to meditation practice. Changes in dreams, nightmares, and other anomalous sleep experiences would be coded under Parasomnias.
+
+---
+
+### Somatic Energy
+
+```yaml
+code_id: somatic-energy
+category: Somatic Energy
+domain: Somatic
+description: A type of sensation moving throughout the body or throughout a body area described with language of vibration, energy, current, or other related metaphors.
+```
+
+### Subcodes
+
+- Somatic energy
+- Vibrations
+- Currents
+
+### Inclusive Criteria
+
+Somatic energy or vibrations attributed to meditation practice. Include any level of intensity (gentle to forceful, flowing to surging.) May be described as being contained within or going beyond one's body schema. May also be reported as under one's control or involuntary, in which case double-coding with Loss of Sense of Agency may be appropriate. May include use of emic terms like "kundalini," "prana," or metaphors of "currents," "voltage," or "electricity." Also includes related references to psychomotor agitation (adrenaline rushes, feeling "wired") or slowing. May also be double-coded with Release of Tension or with Agitation. Reports of somatic energy may also affect motor patterns and may therefore be closely associated with reports of Involuntary Movements.
+
+### Exclusive Criteria
+
+Somatic energy or vibrations that are not attributed to meditation practice. The use of "energy" as a metaphysical concept without any associated phenomenology should not be coded. The term "vibrations" being used to describe minor twitches and other minor somatic movements that may also or alternatively be classified under Involuntary Movements.
+
+---
+
+### Thermal Changes
+
+```yaml
+code_id: thermal-changes
+category: Thermal Changes
+domain: Somatic
+description: Changes associated with heat or cold, whether a general change in sense of body temperature or localized to a specific body area.
+```
+
+### Subcodes
+
+- Sweating
+- Overheating
+- Cold sweats
+- Goosebumps
+
+### Inclusive Criteria
+
+Thermal changes attributed to meditation practice. Includes (but not limited to) statements about: sweating, dry mouth, overheating, hot flashes, prickling sensations, burning sensations, cold sweats, goosebumps, chills, hair standing on end, feeling unusually cold, or other related symptoms. Classic "kundalini" experiences may have heat or cold accompanied by Somatic Energy.
+
+### Exclusive Criteria
+
+Thermal changes not attributed to meditation practice, such as changes in environmental temperature.
