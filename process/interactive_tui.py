@@ -231,8 +231,8 @@ def _load_config(config_path: str):
 
 
 def _load_framework_default():
-    from theme_framework.vaamr import get_vaamr_framework
-    return get_vaamr_framework()
+    from theme_framework.registry import load as _registry_load_fw
+    return _registry_load_fw('vaamr')
 
 
 # ---------------------------------------------------------------------------
@@ -593,8 +593,8 @@ def _action_cv_create(config, output_dir: str, framework, fw_name: str) -> None:
         **{fw_name: ContentValiditySpec(enabled=True, name=name)}
     )
     if fw_name == 'purer':
-        from theme_framework.purer import get_purer_framework
-        fw = get_purer_framework()
+        from theme_framework.registry import load as _registry_load_fw
+        fw = _registry_load_fw('purer')
     else:
         fw = framework
 

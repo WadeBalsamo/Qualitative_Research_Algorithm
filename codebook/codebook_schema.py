@@ -21,7 +21,6 @@ class CodeDefinition:
     category: str
     domain: str
     description: str
-    subcodes: List[str]
     inclusive_criteria: str
     exclusive_criteria: str
     exemplar_utterances: List[str] = field(default_factory=list)
@@ -72,7 +71,6 @@ class Codebook:
 
         Each code is rendered as:
             Category: description
-            Subcodes: subcode1, subcode2, ...
             Include when: inclusive_criteria
             Exclude when: exclusive_criteria
         """
@@ -83,10 +81,8 @@ class Codebook:
 
         parts = []
         for code in codes:
-            subcodes_str = ', '.join(code.subcodes) if code.subcodes else 'N/A'
             block = (
                 f"{code.category}: {code.description} "
-                f"Subcodes: {subcodes_str}. "
                 f"Include when: {code.inclusive_criteria} "
                 f"Exclude when: {code.exclusive_criteria}"
             ).replace('\n', ' ').replace('  ', ' ')
@@ -101,7 +97,7 @@ class Codebook:
         Returns a list of dicts with keys:
           - 'code_id':    canonical code identifier
           - 'category':   human-readable category name
-          - 'definition': code name + subcodes + description
+          - 'definition': category name + description
           - 'criteria':   inclusive criteria text
           - 'exemplars':  space-joined exemplar utterances (may be empty)
         """
@@ -110,11 +106,7 @@ class Codebook:
             targets.append({
                 'code_id': code.code_id,
                 'category': code.category,
-                'definition': (
-                    code.category + ', '
-                    + ', '.join(code.subcodes) + ' '
-                    + code.description
-                ),
+                'definition': code.category + ' ' + code.description,
                 'criteria': code.inclusive_criteria,
                 'exemplars': ' '.join(code.exemplar_utterances) if code.exemplar_utterances else '',
             })

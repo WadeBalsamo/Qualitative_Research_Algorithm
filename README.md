@@ -38,7 +38,7 @@ The Vigilance-Avoidance-Attention Regulation-Metacognition-Reappraisal (VAAMR) f
 
 The arc from Stage 0 to Stage 4 describes the progressive recovery of the body as a transparent medium of experience rather than a dysappearing obstacle — the theoretical process MORE is designed to produce.
 
-The full operational definitions, including prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances (the boundary-case language that separates adjacent stages), are implemented in [`theme_framework/vaamr.py`](theme_framework/vaamr.py).
+The full operational definitions, including prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances (the boundary-case language that separates adjacent stages), are defined in `VAAMR_FRAMEWORK.md` and parsed at runtime by the theme framework.
 
 ### VCE: What is this participant phenomenologically experiencing?
 
@@ -54,7 +54,7 @@ The Varieties of Contemplative Experience codebook (Lindahl et al., 2017; DOI: [
 | Social | 5 | Empathic changes, affiliative changes, relational shifts |
 | Somatic | 15 | Pain, energy, pressure, temperature, internal sensations |
 
-Implemented in [`codebook/phenomenology_codebook.py`](codebook/phenomenology_codebook.py) as `CodeDefinition` objects with formal descriptions, subcodes, inclusive criteria, and exclusive criteria.
+Defined in `PHENOMENOLOGY_CODEBOOK.md` and parsed at runtime into `CodeDefinition` objects with formal descriptions, subcodes, inclusive criteria, and exclusive criteria.
 
 ### Why Both: Orthogonal Analytical Dimensions
 

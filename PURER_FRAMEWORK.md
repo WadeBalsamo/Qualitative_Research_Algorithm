@@ -310,8 +310,7 @@ Reframing is distinguished from Education (E) because it is explicitly anchored 
 
 > It's not doing it perfectly. It's the mind get distracted and then you have to return and you have to sometimes move because it's painful. And the new return.
 
-<!-- also reinforces -->
-> That's still you doing it. But that's really positive. I mean, that's great. That's what the practice is. The mind is in a drift and then you're going to bring it back in.
+> That's still you doing it. But that's really positive. I mean, that's great. That's what the practice is. The mind is in a drift and then you're going to bring it back in. (also reinforces)
 
 > It's a challenge not a struggle. The challenge is a climb. A struggle is a flail.
 
@@ -468,14 +467,11 @@ Reinforcement is distinguished from Reframing (R) because it affirms an action r
 
 > That is a great share.
 
-<!-- also reframes -->
-> Well, that's practicing mindfulness. For sure.
+> Well, that's practicing mindfulness. For sure. (also reframes)
 
-<!-- also reframes -->
-> Great. That's practicing mindfulness. Thank you very much. Great job.
+> Great. That's practicing mindfulness. Thank you very much. Great job. (also reframes)
 
-<!-- also reframes -->
-> No, that's still you doing it. But that's really positive. I mean, that's great. That's what the practice is.
+> No, that's still you doing it. But that's really positive. I mean, that's great. That's what the practice is. (also reframes)
 
 > That sounds empowering. As somebody who really is stomach oriented and enjoys good food, that sounds very empowering to me.
 

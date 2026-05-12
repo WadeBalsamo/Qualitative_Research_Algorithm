@@ -16,7 +16,7 @@ import os
 from typing import Optional, List
 
 from theme_framework.theme_schema import ThemeFramework
-from theme_framework.vaamr import get_vaamr_framework
+from theme_framework.registry import load as _registry_load_fw
 from theme_framework.config import ThemeClassificationConfig
 from codebook.config import EmbeddingClassifierConfig
 from .config import (
@@ -553,7 +553,7 @@ class SetupWizard:
 
         # Framework
         self.config_data['framework'] = {'preset': 'vaamr'}
-        self.framework = get_vaamr_framework()
+        self.framework = _registry_load_fw('vaamr')
 
         # Feature flags
         self.config_data['pipeline']['run_codebook_classifier'] = False
@@ -804,7 +804,7 @@ class SetupWizard:
         choice = _prompt_choice("Framework", ['vaamr', 'custom'], 'vaamr')
 
         if choice == 'vaamr':
-            self.framework = get_vaamr_framework()
+            self.framework = _registry_load_fw('vaamr')
             self.config_data['framework'] = {'preset': 'vaamr'}
         else:
             path = _prompt("Path to custom framework JSON")
