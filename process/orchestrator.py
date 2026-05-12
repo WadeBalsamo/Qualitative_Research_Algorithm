@@ -379,8 +379,9 @@ def _purer_llm_classify(config, segments, output_dir, observer):
     if not getattr(config, 'run_purer_labeler', False) or not _has_therapists:
         return
 
-    from theme_framework.purer import get_purer_framework
-    purer_framework = get_purer_framework()
+    from theme_framework.registry import load as _registry_load
+    _therapist_fw_name = getattr(config, 'therapist_framework', 'purer')
+    purer_framework = _registry_load(_therapist_fw_name or 'purer')
     purer_cfg = config.purer_classification
     purer_cfg.output_dir = _paths.auditable_logs_dir(output_dir)
     purer_cue = getattr(config, 'purer_cue', None)
@@ -609,8 +610,9 @@ def stage_validation_artifacts(
         )
 
     if framework is None:
-        from theme_framework.vaamr import get_vaamr_framework
-        framework = get_vaamr_framework()
+        from theme_framework.registry import load as _registry_load
+        _fw_name = getattr(config, 'participant_framework', 'vaamr') if config else 'vaamr'
+        framework = _registry_load(_fw_name or 'vaamr')
 
     # Human classification forms (blind-coding, no results)
     export_human_classification_forms(segments, framework, _od)
@@ -638,8 +640,9 @@ def stage_validation_artifacts(
             framework_purer = None
             if getattr(getattr(cv_cfg, 'purer', None), 'enabled', False):
                 try:
-                    from theme_framework.purer import get_purer_framework
-                    framework_purer = get_purer_framework()
+                    from theme_framework.registry import load as _registry_load
+                    _fw_name = getattr(config, 'therapist_framework', 'purer') or 'purer'
+                    framework_purer = _registry_load(_fw_name)
                 except Exception:
                     pass
             generate_or_refresh_content_validity_testsets(
@@ -1033,7 +1036,6 @@ def run_full_pipeline(
                         'category': c.category,
                         'domain': c.domain,
                         'description': c.description,
-                        'subcodes': c.subcodes,
                         'inclusive_criteria': c.inclusive_criteria,
                         'exclusive_criteria': c.exclusive_criteria,
                         'exemplar_utterances': c.exemplar_utterances,
