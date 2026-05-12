@@ -2,20 +2,127 @@
 """
 qra.py
 ------
-Unified CLI entry point for the QRA classification pipeline.
+Unified CLI entry point for the Qualitative Research Algorithm (QRA) - a computational phenomenology pipeline.
 
-Manages all command-line operations for the Qualitative Research Algorithm:
-- setup: Interactive configuration wizard that generates qra_config.json
-- run: Executes complete 8-stage pipeline (ingest → classify → assemble → analyze)
-- analyze: Runs post-hoc analysis on existing output directory
-- ingest: Segments transcripts only (Phase 3, Stage 1)
-- classify: Runs theme/PURER/codebook classifiers on frozen segments (Phase 3, Stages 3/3b/3c)
-- assemble: Joins frozen segments with overlays into master_segments.jsonl (Phase 3, Stage 6)
-- testset: Manages validation test sets (create/refresh/list)
-- cv: Manages content-validity test sets (create/refresh/list)
-- validate: Refreshes human forms and answer keys without re-classifying
+This script orchestrates the complete workflow for analyzing therapy transcripts from the Move-MORE Feasibility Trial 
+using two classification frameworks:
+- VAAMR (Vigilance-Avoidance-Attention Regulation-Metacognition-Reappraisal): Classifies participant segments across a five-stage developmental arc
+- PURER (Phenomenological-Utilization-Reframing-Educate/Expectancy-Reinforcement): Classifies therapist segments across five guided-inquiry moves
+- VCE Phenomenology Codebook: Optional multi-label construct enrichment (59 codes, 7 domains) applied to participant segments
 
-Interacts with all modules in process/, classification_tools/, analysis/, and theme_framework/.
+The pipeline has 8 core stages that can be executed as a complete workflow or modularly:
+1. Ingestion & Segmentation: Load and segment diarized transcripts into semantic units
+2. Construct Operationalization: Build framework definitions from theme_framework/ (VAAMR/PURER)
+3-3c. Theme Classification: Zero-shot LLM classification of VAAMR, PURER, and codebook constructs
+4-5. Confidence Voting & Consensus: Multi-run model voting with confidence thresholds
+6. Assembly: Join frozen segments with overlays into master_segments.jsonl
+7. Validation Artifacts: Generate human worksheet, definition key, answer keys for validation
+8. Analysis: Generate comprehensive reports on classification results
+
+Command Structure:
+  qra <command> [options]
+
+Available Commands:
+
+setup
+  Interactive wizard that creates and saves a configuration file (qra_config.json)
+  Output: ./data/output/02_meta/qra_config.json
+
+run
+  Execute the complete 8-stage pipeline from transcript ingestion to analysis
+  Input: Transcript files in transcript-dir
+  Output: Complete pipeline output in output-dir with all intermediate and final artifacts
+  Generates:
+    - 01_transcripts/segmented/ : Frozen segments (JSONL)
+    - 02_meta/ : Configuration, logs
+    - 03_classification/ : Theme, PURER, codebook classification overlays (JSONL)
+    - 04_validation/ : Human worksheet, definition key, answer keys for validation
+    - 05_validation/ : Test sets and content validity results
+    - 06_reports/ : Analysis reports in HTML, CSV, PDF formats
+    - master_segments.jsonl : Final integrated segments with all classifications
+
+analyze
+  Run post-hoc analysis on existing pipeline output directory
+  Input: Existing output directory containing master_segments.jsonl
+  Output: Comprehensive analysis reports in output_dir/06_reports/
+    - participant_summary.html/csv : Summary of each participant's theme progression
+    - session_summary.html/csv : Summary of each session by construct prevalence
+    - longitudinal_analysis.csv : Longitudinal trends across sessions
+    - framework_statistics.json : Statistical summaries of classification distributions
+    - validation_metrics.json : Accuracy metrics for content validity test sets
+    - heatmap_visualizations/ : Visual representations of code/theme frequencies
+
+ingest
+  Stage 1: Segment transcripts only (Phase 3, Stage 1)
+  Input: Raw diarized transcripts in transcript-dir
+  Output: Frozen segments written to output_dir/01_transcripts/segmented/<session_id>/segments.jsonl
+
+classify
+  Stages 3-3c: Run classifiers on frozen segments without re-segmenting (Phase 3)
+  --what theme   : Classify VAAMR constructs only
+  --what purer   : Classify PURER constructs only
+  --what codebook: Classify VCE phenomenology codes only
+  --what all     : Run all enabled classifiers (default)
+  Output: Classification overlays written to output_dir/03_classification/
+    - theme_labels.jsonl : VAAMR classifications
+    - purer_labels.jsonl : PURER classifications
+    - codebook_labels.jsonl : Codebook classifications
+
+assemble
+  Stage 6: Join frozen segments with classification overlays into master_segments.jsonl (Phase 3, Stage 6)
+  Input: Frozen segments + classification overlays
+  Output: output_dir/01_transcripts/master_segments.jsonl (complete integrated dataset)
+
+validate
+  Refresh validation artifacts without re-classifying (Stage 7)
+  Use after manual edits to human forms or when updating frameworks
+  Updates:
+    - content_validity_human_worksheet.txt
+    - content_validity_definition_key.txt
+    - content_validity_answer_key.txt
+    - testset manifest files with updated answer keys
+
+testset
+  Manage validation test sets (Phase 2)
+  create --kind vaamr/purer/codebook --name <name> : Create new frozen test set
+  refresh --all/--name <name>                     : Refresh AI answer key for test set(s)
+  list                                            : List existing test sets
+  Output: output_dir/05_validation/testsets/<name>/
+    - manifest.json : Test set metadata and segment IDs
+    - human_worksheet.txt : Human-annotated answers (for validation)
+    - ai_answer_key.json : AI-generated answer key for automated evaluation
+
+ cv
+  Manage content-validity test sets (Phase 2)
+  create --framework vaamr/purer --name <name>   : Create new CV test set
+  refresh --all/--name <name>                    : Refresh AI answer key using specified model(s)
+  list                                          : List existing content-validity test sets
+  Output: output_dir/04_validation/cv/<name>/
+    - manifest.json : Test set metadata and segment IDs
+    - human_worksheet.txt : Human-annotated answers (for validation)
+    - ai_answer_key.json : AI-generated answer key for automated evaluation
+    - definition_key.txt : Framework definitions used in test set
+
+--test-zeroshot
+  Run zero-shot LLM classification against content validity test sets only
+  Bypasses full pipeline; skips ingestion and assembly stages
+  Input: Content validity test set (created via cv create)
+  Output: output_dir/05_validation/content_validity_zeroshot_results.txt
+    - Detailed report with per-item results, consensus scores, confidence levels
+    - Summary statistics by difficulty level (clear/subtle/adversarial)
+    - Per-rater performance metrics
+
+Configuration:
+All commands accept configuration via --config <path> or direct CLI arguments.
+CLI arguments override config file settings. Configuration is persisted to qra_config.json
+via the setup wizard and can be reused across runs.
+
+Framework & Codebook:
+- VAAMR: Default theme framework for participant segments
+- PURER: Theme framework for therapist segments (requires separate classification)
+- VCE Phenomenology Codebook: Optional multi-label construct enrichment system
+  
+For more information on the neurophenomenological methodology, see methodology.md.
 """
 
 import argparse
@@ -155,8 +262,8 @@ def _add_common_args(parser: argparse.ArgumentParser):
 def _load_framework(framework_arg):
     """Load a ThemeFramework from preset name or JSON path."""
     if framework_arg is None or framework_arg == 'vaamr':
-        from theme_framework.vaamr import get_vaamr_framework
-        return get_vaamr_framework()
+        from theme_framework.registry import load as _registry_load_fw
+        return _registry_load_fw('vaamr')
     if framework_arg == 'vammr':
         raise ValueError(
             'The "vammr" preset is deprecated. Use "vaamr" or a custom framework JSON.'
@@ -1292,8 +1399,8 @@ def cmd_cv_create(args):
         sys.exit(2)
 
     if kind == 'purer':
-        from theme_framework.purer import get_purer_framework
-        framework = get_purer_framework()
+        from theme_framework.registry import load as _registry_load_fw
+        framework = _registry_load_fw('purer')
     else:
         framework = _load_framework(None)  # vaamr
 
@@ -1354,8 +1461,8 @@ def cmd_cv_refresh(args):
             m = json.load(f)
         kind = m.get('kind', 'vaamr')
         if kind == 'purer':
-            from theme_framework.purer import get_purer_framework
-            framework = get_purer_framework()
+            from theme_framework.registry import load as _registry_load_fw
+            framework = _registry_load_fw('purer')
         else:
             framework = _load_framework(None)
         try:

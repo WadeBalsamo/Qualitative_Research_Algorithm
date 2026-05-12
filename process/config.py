@@ -208,6 +208,10 @@ class PipelineConfig:
     # Output
     output_dir: str = './data/output/'
 
+    # Framework selection per dialogue side
+    participant_framework: str = 'vaamr'
+    therapist_framework: Optional[str] = 'purer'  # None = no therapist-side classification
+
     # Feature flags
     run_theme_labeler: bool = True
     run_codebook_classifier: bool = False

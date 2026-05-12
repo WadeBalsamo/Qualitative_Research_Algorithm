@@ -799,14 +799,18 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `purer_figures.py` | PURER × VAAMR lift heatmap and figures |
 | `reports/` | Detail report generators (session, stage, transition, cue response, longitudinal, summaries) |
 
-### Theme Framework (`theme_framework/`)
+### Theme Framework (Markdown Source)
+
+The VAAMR and PURER framework definitions are now maintained as Markdown files in the repository root (`VAAMR_FRAMEWORK.md` and `PURER.md`). These files are parsed at runtime by the theme framework loader (`src/theme_framework/markdown_loader.py`) to generate the framework objects used in classification. This allows non-technical users to edit framework definitions directly without touching Python code.
+
+**Parsing Contract**: The Markdown files must follow a specific format (see `MODULARIZATION_UPDATE.md` for details). Do not alter the YAML frontmatter or heading patterns unless you intend to change the framework identity. Edits to definitions, exemplars, and criteria are safe and encouraged.
 
 | File | Description |
 |------|-------------|
-| `vaamr.py` | VAAMR framework definition (Vigilance, Avoidance, Attention Regulation, Metacognition, Reappraisal) |
-| `purer.py` | PURER framework definition (Phenomenology, Utilization, Reframing, Education/Expectancy, Reinforcement) |
-| `theme_schema.py` | `ThemeDefinition` and `ThemeFramework` base classes |
-| `config.py` | `ThemeClassificationConfig` dataclass |
+| `theme_framework/markdown_loader.py` | Parses VAAMR/PURER Markdown → `ThemeFramework` |
+| `theme_framework/theme_schema.py` | `ThemeDefinition` and `ThemeFramework` base classes |
+| `theme_framework/registry.py` | Name-to-path dispatch for frameworks |
+| `theme_framework/config.py` | `ThemeClassificationConfig` dataclass |
 
 ## Citation
 

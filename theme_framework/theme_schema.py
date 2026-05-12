@@ -28,7 +28,6 @@ class ThemeDefinition:
     subtle_utterances: List[str] = field(default_factory=list)
     adversarial_utterances: List[str] = field(default_factory=list)
     word_prototypes: List[str] = field(default_factory=list)
-    color: Optional[str] = None
     aliases: List[str] = field(default_factory=list)
 
 
