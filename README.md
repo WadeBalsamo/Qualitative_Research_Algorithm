@@ -1,269 +1,480 @@
 # QRA: Qualitative Research Algorithm
 
-**Computational phenomenology for mindfulness-based intervention research.**
+**A clinical NLP system that discovers which language patterns predict therapeutic breakthrough moments. Built for iterative clinical trial designs**
+ 
+---
 
-QRA is a machine-assisted qualitative analysis pipeline that applies two complementary classification frameworks bilaterally to therapy transcripts: the Vigilance-Avoidance-Attention Regulation-Metacognition-Reappraisal (VAAMR) model classifies participant speech across a five-stage developmental arc, PURER (Phenomenological, Utilization, Reframing, Educate/Expectancy, Reinforcement) classifies therapist speech across five guided-inquiry moves, and the Varieties of Contemplative Experience (VCE) phenomenology codebook enriches participant segments with multi-label phenomenological content codes — producing defensible cohort-level qualitative analysis in days rather than weeks.
+QRA ingests diarized therapy session recordings, classifies every participant and therapist utterance against two independent phenomenological frameworks, then indexes the entire labeled corpus by stage transition to surface the exact language patterns present when participants cross clinically meaningful thresholds. Every instance of every transition type across the full trial corpus is extracted with the patient's own words on both sides and the therapist's contribution in between — a structured, searchable evidence base for curriculum refinement that conventional qualitative methods cannot produce at this scale or speed.
+
+The pipeline runs locally on confidential clinical data (no cloud required), deploys in production on the Move-MORE Feasibility Trial at NUNM, and is generating results for two first-author publications in preparation.
+
+**Why it matters clinically:** Between-cohort curriculum refinements in iterative feasibility trials are normally made on clinical intuition and aggregate outcome scores because full qualitative analysis takes months and the refinement window is weeks. QRA dissolves that constraint — producing per-utterance stage classifications, session-level transition matrices, per-participant longitudinal trajectories, and therapist cue-response language patterns within days of session completion.
 
 ---
 
-## The Problem: Phenomenology at the Pace of Iterative Design
+## Table of Contents
 
-Chronic pain is not simply pain that persists. In Leder's (1990) phenomenological account, building on Merleau-Ponty's (1962) analysis of the lived body, chronic pain constitutes a *dys-appearance*: the body's forcible eruption into thematic attention as an alien obstacle rather than a transparent instrument of engagement. Where a healthy body recedes into the background of experience, functioning as the medium through which a person attends to the world, the chronically pained body insists on its own presence — continuously recruiting attentional resources that would otherwise support meaning, relationship, and action. This is not merely an unpleasant sensation; it is a structural disorder of experience.
-
-Mindfulness-based interventions (MBIs) for chronic pain are, on this account, best understood as structured practices of phenomenological re-habituation: systematic attempts to restore functional structural relationships between attention and the lived body that chronic pain disorder disrupts. Mindfulness-Oriented Recovery Enhancement (MORE; Garland 2013, 2024) has demonstrated efficacy across multiple randomized controlled trials — reducing pain intensity, opioid misuse, and pain catastrophizing, with neural correlates including thalamic-default mode network decoupling that appears to drive mindfulness-based pain relief by supporting self-referential disengagement from pain (Riegner et al., 2023).
-
-But tracking *how* this re-habituation unfolds — session by session, participant by participant, in the language patients actually use to describe their experience — requires qualitative analysis of therapy transcripts. And this creates a structural tension in iterative trial design.
-
-The between-cohort refinement window in iterative feasibility trials is measured in weeks. Full qualitative analysis of a therapy transcript corpus takes months. The practical result is that curriculum modifications between cohorts are made on the basis of clinical intuition and aggregate outcome scores rather than systematic analysis of the phenomenological processes the intervention is designed to produce.
-
-QRA was built to dissolve this tension.
-
----
-
-## The Dual-Framework Architecture
-
-QRA implements two complementary phenomenological frameworks concurrently on the same transcript corpus. They address orthogonal questions.
-
-### VAAMR: Where is this participant in therapeutic progression?
-
-The Vigilance-Avoidance-Attention Regulation-Metacognition-Reappraisal (VAAMR) framework was derived from thematic analysis of MORE sessions and characterizes five stages of mindfulness skill development, interpretable as progressive stages in the restoration of healthy structural relationships between attention and the lived body:
-
-| Stage | Name | Phenomenological Character | Canonical Expression |
-|-------|------|---------------------------|---------------------|
-| 0 | **Vigilance** | Leder's dys-appearance at its most acute: the body occupying the total field of attentional engagement. Attention is reactive rather than directed, captured by pain signals that continuously reassert themselves. | *"I can't stop thinking about the pain, it's all I can focus on."* |
-| 1 | **Avoidance** | The critical developmental barrier: attentional competence acquired but deployed in the service of experiential avoidance rather than investigation. Mindfulness techniques used instrumentally to push pain away rather than to inhabit it. | *"When the pain comes, I focus really hard on my breathing to push it away."* |
-| 2 | **Attention Regulation** | Stable, sustained, volitional attention that stays *with* present somatic experience — anchored in sensation rather than fighting it or fleeing from it. Attention as deliberate investigative presence rather than defensive tool. | *"I kept bringing my attention back to the sensations, just staying with them."* |
-| 3 | **Metacognition** | The emergence of reflexive distance — an observing standpoint from which the contents of experience, including pain-related cognitions and affects, can be witnessed without identification. The body begins to re-emerge as something observed rather than something constituting. | *"I noticed I was getting anxious about the pain, and I could just watch that anxiety."* |
-| 4 | **Reappraisal** | A transformation of the noematic structure of pain experience: pain decomposed into constituent sensations, losing its character as monolithic threatening event and becoming a complex, textured, changing field. | *"It's interesting, when I really look at it, the 'pain' is actually many different feelings."* |
-
-The arc from Stage 0 to Stage 4 describes the progressive recovery of the body as a transparent medium of experience rather than a dysappearing obstacle — the theoretical process MORE is designed to produce.
-
-The full operational definitions, including prototypical features, distinguishing criteria, exemplar utterances, subtle utterances, and adversarial utterances (the boundary-case language that separates adjacent stages), are defined in `VAAMR_FRAMEWORK.md` and parsed at runtime by the theme framework.
-
-### VCE: What is this participant phenomenologically experiencing?
-
-The Varieties of Contemplative Experience codebook (Lindahl et al., 2017; DOI: [10.1371/journal.pone.0176239](https://doi.org/10.1371/journal.pone.0176239)) was derived from content-driven thematic analysis of 60 structured interviews with Western Buddhist meditators across Theravāda, Zen, and Tibetan traditions. It characterizes 59 categories of contemplative experience across seven higher-order domains, designed to be domain-descriptive rather than valence-prescriptive.
-
-| Domain | Codes | What it captures |
-|--------|-------|-----------------|
-| Affective | 13 | Fear, anxiety, positive affect, agitation, emotional detachment, bliss |
-| Cognitive | 10 | Meta-cognition, clarity, disintegration of meaning structures, change in narrative self |
-| Conative | 3 | Changes in motivation, effort, desire |
-| Perceptual | 7 | Sensory hypersensitivity, altered perception, synesthesia |
-| Sense of Self | 6 | Change in self-other boundaries, changes in sense of agency and ownership |
-| Social | 5 | Empathic changes, affiliative changes, relational shifts |
-| Somatic | 15 | Pain, energy, pressure, temperature, internal sensations |
-
-Defined in `PHENOMENOLOGY_CODEBOOK.md` and parsed at runtime into `CodeDefinition` objects with formal descriptions, subcodes, inclusive criteria, and exclusive criteria.
-
-### Why Both: Orthogonal Analytical Dimensions
-
-VAAMR is a *developmental stage model* — it answers *where in therapeutic progression*. VCE is a *content taxonomy* — it answers *what is being experienced at each location in that progression*. Their concurrent application generates evidence neither framework can produce alone.
-
-The VAAMR framework encodes theoretically grounded expectations about which VCE codes should co-occur with each stage (to be pre-registered as an `expected_codes` field in [`theme_framework/vaamr.py`](theme_framework/vaamr.py) before Cohort 3):
-
-- **Vigilance** is predicted to lift: *Fear/Anxiety/Panic/Paranoia*, *Agitation or Irritability*, *Pain (Somatic)* — consistent with dys-appearance as an affective-somatic phenomenon
-- **Avoidance** is predicted to lift: *Affective Flattening*, *Emotional Detachment, or Alexithymia* — consistent with the emotional blunting documented in experiential avoidance strategies (Hayes et al., 1996)
-- **Attention Regulation** is predicted to lift: *Attention*, *Change in Duration of Experience*, *Somatic Relaxation or Calming* — consistent with sustained volitional attention to somatic experience with reduced effortful struggle
-- **Metacognition** is predicted to lift: *Meta-Cognition*, *Clarity*, *Change in Narrative Self* — consistent with the emergence of reflexive self-observation
-- **Reappraisal** is predicted to lift: *Positive Affect*, *Change in Worldview*, *Change in Self-Other or Self-World Boundaries*, *Disintegration of Conceptual Meaning Structures* — consistent with a transformation in the noematic structure of pain experience
-
-Pipeline Stage 4 tests these predictions empirically through **lift statistics** — co-occurrence ratios that measure how strongly each VCE code appears with each VAMMR stage relative to its corpus-wide base rate. This cross-validation implements Varela's (1996) neurophenomenological logic of *mutual constraints*: two independently-derived phenomenological frameworks constrain each other through empirical co-occurrence, and their convergence — or non-convergence — is informative in both directions. Confirmed predictions constitute convergent validity evidence; disconfirmed predictions reveal where theoretical frameworks require revision in this population.
+- [Published Research That Made This Possible](#published-research-that-made-this-possible)
+- [Engineering Design](#engineering-design)
+- [The Two Classification Frameworks](#the-two-classification-frameworks)
+- [What QRA Discovers: The Analysis Layer](#what-qra-discovers-the-analysis-layer)
+- [Pipeline Architecture](#pipeline-architecture)
+- [On-Disk Layout](#on-disk-layout)
+- [Module Map](#module-map)
+- [CLI Reference](#cli-reference)
+- [Configuration](#configuration)
+- [Validation Architecture](#validation-architecture)
+- [Key Design Invariants](#key-design-invariants)
+- [Installation & Quick Start](#installation--quick-start)
+- [Further Reading](#further-reading)
+- [Citations & Publications](#citations--publications)
 
 ---
 
-## The PURER Framework: Bilateral Therapist Classification
+## Published Research That Made This Possible
 
-QRA applies two classification frameworks bilaterally. VAAMR classifies every participant segment. PURER classifies every therapist segment at the **cue-block level** (one label per therapist response between consecutive participant turns). The two frameworks together constitute a complete phenomenological account of the therapeutic dyad.
+This pipeline operationalizes two frameworks from peer-reviewed research I co-authored:
 
-PURER operationalizes five guided-inquiry moves drawn from the MORE Manual (Garland, 2018) and validated against the qualitative dataset analyzed by Wexler, Balsamo et al. (2026): **P**henomenological, **U**tilization, **R**eframing, **E**ducate/Expectancy, **R**einforcement. Implemented in [`theme_framework/purer.py`](theme_framework/purer.py).
+### The VA-MR Framework (Published in *Mindfulness*)
+**Wexler, R. S., Balsamo, W.,** Fox, D. J., ZuZero, D., Parikshak, A., Kwin, S., Ramirez, J., Thompson, A. R., Carlson, H. L., Kern, T., Mist, S. D., Bradley, R., Zwickey, H., Pickworth, C. K., & Garland, E. L. (2026). "Noticing the way that I'm noticing pain": A qualitative analysis of therapeutic progression in Mindfulness-Oriented Recovery Enhancement for patients with lumbosacral radicular pain. *Mindfulness*, 17, 819–833. DOI: [10.1007/s12671-026-02782-1](https://doi.org/10.1007/s12671-026-02782-1)
 
-In the context of this analysis, PURER functions as a structured phenomenological interview method — analogous to Giorgi's (1985) descriptive phenomenological interview — systematically eliciting and consolidating participants' first-person reports of their experience.
+This paper derived the five-stage Vigilance–Avoidance–Attention Regulation–Metacognition–Reappraisal (VAAMR) model from thematic analysis of thirty MORE therapy sessions. Every VAAMR classification in this pipeline — every stage label, every operational definition, every exemplar and adversarial utterance — originates from empirical qualitative research published in a top-tier clinical psychology journal.
 
-PURER moves frequently co-occur within a single therapist turn. When a single label is required, an empirical precedence order is specified in `theme_framework/purer.py`: Reinforcement is often a wrapper around a substantive move (code the inner move); Utilization takes precedence over Reframing for forward-application prompts; Reframing takes precedence over Education when the concept is anchored to the participant's specific story.
+### The Move-MORE Feasibility Trial (Under Review)
+**Wexler, R. S., Balsamo, W.,** Lendof, V., et al. (in review). Development and pilot feasibility testing of Move-MORE: A multicomponent mindfulness-and-movement intervention for lumbosacral radicular pain. *Research Square*. DOI: [10.21203/rs.3.rs-8682836/v1](https://doi.org/10.21203/rs.3.rs-8682836/v1)
 
-Therapist dialogue is not merely contextual background to participant phenomenological expression — it is a systematic *elicitor* of phenomenological description. The structure of PURER shapes which phenomenological reports participants offer; understanding therapeutic mechanism requires understanding that shaping.
+This trial is the primary deployment context for QRA. The four-cohort iterative design — Cohorts 1–2 complete, human validation in progress — is the engineering problem the pipeline was built to solve.
 
-QRA's **therapist cue-response analysis** makes this visible. Because the pipeline separates participant and therapist segments and indexes them chronologically, it can retrieve — for every observed within-session VAAMR stage transition — the therapist dialogue that immediately preceded it. This produces an empirical characterization of which therapist behaviors are associated with each type of stage change.
+### The Full Methodology Paper (in preparation)
+[`methodology.md`](methodology.md) — *Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain* — is a complete, publication-ready methodology paper (Balsamo, Wexler et al., *in preparation*) housed directly in this repository. It provides the neurophenomenological theoretical grounding, the engineering rationale for every design decision, and the Text Psychometrics validation framework (Low et al., 2024) that QRA implements.
 
-The Avoidance → Attention Regulation transition is the single most clinically important transition to monitor: it marks the crossing of the experiential avoidance barrier, where emerging attentional skill is redirected from suppression toward open, investigative presence.
-
----
-
-## What the Pipeline Produces
-
-Given diarized session transcripts (from Whisper + speaker diarization):
-
-1. **Frozen semantically coherent segments** — embedding-based segmentation with adaptive thresholds, written to per-session frozen files (`01_transcripts/segmented/<sid>/segments.jsonl`) that are never rewritten
-2. **Classification overlay files** — per-classifier JSONL files at `02_meta/classifications/` (theme, purer, codebook, cross-validation) that can be independently re-run without touching frozen segments
-3. **VAAMR stage classifications** — multi-run LLM consensus voting with confidence tiering (High/Medium/Low)
-4. **PURER cue-block classifications** — therapist dialogue classified at the cue-unit level between participant turns
-5. **VCE phenomenology codes** — multi-label coding via embedding similarity + LLM zero-shot ensemble
-6. **Cross-validation lift statistics** — empirical (VAAMR stage × VCE code) co-occurrence ratios
-7. **Frozen validation test sets** — stratified evaluation sets for blind-coding (VAAMR, PURER, and codebook variants with frozen human worksheets and refreshable AI answer keys)
-8. **Frozen content-validity test sets** — built from framework exemplar/subtle/adversarial utterances (VAAMR and PURER)
-9. **Session-level stage progression summaries** — forward, backward, and lateral transition counts
-10. **Longitudinal trajectory reports** — group-level mean stage proportions per session number
-11. **Therapist cue-response reports** — therapist language grouped by transition type
+**If you want to understand *why* this pipeline works the way it does, read that paper.**
 
 ---
 
-## Output Directory Layout (Current)
+## Built for Scalable Production
+
+**TL;DR:** This is not a Jupyter notebook. Beta is in production as a CLI application with layered architecture, frozen data checkpoints, multi-model consensus voting, embedding ensembles, hot-reloadable configurations, and a full validation test suite, running with local models on a real clinical trial with published academic outputs. This is designed to scale with new datasets for an extensive post-hoc analysis of MBIs after validation of classification results and analysis of found language pattern cue:response relationships on the current trial.
+
+### Pipeline Design
+
+| Engineering Dimension | How QRA Implements It |
+|---|---|
+| **Language pattern discovery** | The labeled corpus is indexed chronologically by session and speaker. Every stage transition is extracted as a FROM → CUE → TO triple: participant utterance before, therapist response during, participant utterance after. The full text of each triple is retrievable, grouped by transition type, across the entire trial corpus. |
+| **Corpus-level statistical analysis** | State transition matrices (within-session and between-session), PURER × VAAMR conditional lift tables, and per-participant longitudinal trajectories are computed in pure pandas/numpy on the assembled master dataset — no LLMs involved. |
+| **Layered architecture** | 8-stage data pipeline: ingestion → operationalization → classification → cross-validation → assembly → reporting. Each stage is independently runnable and gated by a frozen data boundary. |
+| **Immutable data checkpoints** | Segmentation results are written once and frozen (`01_transcripts/segmented/`). Classifiers write to independent overlay files. Re-running any classifier never touches frozen segments — immutable staging → refreshable marts. |
+| **Classification infrastructure** | Multi-run LLM consensus voting (unanimous / majority / split / none, confidence-tiered) for VAAMR/PURER; embedding + LLM ensemble with weighted reconciliation for 59-code VCE codebook. Split-vote segments auto-flagged for human review. |
+| **Backend abstraction layer** | A single `LLMClient` interface wraps any OpenAI-compatible endpoint: LM Studio (local GPU), OpenRouter, Ollama. Swap backends with a CLI flag. Optimized for local deployment on confidential clinical data. |
+| **Hot-reloadable definitions** | VAAMR, PURER, and VCE codebook definitions live in human-editable Markdown files parsed at runtime. Researchers refine operational definitions between cohorts without touching Python. |
+| **Auditability by design** | Every LLM call logged with full prompt and response. Every segment's final label carries provenance source (`adjudicated` / `human_consensus` / `llm_zero_shot`). Full reproducibility via serialized `qra_config.json`. |
+| **Human-in-the-loop validation** | Stratified 20% blind-coding evaluation set with frozen human worksheets and refreshable AI answer keys. Four qualitative researchers blind-coding VAAMR; Krippendorff's α targets ≥ 0.60 (VAAMR) and ≥ 0.70 (PURER). |
+
+### What is actively deployed
+
+- **Published empirical foundation:** VAAMR framework published in *Mindfulness* (2026) — [full text](https://doi.org/10.1007/s12671-026-02782-1)
+- **Active clinical trial:** Move-MORE Feasibility Trial, Cohorts 1–2 analyzed, human validation underway
+- **Target metrics:** Krippendorff's α ≥ 0.60 (VAAMR), α ≥ 0.70 (PURER)
+- **Two first-author methodology papers in preparation** (see [Publications](#citations--publications))
+
+---
+
+## The Two Classification Frameworks
+
+QRA applies two frameworks bilaterally to the same transcript corpus, addressing orthogonal analytical questions. **VAAMR applies exclusively to participant segments. PURER applies exclusively to therapist segments.** These labels never cross.
+
+### VAAMR — Five-Stage Participant Developmental Arc
+
+The Vigilance–Avoidance–Attention Regulation–Metacognition–Reappraisal model characterizes where participants are in their therapeutic progression. Derived from thematic analysis of MORE sessions for chronic pain (Wexler, Balsamo et al., 2026) — published in *Mindfulness* ([DOI: 10.1007/s12671-026-02782-1](https://doi.org/10.1007/s12671-026-02782-1)).
+
+| theme_id | Stage | Core Phenomenology | Canonical Expression |
+|----------|-------|--------------------|---------------------|
+| 0 | Vigilance | Attentional capture by pain; body as dysappearing obstacle | *"I can't stop thinking about the pain, it's all I can focus on."* |
+| 1 | Avoidance | Attentional skill deployed for experiential escape | *"When the pain comes, I focus really hard on my breathing to push it away."* |
+| 2 | Attention Regulation | Stable volitional presence with somatic experience | *"I kept bringing my attention back to the sensations, just staying with them."* |
+| 3 | Metacognition | Reflexive observation of one's own mental processes | *"I noticed I was getting anxious about the pain, and I could just watch that anxiety."* |
+| 4 | Reappraisal | Noematic transformation — pain decomposed into constituent sensations | *"It's interesting, when I really look at it, the 'pain' is actually many different feelings."* |
+
+Full operational definitions (prototypical features, distinguishing criteria, exemplar / subtle / adversarial utterances, word prototypes) are in [`VAAMR_FRAMEWORK.md`](VAAMR_FRAMEWORK.md), parsed at runtime into `ThemeDefinition` objects by `theme_framework/markdown_loader.py`.
+
+### PURER — Five-Move Therapist Guided-Inquiry Framework
+
+PURER classifies therapist contributions at the **cue-block level** (one label per therapist response between consecutive participant turns). Operationalizes the MORE guided-inquiry structure as a formal classification target.
+
+| move_id | Code | Move | When to apply |
+|---------|------|------|---------------|
+| 0 | P | Phenomenological | Step-by-step elicitation of practice experience |
+| 1 | U | Utilization | Prompting forward application to everyday life |
+| 2 | R | Reframing | Repositioning participant's report as a MORE concept |
+| 3 | E | Educate/Expectancy | Psychoeducation about pain/mindfulness + expectation-setting |
+| 4 | R2 | Reinforcement | Selective affirmation of adaptive responses or insights |
+
+Precedence rule when moves co-occur: Reinforcement is often a wrapper — code the inner substantive move; Utilization > Reframing for forward-application prompts; Reframing > Education when anchored to participant's story.
+
+Full definitions in [`PURER_FRAMEWORK.md`](PURER_FRAMEWORK.md).
+
+### VCE Phenomenology Codebook — Multi-Label Enrichment
+
+The 59-code Varieties of Contemplative Experience codebook (Lindahl et al., 2017) is applied to participant segments via an embedding + LLM ensemble. Seven domains: Affective (13), Cognitive (10), Perceptual (7), Conative (3), Sense of Self (6), Social (5), Somatic (15).
+
+Full codebook in [`PHENOMENOLOGY_CODEBOOK.md`](PHENOMENOLOGY_CODEBOOK.md).
+
+For the complete theoretical neurophenomenological grounding and research methodology behind all three frameworks, see [`methodology.md`](methodology.md).
+
+---
+
+## What QRA Discovers: The Analysis Layer
+
+The classification stages are the *labeling mechanism*. The research findings live in the `analysis/` module. None of the following involves LLMs.
+
+### Therapeutic Breakthrough Moments: FROM → CUE → TO Extraction
+
+`analysis/reports/transition_report.py`, `analysis/stage_progression.py`
+
+Every participant utterance in the corpus is indexed by its chronological position in the session. For every within-session VAAMR stage transition — segment at stage X immediately followed by segment at stage Y — the pipeline extracts the tripartite structure:
+
+- **FROM** — the participant utterance at stage X, with text, confidence, and timestamp
+- **CUE** — all therapist segments whose `segment_index` falls strictly between FROM and TO in the same session, with their PURER move labels
+- **TO** — the participant utterance at stage Y, with text, confidence, and timestamp
+
+The result is a searchable corpus of every observed instance of every transition type (e.g., all Avoidance → Attention Regulation crossings across both cohorts), with actual participant language on both sides and the therapist's contribution in between. Researchers read what the breakthrough moment looks like in the patient's own words and see what the therapist said to get there. One example per (cohort, session) pair is extracted and sorted; the full collection is aggregated into LLM-synthesized portraits of what each transition type characteristically looks like across the corpus.
+
+The **Avoidance → Attention Regulation** crossing is the clinically critical case. It marks where emerging attentional skill stops being deployed for pain suppression and is redirected toward open, investigative presence — the central developmental barrier identified in Wexler, Balsamo et al. (2026). Every instance of this crossing is extracted with the full FROM/CUE/TO triple; the PURER move distribution in those cue blocks is the primary evidence for curriculum recommendations.
+
+### Therapist Move × Stage Transition: Conditional Lift
+
+`analysis/purer_analysis.py`
+
+The `CueBlock` data structure (`analysis/purer_analysis.py:CueBlock`) pairs every therapist response with its surrounding FROM and TO participant stages. For each (from\_stage, to\_stage) transition type, the analysis computes the distribution of PURER moves across all cue blocks of that type, then computes lift against the corpus-wide base rate:
+
+> Lift(PURER move | transition type) = P(move | from\_stage, to\_stage) / P(move)
+
+This generates a conditional probability table: *given that a participant just crossed the Avoidance barrier, which therapist inquiry moves were overrepresented in the preceding cue block?* The outputs are `purer_transition_profiles.csv`, `purer_vammr_lift.csv`, and `purer_empty_cue_rates.csv` (transitions where no therapist speech occurred between participant segments — spontaneous, unmediated progressions tracked separately).
+
+The clinically actionable question this answers: *is Reframing overrepresented before Reappraisal transitions? Is Phenomenology inquiry the dominant cue for Avoidance → Attention Regulation crossings, or does Reframing do more work there?* That distinction directly informs therapist training and session structure.
+
+### State Transition Matrices
+
+`analysis/stage_progression.py`, `analysis/reports/transition_report.py`
+
+Two levels of transition analysis, answering different questions:
+
+**Within-session:** For each (participant, session), the segment sequence is sorted by `segment_index` and adjacent stage pairs are tabulated — forward, backward, and lateral transition counts. Within-session transition matrices aggregate across all participants. This answers: *how fluid is stage movement within a session? What is the ratio of forward to backward transitions in Session 5 vs Session 2? Does Session 3 (Mindful Reappraisal content) actually produce more Reappraisal-stage segments than Session 1?*
+
+**Between-session:** The modal VAAMR stage per (participant, session) represents that participant's dominant stage for the session. Between-session transition matrices compare dominant stages across consecutive session numbers. This answers: *are participants consolidating gains between sessions or reverting? At what session number does the group's modal stage shift forward?* A participant who briefly reaches Reappraisal in Session 2 but then shows it as their dominant stage by Session 5 has demonstrated the consolidation VAAMR predicts.
+
+### Per-Participant Longitudinal Trajectories
+
+`analysis/longitudinal.py`, `analysis/participant.py`
+
+Per-participant reports track the dominant stage across all attended sessions — the developmental arc each participant traces. Group-level summaries compute mean stage proportion by session number across the cohort. A non-decreasing mean stage progression is the basic validity check for the VAAMR model; sessions where the mean stage dips despite content explicitly designed to produce advancement are primary curriculum modification targets.
+
+---
+
+## Pipeline Architecture
+
+`process/orchestrator.py:run_full_pipeline()` sequences these stages:
+
+```
+Stage 1  — Transcript ingestion & semantic segmentation
+Stage 2  — Construct operationalization (serialize framework definitions + content-validity test sets)
+Stage 3  — VAAMR multi-run LLM classification (participant segments)
+Stage 3b — VCE codebook classification (embedding + LLM ensemble, optional)
+Stage 3c — PURER cue-block classification (therapist segments, optional)
+Stage 4  — Cross-framework lift statistics (VAAMR × VCE co-occurrence, requires 3b)
+Stage 5  — Validation set generation (stratified blind-coding sample)
+Stage 6  — Dataset assembly (frozen segments + overlays → master_segments.jsonl)
+Stage 7  — Report generation (coded transcripts, human forms, stats)
+Stage 8  — Post-hoc analysis (trajectories, cue-response, figures) — also via `qra analyze`
+```
+
+### Stage 1 — Semantic Segmentation
+
+`process/transcript_ingestion.py`, `process/llm_segmentation.py`
+
+Sentence-transformer embeddings → windowed cosine-similarity curve → adaptive threshold (25th percentile of session's own distribution) → segment boundaries. Also respects silence gaps (default 1500 ms) and enforces min/max word counts (30/200 words, recursive split at midpoint).
+
+Therapist and participant segments are separated at this stage. Therapist segments flow to PURER (Stage 3c) and appear as read-only preceding context in VAAMR prompts. They are never VAAMR-classified.
+
+Boundaries are calculated with embeddings, and ambiguous-case LLM-assisted boundary refinements: `boundary_review`, `context_expansion`, `coherence_check`.
+
+**Output:** `01_transcripts/segmented/<sid>/segments.jsonl` — frozen, never rewritten upon adding new data or changing framework definitions/exemplars.
+
+### Stage 3 — VAAMR Classification
+
+`classification_tools/classification_loop.py`, `classification_tools/llm_classifier.py`
+
+Each participant segment gets a structured JSON prompt: segment text + preceding context (capped at 300 words) + full VAAMR `ThemeFramework` definitions. Required response fields: `primary_stage`, `primary_confidence`, `secondary_stage`, `secondary_confidence`, `justification` (must cite specific segment language). `null` primary_stage = valid ABSTAIN ballot.
+
+Stage definition order is randomized per run (temperature > 0) to reduce position bias.
+
+`n_runs` calls per segment → majority vote → confidence tier. Agreement levels: `unanimous` / `majority` / `split` / `none`. Split/none → `needs_review=True`.
+
+**Output:** `02_meta/classifications/theme_labels.jsonl`
+
+### Stage 3b — Codebook Ensemble
+
+`codebook/embedding_classifier.py`, `codebook/ensemble.py`
+
+Two independent classifiers:
+- **Embedding**: query/passage cosine similarity against code definitions + inclusive criteria + exemplars; two-pass procedure for recall on subtle phenomenology
+- **LLM**: multi-label zero-shot with strict majority rule per code
+
+Ensemble reconciliation: union (default, recall-optimized) or intersection (precision-optimized). Both component outputs stored separately for post-hoc comparison. Embedding scores weighted 0.6, LLM 0.4 in composite confidence.
+
+GPU memory hand-off: reuses segmentation embedding model when model IDs match.
+
+**Output:** `02_meta/classifications/codebook_labels.jsonl`
+
+### Stage 3c — PURER Cue-Block Classification
+
+Therapist response between consecutive participant turns = one cue-block, one PURER label. Context window: 6 preceding segments (vs 2 for VAAMR). Long didactic stretches (lesson content) can be skipped via `PurerCueConfig.skip_lesson_content`. Label propagated back to all constituent therapist segments.
+
+**Output:** `02_meta/classifications/purer_labels.jsonl`
+
+### Stage 4 — Cross-Validation Lift Statistics
+
+`process/cross_validation.py`
+
+Lift(stage, code) = P(code | stage) / P(code). Default thresholds: lift ≥ 1.5 and minimum 3 segments. Currently exploratory — computes empirical co-occurrence patterns. An `expected_codes` pre-specification (encoding theoretical VCE predictions per VAAMR stage) is planned before Cohort 3, enabling mechanical expected-vs-observed comparison implementing Varela's (1996) neurophenomenological mutual-constraints logic.
+
+**Output:** `02_meta/classifications/cross_validation_labels.jsonl`, lift report
+
+### Stage 6 — Assembly
+
+`process/assembly/master_dataset.py`
+
+Joins frozen segments + all overlay files. Final label priority: `adjudicated > human_consensus > llm_zero_shot`. Provenance fully auditable per segment.
+
+**Output:** `02_meta/training_data/master_segments.jsonl`, `master_segments.csv`
+
+---
+
+## On-Disk Layout
 
 ```
 output_dir/
 ├── 00_index.txt
 ├── 01_transcripts/
-│   ├── diarized/            # Raw input copies (provenance)
-│   ├── segmented/<sid>/     # FROZEN raw segments (Phase 1)
+│   ├── diarized/                 # Raw input copies (provenance)
+│   ├── segmented/<sid>/          # FROZEN — never rewritten
 │   │   ├── segments.jsonl
 │   │   └── segmentation_meta.json
-│   └── coded/               # Human-readable coded transcripts
+│   └── coded/                    # Human-readable coded transcripts
 ├── 02_meta/
-│   ├── classifications/     # Phase 3 overlays
-│   │   ├── theme_labels.jsonl, purer_labels.jsonl, codebook_labels.jsonl
+│   ├── classifications/          # Refreshable overlays
+│   │   ├── theme_labels.jsonl
+│   │   ├── purer_labels.jsonl
+│   │   ├── codebook_labels.jsonl
 │   │   ├── cross_validation_labels.jsonl
 │   │   └── classification_manifest.json
-│   ├── auditable_logs/      # LLM prompts/responses/checkpoints/configs
-│   ├── codebook_raw/        # Codebook embedding checkpoints
-│   ├── training_data/       # master_segments.jsonl/.csv, BERT training data
+│   ├── auditable_logs/           # LLM prompts/responses/checkpoints
+│   ├── codebook_raw/             # Embedding checkpoints
+│   ├── training_data/            # master_segments.jsonl/.csv, BERT training data
 │   └── speaker_anonymization_key.json
-├── 03_analysis_data/        # Session stats, graphing CSVs, per-{session,participant,theme} JSON
+├── 03_analysis_data/             # Session stats, graphing CSVs
 ├── 04_validation/
-│   ├── testsets/<name>/     # FROZEN validation test sets
+│   ├── testsets/<name>/          # FROZEN validation test sets
 │   │   ├── manifest.json, segments_snapshot.jsonl
-│   │   ├── human_worksheet.txt (frozen), AI_answer_key.txt (refreshable)
-│   ├── content_validity/<name>/  # FROZEN content-validity testsets
+│   │   ├── human_worksheet.txt   # frozen
+│   │   └── AI_answer_key.txt     # refreshable
+│   ├── content_validity/<name>/  # FROZEN content-validity test sets
 │   │   ├── manifest.json, items.jsonl
-│   │   ├── human_worksheet.txt, definition_key.txt (frozen)
-│   │   └── AI_answer_key.txt (refreshable)
-│   ├── cross_validation/    # Lift statistics
+│   │   ├── human_worksheet.txt, definition_key.txt  # frozen
+│   │   └── AI_answer_key.txt     # refreshable
+│   ├── cross_validation/
 │   └── human_coding_evaluation_set.csv
 ├── 05_figures/
-├── 06_reports/
-└── 07_meta/                 # (legacy — may be empty on new runs)
+└── 06_reports/
 ```
 
 ---
 
-## What Can Be Learned
+## Module Map
 
-The outputs support three levels of analysis, each addressing a different research question:
-
-### Session level: Which sessions are catalyzing stage progression?
-
-Session stage distributions, compared against the theoretical arc implied by session content, reveal where the curriculum is working and where it is not. Sessions where Avoidance remains dominant in weeks 5–7 — despite content explicitly designed to catalyze the Avoidance → Attention Regulation transition — are primary curriculum targets.
-
-### Dyadic level: What therapist behaviors facilitate contemplative transformation?
-
-The cue-response analysis directly addresses a limitation of most MBI process research: participant phenomenological reports are typically analyzed in isolation from the therapist behaviors that elicited them. QRA's session adjacency index makes this dyad visible at the level of individual transitions — allowing researchers to identify which PURER components appear in the therapist dialogue preceding significant stage changes.
-
-### Population level: What is the phenomenological texture of each stage?
-
-The lift statistics answer a question that neither framework could address alone: what are participants *actually experiencing* at each stage, and does the phenomenological texture of therapeutic transformation in a chronic pain MBI population match theoretical predictions derived from Buddhist meditators?
-
-### Longitudinal: Is there a coherent developmental trajectory?
-
-A non-decreasing mean stage progression across session numbers is the basic validity check for the VAAMR model as a developmental framework. Departure from this pattern — particularly in movement-integrated sessions — is itself informative.
+| Path | Role |
+|------|------|
+| `qra.py` | CLI entry point |
+| `process/orchestrator.py` | Stage sequencing, `run_full_pipeline`, standalone `stage_*` functions |
+| `process/config.py` | `PipelineConfig` dataclass — single source of truth for all settings |
+| `process/segments_io.py` | Frozen per-session segment I/O, `params_hash`, `load_segments_for_stage` |
+| `process/classifications_io.py` | Overlay read/write, provenance manifest |
+| `process/_freeze.py` | Freeze enforcement (atomic write, SHA verification) |
+| `process/transcript_ingestion.py` | `ConversationalSegmenter` — embedding-based semantic segmentation |
+| `process/llm_segmentation.py` | LLM-assisted boundary refinement |
+| `process/speaker_anonymization.py` | Persistent speaker ID mapping across runs |
+| `process/speaker_filter.py` | Speaker inclusion/exclusion rules per classifier |
+| `process/output_paths.py` | Single source of truth for all output directory paths |
+| `process/cross_validation.py` | VAAMR × VCE lift statistics |
+| `process/setup_wizard.py` | Interactive configuration wizard (14 steps) |
+| `process/assembly/master_dataset.py` | `assemble_master_dataset` |
+| `process/assembly/human_forms.py` | Human classification forms, test set freeze/refresh |
+| `process/assembly/content_validity.py` | Content-validity test set freeze/refresh |
+| `process/assembly/coded_transcripts.py` | Per-session coded transcript writer |
+| `process/assembly/stats_reports.py` | Per-transcript stats, cumulative report |
+| `process/assembly/training_export.py` | Training data and theme definition export |
+| `theme_framework/vaamr.py` | `get_vaamr_framework()` — loads from `VAAMR_FRAMEWORK.md` |
+| `theme_framework/purer.py` | `get_purer_framework()` — loads from `PURER_FRAMEWORK.md` |
+| `theme_framework/markdown_loader.py` | Parser: `.md` → `ThemeFramework` / `ThemeDefinition` objects |
+| `theme_framework/theme_schema.py` | `ThemeDefinition`, `ThemeFramework` dataclasses |
+| `codebook/phenomenology_codebook.py` | 59 `CodeDefinition` objects (VCE), loaded from `PHENOMENOLOGY_CODEBOOK.md` |
+| `codebook/embedding_classifier.py` | Sentence-transformer embedding-based codebook classification |
+| `codebook/ensemble.py` | Embedding + LLM ensemble reconciliation |
+| `classification_tools/llm_classifier.py` | Zero-shot prompt construction and response parsing |
+| `classification_tools/llm_client.py` | Backend abstraction (OpenRouter, Ollama, LM Studio, HuggingFace, Replicate) |
+| `classification_tools/classification_loop.py` | Multi-run consensus voting with checkpointing |
+| `classification_tools/majority_vote.py` | Ballot aggregation (unanimous/majority/split/none) |
+| `classification_tools/data_structures.py` | `Segment` dataclass |
+| `analysis/runner.py` | Post-hoc analysis entry point |
+| `analysis/purer_analysis.py` | PURER × VAAMR conditional lift table, cue-response synthesis |
+| `analysis/purer_figures.py` | PURER × VAAMR heatmap and figures |
+| `analysis/reports/` | Text report generators: session, stage, transition, cue-response, longitudinal, summaries |
 
 ---
 
-## Validation: Text Psychometrics
-
-Computational phenomenological classification requires a validation methodology appropriate to the distinctive epistemic situation. Low, Mair, Nock, and Ghosh (2024) propose *Text Psychometrics* as a framework specifically designed for this purpose. QRA implements each component:
-
-- **Content validity** — via frozen content-validity test sets at `04_validation/content_validity/`, comprising exemplar, subtle, and adversarial utterances from each framework definition.
-- **Construct validity** — via Stage 4 lift statistics constituting convergent validity hypotheses.
-- **Reliability** — via multi-run consensus (`llm_run_consistency`) with independent LLM calls as proxy raters.
-
-Human validation of the stratified evaluation set by independent rater teams, with Krippendorff's alpha and raw agreement statistics, provides the ultimate validation standard.
-
----
-
-## Getting Started
-
-- **[SETUP.md](SETUP.md)** — System requirements, installation, LLM backend configuration, setup wizard walkthrough
-- **[USAGE.md](USAGE.md)** — Full command reference, pipeline stages, output structure, configuration
-- **[CLAUDE.md](CLAUDE.md)** — Developer reference with module map and design invariants
+## CLI Reference
 
 ```bash
-python qra.py setup                # interactive configuration wizard
+# Interactive setup wizard — creates qra_config.json
+python qra.py setup
+
+# Full pipeline run
 python qra.py run --config ./data/output/02_meta/qra_config.json
+
+# Run with inline overrides
+python qra.py run --transcript-dir ./data/input --output-dir ./data/output \
+  --backend openrouter --model qwen/qwen-3-70b
+
+# Pipeline + auto-generate analysis reports
+python qra.py run --config ./qra_config.json --auto-analyze
+
+# Post-hoc analysis on completed output
 python qra.py analyze --output-dir ./data/output/
 
-# Modular stages
-python qra.py ingest -o ./data/output/                   # segment only
-python qra.py classify -o ./data/output/ --what theme     # classify theme only
-python qra.py assemble -o ./data/output/                  # join frozen+overlays
+# Modular stage execution (Phase 3)
+python qra.py ingest -o ./data/output/                    # segment only
+python qra.py classify -o ./data/output/ --what theme     # VAAMR only
+python qra.py classify -o ./data/output/ --what purer     # PURER only
+python qra.py classify -o ./data/output/ --what codebook  # VCE only
+python qra.py assemble -o ./data/output/                  # join frozen + overlays
+
+# Zero-shot content-validity test (skips full pipeline)
+python qra.py run --test-zeroshot --preset small --output-dir ./data/output/
 
 # Validation test set management
 python qra.py testset create -o ./data/output/ --kind purer --name purer_irr_1
 python qra.py testset refresh -o ./data/output/ --all
 python qra.py testset list -o ./data/output/
 
-# Content validity management
+# Content-validity test set management
 python qra.py cv create -o ./data/output/ --framework purer --name cv_purer_v1
 python qra.py cv refresh -o ./data/output/ --all
 python qra.py cv list -o ./data/output/
 ```
 
-**LLM backend options:** LM Studio (local), OpenRouter, Replicate, Ollama, HuggingFace — any OpenAI-compatible endpoint.
+---
+
+## Configuration
+
+`process/config.py:PipelineConfig` covers all settings: paths, trial metadata, framework/codebook selection, LLM backend and model, classification parameters (`n_runs`, `temperature`, confidence thresholds), embedding model, speaker filtering, feature flags, test set config, content-validity config, and PURER cue config (`skip_lesson_content`, `max_lesson_words`, `therapist_max_gap_seconds`, `max_context_words`).
+
+The setup wizard serializes to `qra_config.json`; `--config` reproduces any run exactly.
+
+**LLM backends:** LM Studio (local), OpenRouter (`OPENROUTER_API_KEY`), Replicate (`REPLICATE_API_TOKEN`), Ollama, HuggingFace — any OpenAI-compatible endpoint.
 
 ---
 
-## Development Roadmap
+## Validation Architecture
 
-The pipeline is validated on Move-MORE Cohorts 1 and 2. PURER classification is operational. Engineering priorities:
+QRA implements a scalable pipeline for maintaing human-validated datasets across a scaling content database:
 
-1. **PURER Validation and Refinement** — validate therapist segment classifications against human expert raters. Target: Krippendorff's α ≥ 0.70.
-2. **Expected Codes Pre-Specification** — operationalize Varela-style mutual-constraints test by populating `expected_codes` fields before Cohort 3.
-3. **Avoidance-Barrier Dedicated Report** — automated analysis of Avoidance prevalence and barrier-crossing timing.
-4. **Outcome integration** — join session-level VAAMR stage distributions with quantitative outcomes.
-5. **Supervised fine-tuning** — use the accumulated labeled corpus to train domain-adapted classifiers.
-
-See **[ROADMAP.md](ROADMAP.md)** for the full research and engineering trajectory.
+- **Content validity** — frozen content-validity test sets at `04_validation/content_validity/` with exemplar, subtle, and adversarial utterances from each framework definition. Run the classifier against known labels before touching real transcripts.
+- **Construct validity** — empirical VAAMR × VCE lift statistics. Currently exploratory (Cohorts 1–2 characterization). An `expected_codes` pre-specification (encoding theoretical VCE predictions per VAAMR stage) is a committed engineering item before Cohort 3 begins, which will enable mechanical expected-vs-observed comparison.
+- **Reliability** — multi-run consensus (`llm_run_consistency`). Current production: single-model stochastic (stability measure). Planned: multi-model rotation (genuine cross-rater agreement).
+- **Human validation** — stratified 20% evaluation set at `04_validation/human_coding_evaluation_set.csv`. Four qualitative researchers blind-coding VAAMR; PURER validation underway. Target: Krippendorff's α ≥ 0.60 (VAAMR) and α ≥ 0.70 (PURER).
 
 ---
 
-## Publications in Preparation
+## Key Design Invariants
 
-**Balsamo, W., Wexler, R. S., et al.** — "From Vigilance to Reappraisal: A Computational Neurophenomenological Method for Analyzing Contemplative Transformation in Mindfulness-Based Pain Therapy." *In preparation for Journal of Phenomenology and the Cognitive Sciences.*
-
-**Balsamo, W., Wexler, R. S., Fox, D. J., Garland, E. L., et al.** — "Computational Phenomenology in Mindfulness-Based Interventions for Chronic Pain: A Machine-Assisted Methodology for Rapid Iterative Curriculum Refinement." *In preparation for Journal of Contemplative Studies.*
-
----
-
-## Prior Work
-
-This project is built directly upon the following bodies of work:
-
-**VA-MR Framework**
-- Wexler, R. S., Balsamo, W., et al. (2026). "Noticing the Way that I'm Noticing Pain": A qualitative analysis of therapeutic progression in mindfulness-oriented recovery enhancement for patients with lumbosacral radicular pain. *Mindfulness*, 17, 819–833.
-
-**Move-MORE Feasibility Trial**
-- Wexler, R. S., Balsamo, W., et al. (2026). Development and pilot feasibility testing of Move-MORE: A multicomponent mindfulness-and-movement intervention for lumbosacral radicular pain.
-
-**MORE for LRP Randomized Controlled Trial**
-- Wexler, R. S., Fox, D. J., et al. (2024). Virtually delivered MORE reduces daily pain intensity in patients with lumbosacral radiculopathy. *Pain Reports*, 9(2), e1132.
-
-**VCE Phenomenology Codebook**
-- Lindahl, J. R., et al. (2017). The varieties of contemplative experience. *PLOS ONE*, 12(5), e0176239.
-
-**Text Psychometrics**
-- Low, D. M., Mair, P., Nock, M. K., & Ghosh, S. S. (2024). Text psychometrics. *Psychological Methods*.
+1. **Frozen segmentation** — `01_transcripts/segmented/<sid>/segments.jsonl` is written once. No re-segmentation on re-runs. Only raw-segmentation fields are persisted; no classification data in segment files.
+2. **Overlay separation** — re-running any classifier overwrites only its `02_meta/classifications/<key>_labels.jsonl`. Frozen segments are untouched.
+3. **Framework boundary** — VAAMR classifies participants; PURER classifies therapists. Therapist segments appear as read-only context in participant classification prompts but are never VAAMR-classified.
+4. **Auditable provenance** — every segment's final label carries its source (`adjudicated` / `human_consensus` / `llm_zero_shot`). Every LLM call is logged with full prompt and response to `02_meta/auditable_logs/`.
+5. **Hot markdown definitions** — VAAMR, PURER, and VCE codebook definitions live in human-editable `.md` files, parsed at runtime. Researchers can refine operational definitions between cohorts without touching Python.
 
 ---
 
-## Citation
+## Installation & Quick Start
+
+```bash
+# Clone
+git clone https://github.com/wadebalsamo/Qualitative_Research_Algorithm.git
+cd qra
+
+# Environment
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# Interactive configuration wizard
+python qra.py setup
+
+# Run the full pipeline (with local model)
+python qra.py run --config ./qra_config.json
+```
+
+**What happens on first run:** The setup wizard walks you through LLM backend selection, model choice, trial metadata, classification parameters, and output paths. It writes a reproducible `qra_config.json`. Then `python qra.py run` sequences all 8 pipeline stages automatically — or you can run stages modularly with `python qra.py ingest`, `python qra.py classify`, etc.
+
+---
+
+## Further Reading
+
+- [`methodology.md`](methodology.md) — Full neurophenomenological methodology paper (Balsamo, Wexler et al., *in preparation*). This is the canonical reference for *why* the pipeline is designed the way it is.
+- [`VAAMR_FRAMEWORK.md`](VAAMR_FRAMEWORK.md) — Complete operational VAAMR definitions with exemplar, subtle, and adversarial utterances
+- [`PURER_FRAMEWORK.md`](PURER_FRAMEWORK.md) — Complete operational PURER definitions
+- [`PHENOMENOLOGY_CODEBOOK.md`](PHENOMENOLOGY_CODEBOOK.md) — 59-code VCE codebook
+- [`CLAUDE.md`](CLAUDE.md) — Developer quick-reference (commands, module map, invariants)
+- [`ROADMAP.md`](ROADMAP.md) — Research and engineering trajectory
+
+---
+
+## Citations & Publications
+
+### Peer-Reviewed Publications Using This Framework
+
+> Wexler, R. S., **Balsamo, W.**, Fox, D. J., ZuZero, D., Parikshak, A., Kwin, S., Ramirez, J., Thompson, A. R., Carlson, H. L., Kern, T., Mist, S. D., Bradley, R., Zwickey, H., Pickworth, C. K., & Garland, E. L. (2026). "Noticing the way that I'm noticing pain": A qualitative analysis of therapeutic progression in Mindfulness-Oriented Recovery Enhancement for patients with lumbosacral radicular pain. *Mindfulness*, 17, 819–833. DOI: [10.1007/s12671-026-02782-1](https://doi.org/10.1007/s12671-026-02782-1)
+
+> Wexler, R. S., **Balsamo, W.**, Lendof, V., et al. (in review). Development and pilot feasibility testing of Move-MORE: A multicomponent mindfulness-and-movement intervention for lumbosacral radicular pain. *Research Square*. DOI: [10.21203/rs.3.rs-8682836/v1](https://doi.org/10.21203/rs.3.rs-8682836/v1)
+
+### Publications in Preparation
+
+> **Balsamo, W.**, Wexler, R. S., et al. "Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain." *In Preparation*. — See [`methodology.md`](methodology.md).
+
+> **Balsamo, W.**, Wexler, R. S., et al. "From Vigilance to Reappraisal: Computational Neurophenomenological Results from Analyzing Contemplative Transformation in Mindfulness-Based Pain Therapy." *In Preparation*.
+
+### Previous Work This Pipeline Builds Upon
+
+> Lindahl, J. R., et al. (2017). The varieties of contemplative experience: A mixed-methods study of meditation-related challenges in Western Buddhists. *PLOS ONE*, 12(5), e0176239. DOI: [10.1371/journal.pone.0176239](https://doi.org/10.1371/journal.pone.0176239)
+
+> Low, D. M., Mair, P., Nock, M. K., & Ghosh, S. S. (2024). Text psychometrics: A framework for evaluating the validity of language models in clinical psychological assessment. *Psychological Methods*. DOI: [10.1037/met0000696](https://doi.org/10.1037/met0000696)
+
+> Ramstead, M.J.D., et al. (2022). From Generative Models to Generative Passages: A Computational Approach to (Neuro) Phenomenology. *Review of Philosophy and Psychology*, 13, 829-857. 
+
+> Varela, F. J. (1996). Neurophenomenology: A methodological remedy for the hard problem. *Journal of Consciousness Studies*, 3(4), 330–349.
+
+### How to Cite This Repository
 
 ```bibtex
 @software{QRA2026,
   title  = {QRA: Qualitative Research Algorithm},
   author = {Balsamo, Wade and Wexler, Ryan S.},
   year   = {2026},
-  note   = {Computational phenomenology pipeline for mindfulness-based intervention research}
+  note   = {Computational phenomenology for mindfulness-based intervention research. DOI: 10.1007/s12671-026-02782-1},
+  url    = {https://github.com/WadeBalsamo/Qualitative_Research_Algorithm}
 }
 ```
+
+---
 
 ## License
 
