@@ -1,6 +1,6 @@
 # Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain
 
-**Wade Balsamo, Ryan S. Wexler, Rebecca Heron, Adam Vaughn, and the Move-MORE Research Team at NUNM**
+**Wade Balsamo, Ryan S. Wexler ND MSCR, and the Move-MORE Research Team at NUNM**
 
 *In preparation for submission to a mixed-methods methodology venue (Journal of Mixed Methods Research, BMC Medical Research Methodology, or International Journal of Qualitative Methods).*
 
@@ -523,7 +523,7 @@ Varela, F. J. (1996). Neurophenomenology: A methodological remedy for the hard p
 
 Wexler, R. S., Balsamo, W., Fox, D. J., ZuZero, D., Parikshak, A., Kwin, S., Ramirez, J., Thompson, A. R., Carlson, H. L., Kern, T., Mist, S. D., Bradley, R., Zwickey, H., Pickworth, C. K., & Garland, E. L. (2026). "Noticing the way that I'm noticing pain": A qualitative analysis of therapeutic progression in Mindfulness-Oriented Recovery Enhancement for patients with lumbosacral radicular pain. *Mindfulness*, 17, 819–833.
 
-Wexler, R. S., Balsamo, W., Lendof, V., et al. (in preparation). Development and pilot feasibility testing of Move-MORE: A multicomponent mindfulness-and-movement intervention for lumbosacral radicular pain.
+Wexler, R. S., Balsamo, W., Lendof, V., et al. (in review). Development and pilot feasibility testing of Move-MORE: A multicomponent mindfulness-and-movement intervention for lumbosacral radicular pain.
 
 Wexler, R. S., Fox, D. J., ZuZero, D., et al. (2024). Virtually delivered MORE reduces daily pain intensity in patients with lumbosacral radiculopathy: A randomized controlled trial. *Pain Reports*, 9(2), e1132.
 
