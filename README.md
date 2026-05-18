@@ -433,7 +433,6 @@ python qra.py run --config ./qra_config.json
 - [`VAAMR_FRAMEWORK.md`](VAAMR_FRAMEWORK.md) — Complete operational VAAMR definitions with exemplar, subtle, and adversarial utterances
 - [`PURER_FRAMEWORK.md`](PURER_FRAMEWORK.md) — Complete operational PURER definitions
 - [`PHENOMENOLOGY_CODEBOOK.md`](PHENOMENOLOGY_CODEBOOK.md) — 59-code VCE codebook
-- [`CLAUDE.md`](CLAUDE.md) — Developer quick-reference (commands, module map, invariants)
 - [`ROADMAP.md`](ROADMAP.md) — Research and engineering trajectory
 
 ---
