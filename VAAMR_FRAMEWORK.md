@@ -532,12 +532,12 @@ aliases:
 
 ### Definition
 
-A transformation of the meaning, structure, or felt quality of pain experience that emerges from insight rather than from suppression. Two complementary domains are encompassed. SENSORY REAPPRAISAL: pain decomposed into constituent sensations (heat, tingling, pressure; jagged versus dull; sharp versus soft; hot versus cool), described as changing or impermanent rather than monolithic, with sensation explicitly distinguished from suffering. The felt quality of pain shifts as the participant attends to it directly. COGNITIVE REAPPRAISAL: pain redefined in terms of identity, life trajectory, or self-narrative; pain no longer defining the self; new sense of freedom, possibility, or worldview; pain reframed as a challenge rather than a struggle. Includes equanimity and acceptance that emerge from described understanding rather than from effortful suppression — this is the critical boundary against Avoidance. Per the precedence rule, Reappraisal is the highest stage: any utterance combining metacognitive framing with described transformation of the experience is coded here, with the metacognitive observation understood as the vehicle through which the transformation is reported.
+A transformation of the meaning, structure, or felt quality of experience that emerges from insight rather than from suppression. Two complementary domains are encompassed. SENSORY REAPPRAISAL: experience decomposed into constituent sensations (heat, tingling, pressure; jagged versus dull; sharp versus soft; hot versus cool), described as changing or impermanent rather than monolithic, with sensation explicitly distinguished from suffering. The felt quality of experience shifts as the participant attends to it directly. COGNITIVE REAPPRAISAL: experience redefined in terms of identity, life trajectory, or self-narrative; pain no longer defining the self; new sense of freedom, possibility, or worldview; pain reframed as a challenge rather than a struggle. Includes equanimity and acceptance that emerge from described understanding rather than from effortful suppression — this is the critical boundary against Avoidance. Reappraisal is the highest stage: any utterance combining metacognitive framing with described transformation of the experience is coded here, with the metacognitive observation understood as the vehicle through which the transformation is reported.
 
 ### Prototypical Features
 
-- pain decomposed into distinct constituent sensations
-- pain described as changing, shifting, or impermanent
+- experience decomposed into distinct constituent sensations
+- actively changing or shifting an impermanent experience
 - sensory transformations during practice (jagged-to-dull, hot-to-cool, red-to-blue)
 - sensation explicitly distinguished from suffering or threat
 - pain redefined: no longer defining self, no longer a life sentence
@@ -547,12 +547,12 @@ A transformation of the meaning, structure, or felt quality of pain experience t
 - functional improvement: walking, moving in ways previously prevented
 - language of reframe applied to pain or emotional experience
 - pain greeted as sensation rather than threat ("oh, you are noticing me")
-- pain met with curiosity rather than dread
+- discomfort met with curiosity rather than dread
 - metacognitive framing ("noticing," "I notice") used as vehicle to report a transformed relationship
 
 ### Distinguishing Criteria
 
-Transformation of the experience itself — its meaning, structure, or felt quality — not merely sustained attention (Attention Regulation) or observation of reactions (Metacognition). CRITICAL boundary against Avoidance: when participants report that pain bothers them less or has shifted, code Reappraisal ONLY when grounded in described insight, understanding, or transformed perception — NOT in suppression, distraction, or simple absence of feeling. The presence of described insight or sensory transformation is the discriminating feature. CRITICAL boundary against Metacognition: observation has crossed into reinterpretation; the experience itself is reported as different, not merely observed. Per the precedence rule, when metacognitive framing AND transformation markers co-occur in a single utterance (e.g., "noticing the way I'm noticing pain ... my relationship to it is changing"), the code is Reappraisal — Metacognition is the vehicle, Reappraisal is the substance. This is an internal process, not a circumstantial change.
+Transformation of the experience itself — its meaning, structure, or felt quality — not merely sustained attention (Attention Regulation) or observation of reactions (Metacognition). CRITICAL boundary against Avoidance: when participants report that pain bothers them less or has shifted, code Reappraisal ONLY when grounded in described insight, understanding, or transformed perception — NOT in suppression, distraction, or simple absence of feeling. The presence of described insight or sensory transformation is the discriminating feature. CRITICAL boundary against Metacognition: observation has crossed into reinterpretation; the experience itself is reported as different, not merely observed. Per the precedence rule, when metacognitive framing AND transformation markers co-occur in a single utterance (e.g., "noticing the way I'm noticing pain ... my relationship to it is changing"), the code is Reappraisal — Metacognition is the vehicle, Reappraisal is the substance. This is an internal process, not a circumstantial change. 
 
 ### Exemplar Utterances
 
