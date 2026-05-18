@@ -4,11 +4,11 @@
  
 ---
 
-QRA ingests diarized therapy session recordings, classifies every participant and therapist utterance against two independent phenomenological frameworks, then indexes the entire labeled corpus by stage transition to surface the exact language patterns present when participants cross clinically meaningful thresholds. Every instance of every transition type across the full trial corpus is extracted with the patient's own words on both sides and the therapist's contribution in between — a structured, searchable evidence base for curriculum refinement that conventional qualitative methods cannot produce at this scale or speed.
+QRA ingests diarized therapy session recordings, classifies every participant and therapist utterance against two independent phenomenological frameworks, then indexes the entire labeled corpus by stage transition to surface the exact language patterns present when participants cross clinically meaningful thresholds. Every instance of every transition type across the full trial corpus is extracted with the patient's own words on both sides and the therapist's contribution in between, creating a structured, searchable evidence base for curriculum refinement that conventional qualitative methods cannot produce at this scale or speed.
 
 The pipeline runs locally on confidential clinical data (no cloud required), deploys in production on the Move-MORE Feasibility Trial at NUNM, and is generating results for two first-author publications in preparation.
 
-**Why it matters clinically:** Between-cohort curriculum refinements in iterative feasibility trials are normally made on clinical intuition and aggregate outcome scores because full qualitative analysis takes months and the refinement window is weeks. QRA dissolves that constraint — producing per-utterance stage classifications, session-level transition matrices, per-participant longitudinal trajectories, and therapist cue-response language patterns within days of session completion.
+**Why it matters clinically:** Between-cohort curriculum refinements in iterative feasibility trials are normally made on clinical intuition and aggregate outcome scores because full qualitative analysis takes months and the refinement window is weeks. QRA dissolves that constraint by producing per-utterance stage classifications, session-level transition matrices, per-participant longitudinal trajectories, and therapist cue-response language patterns within days of session completion.
 
 ---
 
