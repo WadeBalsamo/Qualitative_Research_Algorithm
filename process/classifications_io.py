@@ -136,6 +136,68 @@ def write_cross_validation_overlay(run_dir: str, segments: List[Segment]) -> str
     return _write_overlay(run_dir, 'cv', segments)
 
 
+def merge_overlay(run_dir: str, key: str, segments: List[Segment]) -> str:
+    """Merge segments into an existing overlay, replacing rows with matching segment_id.
+
+    Reads the current overlay (if any) into a dict keyed by segment_id, upserts
+    rows built from ``segments``, then writes the merged result back atomically.
+    Rows are sorted by segment_id for stable diffs.  Returns the path written.
+    """
+    fields = _OVERLAY_FIELDS_MAP[key]
+    path = overlay_path(run_dir, key)
+
+    # Load existing rows keyed by segment_id.
+    merged: dict = {}
+    try:
+        with open(path, encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                sid = rec.get('segment_id')
+                if sid is not None:
+                    merged[sid] = rec
+    except FileNotFoundError:
+        pass
+
+    # Build new rows from incoming segments and upsert.
+    for seg in segments:
+        row = {'segment_id': seg.segment_id,
+               **{f: getattr(seg, f, None) for f in fields}}
+        merged[row['segment_id']] = row
+
+    # Stable sort by segment_id then atomic write.
+    sorted_rows = [merged[k] for k in sorted(merged)]
+
+    def _write(fh):
+        for row in sorted_rows:
+            fh.write(json.dumps(row, default=_json_default) + '\n')
+
+    write_frozen(path, _write, force=True)
+    return path
+
+
+def merge_theme_overlay(run_dir: str, segments: List[Segment]) -> str:
+    """Merge segments into the theme overlay (upsert by segment_id). Returns path."""
+    return merge_overlay(run_dir, 'theme', segments)
+
+
+def merge_purer_overlay(run_dir: str, segments: List[Segment]) -> str:
+    """Merge segments into the PURER overlay (upsert by segment_id). Returns path."""
+    return merge_overlay(run_dir, 'purer', segments)
+
+
+def merge_codebook_overlay(run_dir: str, segments: List[Segment]) -> str:
+    """Merge segments into the codebook overlay (upsert by segment_id). Returns path."""
+    return merge_overlay(run_dir, 'codebook', segments)
+
+
+def merge_cross_validation_overlay(run_dir: str, segments: List[Segment]) -> str:
+    """Merge segments into the cross-validation overlay (upsert by segment_id). Returns path."""
+    return merge_overlay(run_dir, 'cv', segments)
+
+
 # ---------------------------------------------------------------------------
 # Readers — apply overlays back onto Segment objects in memory
 # ---------------------------------------------------------------------------

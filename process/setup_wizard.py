@@ -217,6 +217,7 @@ class SetupWizard:
 
         self._step_1_paths()
         self._step_1b_speaker_key()
+        self._step_1c_text_anonymization()
         self._step_2_speaker_filter()
 
         if self._preset_mode == 'custom':
@@ -286,7 +287,7 @@ class SetupWizard:
     # Step 1: Input/Output paths
     # -----------------------------------------------------------------
     def _step_1_paths(self):
-        print("--- Step 1/12: Input/Output Paths ---")
+        print("--- Step 1/17: Input/Output Paths ---")
         self.config_data['pipeline'] = {
             'transcript_dir': _prompt("Transcript directory", './data/input/'),
             'output_dir': _prompt("Output directory", './data/output/'),
@@ -298,7 +299,7 @@ class SetupWizard:
     # Step 1b: Speaker anonymization key import
     # -----------------------------------------------------------------
     def _step_1b_speaker_key(self):
-        print("--- Step 1b/12: Speaker Anonymization Key ---")
+        print("--- Step 1b/17: Speaker Anonymization Key ---")
         print("    Optionally import a pre-existing speaker ID mapping to keep")
         print("    participant IDs consistent across runs (e.g., Participant_MM001).")
         print("    New speakers not in the key will be assigned unknownparticipant_{N}.")
@@ -344,6 +345,44 @@ class SetupWizard:
             print()
 
     # -----------------------------------------------------------------
+    # Step 1c: PHI text anonymization
+    # -----------------------------------------------------------------
+
+    def _step_1c_text_anonymization(self):
+        print("--- Step 1c/17: PHI Text Anonymization ---")
+        print("    When enabled, speaker names from the anonymization key are replaced")
+        print("    with anonymized IDs in transcript text before segments are frozen.")
+        print("    Unrecognized person names are detected by a Presidio NLP engine")
+        print("    (spaCy + optional HF de-id model) and replaced with (NAME).")
+        print("    Recommended: ON for all clinical transcript projects.")
+        print()
+        enable = _prompt_yes_no("Enable transcript text anonymization?", default=True)
+        self.config_data['pipeline']['anonymize_transcript_text'] = enable
+        if not enable:
+            print("    Text anonymization: disabled (names will appear verbatim in frozen segments)")
+            print()
+            return
+
+        print("    Text anonymization: enabled")
+        print()
+        use_transformer = _prompt_yes_no(
+            "Use transformer de-id model for enhanced unknown-name detection?",
+            default=False,
+        )
+        if use_transformer:
+            model = _prompt(
+                "HF de-id model name",
+                default='obi/deid_roberta_i2b2',
+            )
+            self.config_data['pipeline']['anonymize_text_model'] = model
+            print(f"    Model: {model}")
+            print("    Note: model will be downloaded from HuggingFace on first use.")
+        else:
+            self.config_data['pipeline']['anonymize_text_model'] = 'obi/deid_roberta_i2b2'
+            print("    NLP engine: Presidio + spaCy en_core_web_sm (no large model download)")
+        print()
+
+    # -----------------------------------------------------------------
     # Step 2: Speaker role identification
     # -----------------------------------------------------------------
 
@@ -354,7 +393,7 @@ class SetupWizard:
     ]
 
     def _step_2_speaker_filter(self):
-        print("--- Step 2/12: Speaker Role Identification ---")
+        print("--- Step 2/17: Speaker Role Identification ---")
         print("    Identify which speakers are therapists/facilitators and which")
         print("    are participants. Therapist dialogue is preserved as read-only")
         print("    conversational context for adjacent participant segments.")
@@ -583,7 +622,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_3_segmentation(self):
-        print("--- Step 3/12: Segmentation Parameters ---")
+        print("--- Step 3/17: Segmentation Parameters ---")
         print()
         print("    SEGMENTATION EMBEDDING MODEL")
         print("    The embedding model converts transcript text into dense vectors.")
@@ -721,7 +760,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_4_backend(self):
-        print("--- Step 4/12: Backend & Model ---")
+        print("--- Step 4/17: Backend & Model ---")
         print()
         print("    PRIMARY MODEL")
         print("    The primary model is the main LLM used for all classification and")
@@ -793,7 +832,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_5_framework(self):
-        print("--- Step 5/12: Theme Framework ---")
+        print("--- Step 5/17: Theme Framework ---")
         print()
         print("    THEME FRAMEWORK")
         print("    Defines the coding scheme applied to each participant segment.")
@@ -845,7 +884,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_6_exemplars(self):
-        print("--- Step 6/12: Exemplar Utterances ---")
+        print("--- Step 6/17: Exemplar Utterances ---")
         if not self.framework:
             print("    No framework loaded; skipping exemplar customization.")
             print()
@@ -893,7 +932,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_7_codebook(self):
-        print("--- Step 7/12: Codebook Classification ---")
+        print("--- Step 7/17: Codebook Classification ---")
         print()
         print("    CODEBOOK CLASSIFICATION")
         print("    A secondary classification pass that applies a phenomenological codebook")
@@ -975,7 +1014,7 @@ class SetupWizard:
     ]
 
     def _step_8_classification(self):
-        print("--- Step 8/12: Classification Parameters ---")
+        print("--- Step 8/17: Classification Parameters ---")
         print()
         print("    NUMBER OF CLASSIFICATION RUNS (N_RUNS)")
         print("    Each run is an independent classification of every segment by a")
@@ -1101,7 +1140,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_9_confidence(self):
-        print("--- Step 9/12: Confidence Thresholds ---")
+        print("--- Step 9/17: Confidence Thresholds ---")
         print()
         print("    CONFIDENCE THRESHOLDS")
         print("    After majority-vote classification, each segment receives a")
@@ -1124,7 +1163,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_10_testsets(self):
-        print("--- Step 10/14: Validation Test Sets ---")
+        print("--- Step 10/17: Validation Test Sets ---")
         print("    Cross-session test sets for human blind-coding and inter-rater reliability.")
         print("    Each kind samples a stratified fraction of the corresponding segment pool.")
         print()
@@ -1190,7 +1229,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_10b_content_validity(self):
-        print("--- Step 10b/14: Content-Validity Test Sets ---")
+        print("--- Step 10b/17: Content-Validity Test Sets ---")
         print("    Frozen test sets built from framework exemplar/subtle/adversarial utterances.")
         print("    Tests how well the LLM handles definitional boundary cases.")
         print()
@@ -1230,7 +1269,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_11_analysis(self):
-        print("--- Step 11/14: Post-Pipeline Analysis ---")
+        print("--- Step 11/17: Post-Pipeline Analysis ---")
         print("    After the pipeline completes, the analysis module can generate:")
         print("    - Per-participant longitudinal reports (VA-MR progression)")
         print("    - Per-session summaries with prototypical exemplars")
@@ -1254,7 +1293,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_11b_therapist_cues(self):
-        print("--- Step 11b/14: Therapist Cue Summarization ---")
+        print("--- Step 11b/17: Therapist Cue Summarization ---")
         print("    When enabled, therapist dialogue between two participant segments")
         print("    is surfaced as a CUE in state_transition_explanation.txt, and")
         print("    cue_response.txt is generated with averaged cues by transition type.")
@@ -1283,7 +1322,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_11c_report_summaries(self):
-        print("--- Step 11c/14: Session & Participant Summary Reports ---")
+        print("--- Step 11c/17: Session & Participant Summary Reports ---")
         print("    The analysis module can generate LLM-written narrative summaries")
         print("    using the summarization model configured in Step 4.")
         print()
@@ -1323,7 +1362,7 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_12_save(self) -> str:
-        print("--- Step 12/14: Save Configuration ---")
+        print("--- Step 12/17: Save Configuration ---")
         from . import output_paths as _paths
         default_path = os.path.join(
             _paths.meta_dir(self.config_data['pipeline'].get('output_dir', './data/output/')),
@@ -1399,6 +1438,8 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         run_theme_labeler=pipeline.get('run_theme_labeler', True),
         run_codebook_classifier=pipeline.get('run_codebook_classifier', False),
         speaker_anonymization_key_path=pipeline.get('speaker_anonymization_key_path'),
+        anonymize_transcript_text=pipeline.get('anonymize_transcript_text', True),
+        anonymize_text_model=pipeline.get('anonymize_text_model', 'obi/deid_roberta_i2b2'),
         auto_analyze=pipeline.get('auto_analyze', True),
         segmentation=SegmentationConfig(
             embedding_model=seg.get('embedding_model', 'Qwen/Qwen3-Embedding-8B'),

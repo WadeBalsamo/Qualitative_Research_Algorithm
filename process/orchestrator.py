@@ -19,6 +19,7 @@ Stage 8: Analysis (optional) - Generates longitudinal summaries and figures
 Exposes modular stage_* functions for Phase 3 standalone operation. Interacts with every process/ submodule.
 """
 
+import copy
 import json
 import os
 import datetime
@@ -81,13 +82,11 @@ from . import legacy_migration  # LEGACY-MIGRATION CALL SITE — Phase 3 cleanup
 from . import segments_io
 from .speaker_filter import apply_speaker_filter as _apply_speaker_filter
 from .speaker_anonymization import load_speaker_map as _load_speaker_map
+from .text_anonymization import scrub_segments as _scrub_segments
 
 
-def _resolve_session_id(session_file: str) -> str:
-    """Extract the session_id from a transcript file path."""
-    if session_file.lower().endswith('.vtt'):
-        return os.path.splitext(os.path.basename(session_file))[0]
-    return os.path.basename(os.path.dirname(session_file))
+# Backward-compat alias; prefer segments_io.resolve_session_id in new code.
+_resolve_session_id = segments_io.resolve_session_id
 
 
 class PipelineObserver:
@@ -162,6 +161,51 @@ def _resolve_output_dir(output_dir, config):
     raise ValueError("output_dir required: pass --output-dir or provide a config with output_dir")
 
 
+def _build_classifier_manifest_entry(config, classifier_key: str, framework=None, codebook=None, *, n_segments: int) -> dict:
+    """Build a manifest entry recording all reproducibility-relevant classifier settings.
+
+    Always records n_segments. Records model / n_runs / temperature from the
+    appropriate sub-config when ``config`` is provided. Records framework
+    name+version for theme/cv keys when ``framework`` is provided. Records
+    codebook name+version for codebook/cv keys when ``codebook`` is provided.
+    """
+    entry: dict = {'n_segments': n_segments}
+
+    if config is not None:
+        sub_attr = {
+            'theme': 'theme_classification',
+            'purer': 'purer_classification',
+            'codebook': 'codebook_llm',
+        }.get(classifier_key)
+        if sub_attr is not None:
+            sub = getattr(config, sub_attr, None)
+            if sub is not None:
+                model = getattr(sub, 'model', None)
+                if classifier_key == 'purer' and not model:
+                    model = getattr(config.theme_classification, 'model', None)
+                if model:
+                    entry['model'] = model
+                n_runs = getattr(sub, 'n_runs', None)
+                if n_runs is not None:
+                    entry['n_runs'] = n_runs
+                temperature = getattr(sub, 'temperature', None)
+                if temperature is not None:
+                    entry['temperature'] = temperature
+
+    if framework is not None and classifier_key in ('theme', 'cv'):
+        entry['framework'] = {
+            'name': framework.name,
+            'version': getattr(framework, 'version', '?'),
+        }
+    if codebook is not None and classifier_key in ('codebook', 'cv'):
+        entry['codebook'] = {
+            'name': codebook.name,
+            'version': getattr(codebook, 'version', '?'),
+        }
+
+    return entry
+
+
 def stage_classify_theme(
     config,
     framework,
@@ -169,6 +213,7 @@ def stage_classify_theme(
     segments: Optional[List[Segment]] = None,
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
+    only_session_ids: Optional[set] = None,
 ) -> List[Segment]:
     """
     Theme classification stage.
@@ -176,6 +221,9 @@ def stage_classify_theme(
     If config and framework are provided, runs zero-shot LLM theme classification
     against participant segments, then writes/updates theme_labels.jsonl.
     If segments=None, loads from 01_transcripts/segmented/ + non-theme overlays.
+
+    only_session_ids:  When set, classify only segments whose session_id is in this set
+                       and merge results into the existing overlay (instead of full rewrite).
     """
     _od = _resolve_output_dir(output_dir, config)
     os.makedirs(_od, exist_ok=True)
@@ -185,15 +233,24 @@ def stage_classify_theme(
             _od, apply=('purer', 'codebook', 'cv'),
         )
 
-    if config is not None and framework is not None:
-        _theme_llm_classify(config, framework, segments, _od, observer)
+    if only_session_ids is not None:
+        subset = [s for s in segments if s.session_id in only_session_ids]
+    else:
+        subset = segments
 
-    _cio.write_theme_overlay(_od, segments)
-    entry: dict = {'n_segments': len(segments)}
-    if framework is not None:
-        entry['framework'] = {'name': framework.name, 'version': getattr(framework, 'version', '?')}
-    if config is not None:
-        entry['model'] = config.theme_classification.model
+    if config is not None and framework is not None:
+        _theme_llm_classify(config, framework, subset, _od, observer)
+
+    if only_session_ids is not None:
+        _cio.merge_theme_overlay(_od, subset)
+    else:
+        _cio.write_theme_overlay(_od, segments)
+    entry = _build_classifier_manifest_entry(
+        config, 'theme', framework=framework, n_segments=len(segments),
+    )
+    if only_session_ids is not None:
+        entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        entry['n_new_segments'] = len(subset)
     _cio.update_classification_manifest(_od, key='theme', entry=entry)
 
     return segments
@@ -205,12 +262,16 @@ def stage_classify_purer(
     segments: Optional[List[Segment]] = None,
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
+    only_session_ids: Optional[set] = None,
 ) -> List[Segment]:
     """
     PURER cue-unit classification stage.
 
     Writes purer_labels.jsonl from current in-memory PURER fields.
     Runs LLM classification when config is provided.
+
+    only_session_ids:  When set, classify only segments whose session_id is in this set
+                       and merge results into the existing overlay (instead of full rewrite).
     """
     _od = _resolve_output_dir(output_dir, config)
     os.makedirs(_od, exist_ok=True)
@@ -220,14 +281,24 @@ def stage_classify_purer(
             _od, apply=('theme', 'codebook', 'cv'),
         )
 
-    if config is not None:
-        _purer_llm_classify(config, segments, _od, observer)
+    if only_session_ids is not None:
+        subset = [s for s in segments if s.session_id in only_session_ids]
+    else:
+        subset = segments
 
-    _cio.write_purer_overlay(_od, segments)
-    entry: dict = {'n_segments': len(segments)}
     if config is not None:
-        entry['model'] = (getattr(config.purer_classification, 'model', None)
-                          or config.theme_classification.model)
+        _purer_llm_classify(config, subset, _od, observer)
+
+    if only_session_ids is not None:
+        _cio.merge_purer_overlay(_od, subset)
+    else:
+        _cio.write_purer_overlay(_od, segments)
+    entry = _build_classifier_manifest_entry(
+        config, 'purer', n_segments=len(segments),
+    )
+    if only_session_ids is not None:
+        entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        entry['n_new_segments'] = len(subset)
     _cio.update_classification_manifest(_od, key='purer', entry=entry)
 
     return segments
@@ -240,12 +311,16 @@ def stage_classify_codebook(
     segments: Optional[List[Segment]] = None,
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
+    only_session_ids: Optional[set] = None,
 ) -> List[Segment]:
     """
     Codebook classification stage.
 
     Writes codebook_labels.jsonl from current in-memory codebook fields.
     Runs embedding + LLM codebook classification when config and codebook are provided.
+
+    only_session_ids:  When set, classify only segments whose session_id is in this set
+                       and merge results into the existing overlay (instead of full rewrite).
     """
     _od = _resolve_output_dir(output_dir, config)
     os.makedirs(_od, exist_ok=True)
@@ -255,13 +330,24 @@ def stage_classify_codebook(
             _od, apply=('theme', 'purer', 'cv'),
         )
 
-    if config is not None and codebook is not None:
-        _codebook_classify(config, codebook, segments, _od, observer)
+    if only_session_ids is not None:
+        subset = [s for s in segments if s.session_id in only_session_ids]
+    else:
+        subset = segments
 
-    _cio.write_codebook_overlay(_od, segments)
-    entry: dict = {'n_segments': len(segments)}
-    if codebook is not None:
-        entry['codebook'] = {'name': codebook.name, 'version': getattr(codebook, 'version', '?')}
+    if config is not None and codebook is not None:
+        _codebook_classify(config, codebook, subset, _od, observer)
+
+    if only_session_ids is not None:
+        _cio.merge_codebook_overlay(_od, subset)
+    else:
+        _cio.write_codebook_overlay(_od, segments)
+    entry = _build_classifier_manifest_entry(
+        config, 'codebook', codebook=codebook, n_segments=len(segments),
+    )
+    if only_session_ids is not None:
+        entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        entry['n_new_segments'] = len(subset)
     _cio.update_classification_manifest(_od, key='codebook', entry=entry)
 
     return segments
@@ -274,12 +360,16 @@ def stage_cross_validation(
     segments: Optional[List[Segment]] = None,
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
+    only_session_ids: Optional[set] = None,
 ) -> List[Segment]:
     """
     Cross-validation stage (theme × codebook co-occurrence).
 
     Writes cross_validation_labels.jsonl.  When config and framework are both
     provided, also computes and exports co-occurrence statistics.
+
+    only_session_ids:  When set, classify only segments whose session_id is in this set
+                       and merge results into the existing overlay (instead of full rewrite).
     """
     _od = _resolve_output_dir(output_dir, config)
     os.makedirs(_od, exist_ok=True)
@@ -289,14 +379,28 @@ def stage_cross_validation(
             _od, apply=('theme', 'purer', 'codebook'),
         )
 
+    if only_session_ids is not None:
+        subset = [s for s in segments if s.session_id in only_session_ids]
+    else:
+        subset = segments
+
     if config is not None and framework is not None and \
             getattr(config, 'run_theme_labeler', False) and \
             getattr(config, 'run_codebook_classifier', False):
         _run_cv_stats(segments, framework, _od, observer)
 
-    _cio.write_cross_validation_overlay(_od, segments)
+    if only_session_ids is not None:
+        _cio.merge_cross_validation_overlay(_od, subset)
+    else:
+        _cio.write_cross_validation_overlay(_od, segments)
+    entry = _build_classifier_manifest_entry(
+        config, 'cv', framework=framework, codebook=None, n_segments=len(segments),
+    )
+    if only_session_ids is not None:
+        entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        entry['n_new_segments'] = len(subset)
     _cio.update_classification_manifest(
-        _od, key='cv', entry={'n_segments': len(segments)},
+        _od, key='cv', entry=entry,
     )
 
     return segments
@@ -346,6 +450,86 @@ def stage_assemble(
 # Private helpers for stage classification logic
 # (extracted from run_full_pipeline body to avoid duplication)
 # ---------------------------------------------------------------------------
+
+def resolve_pinned_classifier_config(
+    run_dir: str,
+    key: str,
+    current_config: 'PipelineConfig',
+    *,
+    framework=None,
+    codebook=None,
+) -> 'PipelineConfig':
+    """Return a PipelineConfig with classifier fields pinned to the manifest entry for ``key``.
+
+    Pins model, n_runs, and temperature on the appropriate sub-config block.
+    Also emits warnings if the supplied framework / codebook version differs
+    from the version recorded in the manifest. If no manifest entry exists
+    for ``key``, returns ``current_config`` unchanged.
+    """
+    manifest = _cio.read_classification_manifest(run_dir)
+    if not manifest or key not in manifest:
+        return current_config
+
+    entry = manifest[key]
+    sub_attr = {
+        'theme': 'theme_classification',
+        'purer': 'purer_classification',
+        'codebook': 'codebook_llm',
+    }.get(key)
+
+    pinned = copy.deepcopy(current_config) if sub_attr is not None else current_config
+
+    if sub_attr is not None:
+        sub = getattr(pinned, sub_attr, None)
+        if sub is not None:
+            pinned_model = entry.get('model')
+            pinned_n_runs = entry.get('n_runs')
+            pinned_temp = entry.get('temperature')
+
+            current_model = getattr(sub, 'model', None)
+            if pinned_model and current_model != pinned_model:
+                print(
+                    f"  [incremental] pinning {key} classifier model: "
+                    f"{pinned_model!r} (current config has {current_model!r})"
+                )
+                sub.model = pinned_model
+
+            if pinned_n_runs is not None and getattr(sub, 'n_runs', None) != pinned_n_runs:
+                print(f"  [incremental] pinning {key} n_runs: {pinned_n_runs}")
+                sub.n_runs = pinned_n_runs
+
+            if pinned_temp is not None and getattr(sub, 'temperature', None) != pinned_temp:
+                print(f"  [incremental] pinning {key} temperature: {pinned_temp}")
+                sub.temperature = pinned_temp
+
+    # Framework version drift warning (theme + cv)
+    if framework is not None and key in ('theme', 'cv'):
+        fw_entry = entry.get('framework') or {}
+        pinned_fw_version = fw_entry.get('version')
+        current_fw_version = getattr(framework, 'version', None)
+        if pinned_fw_version and current_fw_version and pinned_fw_version != current_fw_version:
+            print(
+                f"  [incremental] WARNING: {key} framework version drift: "
+                f"manifest has version={pinned_fw_version!r}, "
+                f"current framework has version={current_fw_version!r}. "
+                f"Continuing with current framework."
+            )
+
+    # Codebook version drift warning (codebook + cv)
+    if codebook is not None and key in ('codebook', 'cv'):
+        cb_entry = entry.get('codebook') or {}
+        pinned_cb_version = cb_entry.get('version')
+        current_cb_version = getattr(codebook, 'version', None)
+        if pinned_cb_version and current_cb_version and pinned_cb_version != current_cb_version:
+            print(
+                f"  [incremental] WARNING: {key} codebook version drift: "
+                f"manifest has version={pinned_cb_version!r}, "
+                f"current codebook has version={current_cb_version!r}. "
+                f"Continuing with current codebook."
+            )
+
+    return pinned
+
 
 def _theme_llm_classify(config, framework, segments, output_dir, observer):
     """Run zero-shot LLM theme classification in-place on segments."""
@@ -843,6 +1027,27 @@ def stage_ingest(
             for i, seg in enumerate(session_segments):
                 seg.segment_index = i
 
+        # --- PHI text anonymization (before freeze) ---
+        if getattr(config, 'anonymize_transcript_text', True):
+            _anon_map = dict(_existing_speaker_map)
+            for _orig, (_role, _anon_id) in segmenter.speaker_norm.speaker_map.items():
+                if _orig not in _anon_map:
+                    _anon_map[_orig] = (_role, _anon_id)
+            session_segments, _anon_stats = _scrub_segments(
+                session_segments,
+                _anon_map,
+                use_transformer=True,
+                confidence_threshold=getattr(config, 'anonymize_text_confidence_threshold', 0.6),
+                model_name=getattr(config, 'anonymize_text_model', 'obi/deid_roberta_i2b2'),
+            )
+            if _anon_stats['n_known'] or _anon_stats['n_unknown']:
+                plog.write(
+                    f"[text_anonymization] {sid}: "
+                    f"{_anon_stats['n_known']} known + {_anon_stats['n_unknown']} unknown "
+                    f"replacements in {_anon_stats['n_segments_modified']} segments "
+                    f"(engine: {_anon_stats.get('engine_backend', '?')})\n"
+                )
+
         import shutil as _shutil
         _diar_dir = _paths.transcripts_diarized_dir(_od)
         os.makedirs(_diar_dir, exist_ok=True)
@@ -889,6 +1094,215 @@ def stage_ingest(
     return all_segments
 
 
+def run_incremental_pipeline(
+    config: PipelineConfig,
+    framework: ThemeFramework,
+    codebook=None,
+    observer: Optional[PipelineObserver] = None,
+    *,
+    walkthrough: bool = False,
+) -> pd.DataFrame:
+    """Add new transcripts to an existing project without disturbing frozen artifacts.
+
+    Discovers sessions in config.transcript_dir whose frozen segments are missing
+    or stale, optionally runs an interactive speaker walkthrough, segments only
+    the new sessions, then for each classifier key already recorded in the
+    classification manifest, classifies only the new segments and merges results
+    into the existing overlay. Re-assembles the master dataset and re-runs
+    analysis (if enabled). Frozen testsets and content-validity worksheets are
+    never mutated.
+
+    Parameters
+    ----------
+    config : PipelineConfig
+    framework : ThemeFramework
+    codebook : optional
+    observer : PipelineObserver, optional
+    walkthrough : bool
+        When True, runs the interactive speaker walkthrough even if zero new
+        speakers are detected (used by qra add-data). When False, the
+        walkthrough still runs IF new speakers are detected, but exits silently
+        otherwise (used by transparent auto-routing from run_full_pipeline).
+
+    Returns
+    -------
+    pd.DataFrame
+        The full (old + new) master dataset.
+    """
+    if observer is None:
+        observer = SilentObserver()
+
+    output_dir = config.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Phase 0: discover new sessions
+    # ------------------------------------------------------------------
+    current_hash = segments_io.params_hash(config.segmentation)
+    session_files = discover_session_files(config.transcript_dir)
+    if not session_files:
+        import glob as _glob
+        session_files = sorted(
+            set(_glob.glob(os.path.join(config.transcript_dir, '**/*.json'), recursive=True))
+            | set(_glob.glob(os.path.join(config.transcript_dir, '**/*.vtt'), recursive=True))
+        )
+
+    new_session_files: List[str] = []
+    new_sids: set = set()
+    for sf in session_files:
+        sid = _resolve_session_id(sf)
+        if not segments_io.is_segmentation_fresh(output_dir, sid, current_hash):
+            new_session_files.append(sf)
+            new_sids.add(sid)
+
+    print()
+    print("=" * 70)
+    print("QRA INCREMENTAL PIPELINE")
+    print("=" * 70)
+    print(f"  Discovered {len(session_files)} session file(s); "
+          f"{len(new_sids)} new (un-segmented).")
+
+    # ------------------------------------------------------------------
+    # Phase 1: speaker walkthrough (interactive)
+    # ------------------------------------------------------------------
+    if walkthrough or new_session_files:
+        try:
+            from .speaker_walkthrough import run_speaker_walkthrough, discover_new_speakers
+            meta_dir = _paths.meta_dir(output_dir)
+            os.makedirs(meta_dir, exist_ok=True)
+            existing_map, _ = _load_speaker_map(meta_dir, config)
+            new_speakers = discover_new_speakers(new_session_files, existing_map)
+            if walkthrough or new_speakers:
+                run_speaker_walkthrough(config, new_session_files, output_dir=output_dir)
+        except KeyboardInterrupt:
+            print("\n  Walkthrough cancelled by user.")
+            raise
+
+    # ------------------------------------------------------------------
+    # Phase 2: segment new sessions only (stage_ingest already skips fresh)
+    # ------------------------------------------------------------------
+    all_segments = stage_ingest(config, output_dir=output_dir, observer=observer)
+
+    # ------------------------------------------------------------------
+    # Phase 3: per-key incremental classification
+    # ------------------------------------------------------------------
+    manifest = _cio.read_classification_manifest(output_dir) or {}
+    kinds_applied: List[str] = []
+
+    if not new_sids:
+        print("\n  No new sessions to classify. Skipping classification stages.")
+    else:
+        if 'theme' in manifest and config.run_theme_labeler:
+            pinned = resolve_pinned_classifier_config(output_dir, 'theme', config, framework=framework)
+            all_segments = stage_classify_theme(
+                pinned, framework,
+                segments=all_segments, output_dir=output_dir, observer=observer,
+                only_session_ids=new_sids,
+            )
+            kinds_applied.append('theme')
+
+        if 'purer' in manifest and config.run_purer_labeler and any(
+                s.speaker == 'therapist' for s in all_segments):
+            pinned = resolve_pinned_classifier_config(output_dir, 'purer', config)
+            all_segments = stage_classify_purer(
+                pinned,
+                segments=all_segments, output_dir=output_dir, observer=observer,
+                only_session_ids=new_sids,
+            )
+            kinds_applied.append('purer')
+
+        if 'codebook' in manifest and config.run_codebook_classifier:
+            cb = codebook
+            if cb is None:
+                from codebook.phenomenology_codebook import get_phenomenology_codebook
+                cb = get_phenomenology_codebook()
+            pinned = resolve_pinned_classifier_config(output_dir, 'codebook', config, codebook=cb)
+            all_segments = stage_classify_codebook(
+                pinned, cb,
+                segments=all_segments, output_dir=output_dir, observer=observer,
+                only_session_ids=new_sids,
+            )
+            kinds_applied.append('codebook')
+
+        if 'cv' in manifest and config.run_theme_labeler and config.run_codebook_classifier:
+            pinned = resolve_pinned_classifier_config(output_dir, 'cv', config, framework=framework, codebook=codebook)
+            all_segments = stage_cross_validation(
+                pinned, framework,
+                segments=all_segments, output_dir=output_dir, observer=observer,
+                only_session_ids=new_sids,
+            )
+            kinds_applied.append('cv')
+
+    # ------------------------------------------------------------------
+    # Phase 4: re-assemble master dataset
+    # ------------------------------------------------------------------
+    confidence_tier_config = asdict(config.confidence_tiers)
+    _msdir = _paths.master_segments_dir(output_dir)
+    os.makedirs(_msdir, exist_ok=True)
+    master_df = assemble_master_dataset(
+        all_segments,
+        os.path.join(_msdir, 'master_segments.jsonl'),
+        confidence_tiers=confidence_tier_config,
+    )
+
+    # ------------------------------------------------------------------
+    # Phase 5: refresh validation artifacts (do NOT create new testsets)
+    # ------------------------------------------------------------------
+    try:
+        stage_validation_artifacts(
+            config, framework, codebook,
+            segments=all_segments, output_dir=output_dir, observer=observer,
+            create_missing=False,
+        )
+    except Exception as e:
+        print(f"  Warning: validation refresh failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Phase 6: re-run analysis (idempotent — overwrites cleanly)
+    # ------------------------------------------------------------------
+    if getattr(config, 'auto_analyze', False):
+        try:
+            from analysis.runner import run_analysis
+            observer.on_stage_start("Results Analysis", "8",
+                                    explanation_key='results_analysis')
+            analysis_result = run_analysis(
+                output_dir, verbose=False,
+                llm_log_path=_paths.llm_prompts_path(output_dir),
+            )
+            observer.on_stage_complete(
+                "Results Analysis",
+                f"Analysis complete: {len(analysis_result['files_generated'])} files written",
+            )
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"\n  Warning: results analysis failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Closing summary
+    # ------------------------------------------------------------------
+    print()
+    print("=" * 70)
+    print("INCREMENTAL RUN COMPLETE")
+    print("=" * 70)
+    print(f"  New sessions segmented: {len(new_sids)}")
+    print(f"  Classifiers applied:    {', '.join(kinds_applied) if kinds_applied else '(none — no manifest keys)'}")
+    print(f"  Total segments:         {len(master_df)}")
+    if new_sids:
+        print()
+        print("  If you want a validation testset that includes the new cohort, run:")
+        print("    qra testset create --kind {vaamr|purer|codebook} --name <name> "
+              f"--output-dir {output_dir}")
+
+    try:
+        from .output_index import write_index
+        write_index(output_dir)
+    except Exception:
+        pass
+
+    return master_df
+
+
 def run_full_pipeline(
     config: PipelineConfig,
     framework: ThemeFramework,
@@ -919,6 +1333,16 @@ def run_full_pipeline(
 
     output_dir = config.output_dir
     os.makedirs(output_dir, exist_ok=True)
+
+    # Auto-route to incremental mode when an existing project is detected.
+    # Force-reprocessing is opt-in via QRA_FORCE_FULL=1 (CLI flag could be added later).
+    _existing_sids = segments_io.list_segmented_sessions(config.output_dir)
+    _existing_manifest = _cio.read_classification_manifest(config.output_dir) or {}
+    if (_existing_sids and _existing_manifest
+            and not os.environ.get('QRA_FORCE_FULL')):
+        return run_incremental_pipeline(
+            config, framework, codebook=codebook, observer=observer,
+        )
 
     # ------------------------------------------------------------------
     # Pre-flight: ensure embedding model is downloaded before the pipeline
