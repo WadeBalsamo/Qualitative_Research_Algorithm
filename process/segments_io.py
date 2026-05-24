@@ -35,6 +35,17 @@ _HASH_FIELDS = (
 )
 
 
+def resolve_session_id(session_file: str) -> str:
+    """Extract the session_id from a transcript file path.
+
+    VTT files are keyed by their basename (stem); JSON diarization files
+    are keyed by the parent directory name (which holds result.json).
+    """
+    if session_file.lower().endswith('.vtt'):
+        return os.path.splitext(os.path.basename(session_file))[0]
+    return os.path.basename(os.path.dirname(session_file))
+
+
 def params_hash(seg_cfg) -> str:
     """
     SHA-256 of canonical-sorted JSON of segmentation parameters that affect output.
@@ -80,6 +91,37 @@ def write_session_segments(
 
     write_frozen(segs_path, _write_segs, force=force)
     write_frozen(meta_path, _write_meta, force=force)
+    return segs_path
+
+
+def overwrite_segment_texts(run_dir: str, session_id: str, segments: List[Segment]) -> str:
+    """
+    Rewrite segments.jsonl in-place using an atomic rename, WITHOUT touching
+    segmentation_meta.json (preserves params_hash and ingest_timestamp).
+
+    Used by `qra apply-anonymization` for retroactive PHI scrubbing of already-frozen
+    segments. The caller is responsible for any confirmation prompt.
+
+    Returns the path to the updated segments.jsonl.
+    """
+    segs_path = _paths.session_segments_path(run_dir, session_id)
+    if not os.path.isfile(segs_path):
+        raise FileNotFoundError(
+            f"No frozen segments found for session {session_id!r} in {run_dir}"
+        )
+    tmp = segs_path + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            for seg in segments:
+                rec = {f: getattr(seg, f, None) for f in _RAW_FIELDS}
+                fh.write(json.dumps(rec, default=str) + '\n')
+        os.replace(tmp, segs_path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     return segs_path
 
 

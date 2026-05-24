@@ -254,6 +254,13 @@ def _add_common_args(parser: argparse.ArgumentParser):
              'Requires --lmstudio-url.',
     )
 
+    # PHI text anonymization
+    parser.add_argument(
+        '--no-text-anonymization',
+        action='store_true',
+        help='Disable PHI name scrubbing from transcript text during ingestion',
+    )
+
 
 # =========================================================================
 # Config building
@@ -423,6 +430,9 @@ def _build_config(args):
     if getattr(args, 'no_auto_analyze', False):
         config.auto_analyze = False
 
+    if getattr(args, 'no_text_anonymization', False):
+        config.anonymize_transcript_text = False
+
     return config
 
 
@@ -435,7 +445,9 @@ def _flatten_wizard_config(data: dict) -> dict:
     pipeline = data.get('pipeline', {})
     for key in ('transcript_dir', 'output_dir', 'trial_id',
                 'run_theme_labeler', 'run_codebook_classifier',
-                'auto_analyze', 'speaker_anonymization_key_path'):
+                'auto_analyze', 'speaker_anonymization_key_path',
+                'anonymize_transcript_text', 'anonymize_text_model',
+                'anonymize_text_confidence_threshold'):
         if key in pipeline:
             result[key] = pipeline[key]
 
@@ -515,6 +527,82 @@ def cmd_run(args):
         codebook = _load_codebook(codebook_arg)
 
     _execute_pipeline(config, framework, codebook)
+
+
+def cmd_add_data(args):
+    """Incremental data addition: segment + classify only new transcripts.
+
+    Runs the interactive speaker walkthrough, segments only sessions not
+    already present in 01_transcripts/segmented/, classifies only those new
+    segments using the manifest's recorded config (hard-pinned), merges
+    results into existing overlays, re-assembles the master dataset, and
+    re-runs analysis. Frozen validation testsets are never mutated.
+
+    Exits non-zero when no new sessions are detected.
+    """
+    from process.orchestrator import run_incremental_pipeline
+    from process import segments_io, classifications_io as _cio
+    from process.transcript_ingestion import discover_session_files
+    from process.segments_io import resolve_session_id
+
+    config = _build_config(args)
+
+    if getattr(args, 'zero_shot', False):
+        config.theme_classification.zero_shot_prompt = True
+        config.purer_classification.zero_shot_prompt = True
+
+    # Load framework
+    framework_arg = args.framework
+    if framework_arg is None and args.config:
+        with open(args.config) as f:
+            file_data = json.load(f)
+        fw = file_data.get('framework', {})
+        framework_arg = fw.get('custom_path') or fw.get('preset', 'vaamr')
+    framework = _load_framework(framework_arg)
+
+    # Load codebook (only if enabled)
+    codebook = None
+    if config.run_codebook_classifier:
+        codebook_arg = args.codebook
+        if codebook_arg is None and args.config:
+            with open(args.config) as f:
+                file_data = json.load(f)
+            cb = file_data.get('codebook', {})
+            codebook_arg = cb.get('custom_path') or cb.get('preset', 'phenomenology')
+        codebook = _load_codebook(codebook_arg)
+
+    # Sanity check: project must already exist (frozen segments + manifest present).
+    existing_sids = segments_io.list_segmented_sessions(config.output_dir)
+    manifest = _cio.read_classification_manifest(config.output_dir) or {}
+    if not existing_sids:
+        print(f"  No existing project at {config.output_dir}. Run `qra run` for the initial pass first.")
+        sys.exit(2)
+    if not manifest:
+        print(f"  No classification manifest at {config.output_dir}/02_meta/classifications/.")
+        print("  add-data requires at least one classifier to have run previously.")
+        sys.exit(2)
+
+    # Check for new sessions BEFORE invoking the walkthrough — but still proceed
+    # to walkthrough=True so the user sees explicit confirmation.
+    current_hash = segments_io.params_hash(config.segmentation)
+    session_files = discover_session_files(config.transcript_dir)
+    new_sids = []
+    for sf in session_files:
+        sid = resolve_session_id(sf)
+        if not segments_io.is_segmentation_fresh(config.output_dir, sid, current_hash):
+            new_sids.append(sid)
+    if not new_sids:
+        print(f"  No new transcripts detected in {config.transcript_dir}.")
+        print(f"  Existing project has {len(existing_sids)} segmented session(s).")
+        sys.exit(1)
+
+    # LM Studio: wait until reachable
+    if config.theme_classification.backend == 'lmstudio':
+        _wait_for_lmstudio(
+            getattr(config.theme_classification, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')
+        )
+
+    run_incremental_pipeline(config, framework, codebook=codebook, walkthrough=True)
 
 
 def _resolve_test_rater_config(args) -> dict:
@@ -1040,6 +1128,92 @@ def cmd_ingest(args):
     n_sess = len(set(s.session_id for s in segments))
     print(f"\nDone. {len(segments)} segments across {n_sess} sessions.")
     print("Run `qra classify` to classify, then `qra assemble` to build master_segments.")
+
+
+def cmd_apply_anonymization(args):
+    """qra apply-anonymization — retroactively scrub PHI names from frozen segment text."""
+    from process import segments_io as _sio
+    from process.speaker_anonymization import load_speaker_map as _load_speaker_map
+    from process.text_anonymization import scrub_segments as _scrub
+    from process import output_paths as _paths
+
+    output_dir = args.output_dir
+    sessions = _sio.list_segmented_sessions(output_dir)
+    if not sessions:
+        print(f"No frozen segments found in {output_dir}.")
+        print("Run `qra ingest` first to create segmented transcripts.")
+        sys.exit(1)
+
+    sessions_to_process = [args.session] if args.session else sessions
+    if args.session and args.session not in sessions:
+        print(f"Session {args.session!r} not found. Available: {sessions}")
+        sys.exit(1)
+
+    # Load speaker map — prefer explicit key path, fall back to project key
+    meta_dir = _paths.meta_dir(output_dir)
+    config = _build_config(args)
+    speaker_map, _ = _load_speaker_map(meta_dir, config)
+
+    if not speaker_map and not getattr(args, 'force', False):
+        print(
+            f"Warning: no speaker_anonymization_key.json found in {meta_dir}.\n"
+            "  Known names cannot be mapped to anonymized IDs.\n"
+            "  Unknown names will still be replaced with (NAME).\n"
+            "  Use --force to proceed anyway, or provide --config pointing to a key."
+        )
+        sys.exit(1)
+
+    use_transformer = not getattr(args, 'no_spacy', False)
+    model_name = getattr(args, 'model', None) or 'obi/deid_roberta_i2b2'
+    confidence = getattr(args, 'confidence', None) or 0.6
+
+    print(f"\nQRA APPLY-ANONYMIZATION")
+    print(f"  Output dir  : {output_dir}")
+    print(f"  Sessions    : {len(sessions_to_process)}")
+    print(f"  Known names : {len(speaker_map)} entries in anonymization key")
+    if use_transformer:
+        print(f"  NLP engine  : Presidio (spaCy + optional transformer de-id)")
+        print(f"  Model       : {model_name}")
+        print(f"  Confidence  : {confidence}")
+    else:
+        print("  Name detect : regex heuristics only (--no-spacy)")
+
+    if not getattr(args, 'yes', False):
+        print()
+        confirm = input(
+            f"  This will OVERWRITE segments.jsonl for {len(sessions_to_process)} session(s).\n"
+            "  segmentation_meta.json will NOT be modified.\n"
+            "  Type 'yes' to continue: "
+        ).strip().lower()
+        if confirm != 'yes':
+            print("Aborted.")
+            sys.exit(0)
+
+    print()
+    total_k = total_u = total_m = 0
+    for sid in sessions_to_process:
+        segs = _sio.read_session_segments(output_dir, sid)
+        scrubbed, stats = _scrub(
+            segs, speaker_map,
+            use_transformer=use_transformer,
+            confidence_threshold=confidence,
+            model_name=model_name,
+        )
+        _sio.overwrite_segment_texts(output_dir, sid, scrubbed)
+        total_k += stats['n_known']
+        total_u += stats['n_unknown']
+        total_m += stats['n_segments_modified']
+        backend = stats.get('engine_backend', '?')
+        print(
+            f"  {sid}: {stats['n_known']} known + {stats['n_unknown']} unknown "
+            f"replacements in {stats['n_segments_modified']} segments [{backend}]"
+        )
+
+    print(
+        f"\nDone. {total_k} known-name + {total_u} unknown-name replacements "
+        f"across {total_m} modified segments."
+    )
+    print("Run `qra assemble` to rebuild master_segments with the updated text.")
 
 
 def cmd_classify(args):
@@ -1597,6 +1771,9 @@ Examples:
   # Full pipeline with saved config
   python qra.py run --config ./qra_config.json
 
+  # Add new transcripts (incremental — walks through new speakers interactively)
+  python qra.py add-data --config ./qra_config.json
+
   # Full pipeline with inline model
   python qra.py run --backend lmstudio --model nvidia/nemotron-3-super -o ./data/output/
 
@@ -1648,6 +1825,8 @@ Examples:
                                help='Force re-segmentation of one session')
     ingest_parser.add_argument('--reingest-all', action='store_true',
                                help='Force re-segmentation of all sessions')
+    ingest_parser.add_argument('--no-text-anonymization', action='store_true',
+                               help='Disable PHI name scrubbing during ingestion')
     # Accept (and ignore) extra common args so existing configs work
     for _a in ('--backend', '--model', '--api-key', '--trial-id'):
         try:
@@ -1695,6 +1874,22 @@ Examples:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _add_common_args(run_parser)
+
+    # ---- add-data ----
+    add_data_parser = subparsers.add_parser(
+        'add-data',
+        help='Incrementally add new transcripts: segment + classify only new sessions',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Adds new transcripts to an existing project without disturbing\n'
+            'frozen segments, frozen validation testsets, or content-validity\n'
+            'worksheets. Walks the user through extending the speaker\n'
+            'anonymization key for any newly-discovered speakers.\n\n'
+            'Requires an existing project (frozen segments + classification\n'
+            'manifest). For a brand-new project, use `qra run` first.'
+        ),
+    )
+    _add_common_args(add_data_parser)
 
     # ---- analyze ----
     analyze_parser = subparsers.add_parser(
@@ -1787,6 +1982,41 @@ Examples:
     _cv_list = cv_sub.add_parser('list', help='List content-validity testsets')
     _cv_list.add_argument('--output-dir', '-o', required=True)
 
+    # ---- apply-anonymization ----
+    anon_parser = subparsers.add_parser(
+        'apply-anonymization',
+        help='Retroactively scrub PHI names from frozen segment text',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Applies PHI name scrubbing to already-frozen segments.jsonl files.\n'
+            'Known names (from speaker_anonymization_key.json) are replaced with\n'
+            '{anonymized_id} tokens; unrecognized names become (NAME).\n'
+            'segmentation_meta.json is NOT modified.\n'
+            'Run `qra assemble` afterward to rebuild master_segments.'
+        ),
+    )
+    anon_parser.add_argument('--output-dir', '-o', required=True,
+                             help='Project output directory')
+    anon_parser.add_argument('--config', '-c', default=None,
+                             help='Path to qra_config.json (to locate speaker key)')
+    anon_parser.add_argument('--session', default=None, metavar='SESSION_ID',
+                             help='Process one session only (default: all sessions)')
+    anon_parser.add_argument('--yes', '-y', action='store_true',
+                             help='Skip interactive confirmation prompt')
+    anon_parser.add_argument('--no-spacy', action='store_true',
+                             help='Use regex heuristics only (skip NLP engine)')
+    anon_parser.add_argument('--force', action='store_true',
+                             help='Proceed even without a speaker_anonymization_key.json')
+    anon_parser.add_argument(
+        '--model', default=None,
+        help='HF de-id model name for unknown-name detection '
+             '(default: obi/deid_roberta_i2b2)',
+    )
+    anon_parser.add_argument(
+        '--confidence', type=float, default=None,
+        help='Confidence threshold for model/Presidio predictions (default: 0.6)',
+    )
+
     return parser, testset_parser, cv_parser
 
 
@@ -1810,6 +2040,8 @@ def main():
             cmd_assemble(args)
         elif args.command == 'run':
             cmd_run(args)
+        elif args.command == 'add-data':
+            cmd_add_data(args)
         elif args.command == 'analyze':
             cmd_analyze(args)
         elif args.command == 'validate':
@@ -1840,6 +2072,8 @@ def main():
                 cmd_cv_list(args)
             else:
                 cv_parser.print_help()
+        elif args.command == 'apply-anonymization':
+            cmd_apply_anonymization(args)
     except KeyboardInterrupt:
         print("\n\nPipeline interrupted by user.")
         sys.exit(1)

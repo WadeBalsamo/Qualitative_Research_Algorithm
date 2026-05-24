@@ -903,6 +903,64 @@ def scan_speakers(input_dir: str) -> Dict[str, int]:
     return dict(sorted(speaker_counts.items(), key=lambda kv: -kv[1]))
 
 
+def peek_speaker_labels(
+    session_path: str,
+    max_samples_per_speaker: int = 5,
+    max_chars_per_sample: int = 200,
+) -> Dict[str, List[str]]:
+    """Return a dict mapping each speaker label to sample utterances from *session_path*.
+
+    Samples are spaced evenly through the transcript (first, ~25%, ~50%, ~75%, last).
+    Utterances with at least 8 words are preferred; shorter ones are used as fallback.
+    No segmentation, embedding, or ML is performed.
+    Returns an empty dict on any file-loading error.
+    """
+    try:
+        if session_path.lower().endswith('.vtt'):
+            data = load_vtt_session(session_path)
+        else:
+            data = load_diarized_session(session_path)
+    except Exception:
+        return {}
+
+    # Group all utterance texts by speaker
+    speaker_utterances: Dict[str, List[str]] = {}
+    for sent in data.get('sentences', []):
+        spk = sent.get('speaker', 'unknown')
+        text = (sent.get('text') or '').strip()
+        if not text:
+            continue
+        speaker_utterances.setdefault(spk, []).append(text)
+
+    def _pick_samples(utterances: List[str]) -> List[str]:
+        n = len(utterances)
+        if n == 0:
+            return []
+        k = max_samples_per_speaker
+        if n <= k:
+            candidates = utterances
+        else:
+            # Evenly-spaced indices across the list
+            indices = [round(i * (n - 1) / (k - 1)) for i in range(k)] if k > 1 else [0]
+            candidates = [utterances[i] for i in sorted(set(indices))]
+        # Prefer utterances with >= 8 words; fall back to all if none qualify
+        preferred = [u for u in candidates if len(u.split()) >= 8]
+        chosen = preferred if preferred else candidates
+        result = []
+        for u in chosen[:k]:
+            if len(u) > max_chars_per_sample:
+                result.append(u[:max_chars_per_sample] + '…')
+            else:
+                result.append(u)
+        return result
+
+    # Build result sorted by descending utterance count
+    sorted_speakers = sorted(
+        speaker_utterances.items(), key=lambda kv: -len(kv[1])
+    )
+    return {spk: _pick_samples(utts) for spk, utts in sorted_speakers}
+
+
 def parse_session_id_metadata(session_id_stem: str) -> dict:
     """Parse a canonical session ID stem (e.g. 'c1s4a', 'c2s7') into structured metadata.
 

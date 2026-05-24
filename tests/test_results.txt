@@ -1,0 +1,134 @@
+test_run_analysis_signature (test_behavior_preservation.TestAnalysisRunnerInterface)
+run_analysis must be importable and callable. ... ok
+test_run_analysis_source_has_no_replicate (test_behavior_preservation.TestAnalysisRunnerInterface)
+run_analysis source code must not reference replicate_api_token. ... ok
+test_config_serialization_excludes_secrets (test_behavior_preservation.TestConfigRoundtrip)
+to_dict must exclude _SECRET_KEYS. ... ok
+test_reference_config_roundtrips (test_behavior_preservation.TestConfigRoundtrip)
+Construct PipelineConfig from reference dict, convert back, compare. ... ok
+test_cv_testsets_create_missing_false_skips (test_behavior_preservation.TestCreateMissingFlag)
+create_missing=False on CV testsets must not create new sets. ... ok
+test_validation_testsets_create_missing_false_skips (test_behavior_preservation.TestCreateMissingFlag)
+create_missing=False on validation testsets must not create new sets. ... ok
+test_validation_testsets_create_missing_true_creates (test_behavior_preservation.TestCreateMissingFlag)
+create_missing=True on validation testsets must create new sets. ... ok
+test_validation_testsets_refresh_existing_when_no_create (test_behavior_preservation.TestCreateMissingFlag)
+create_missing=False must refresh existing testsets. ... ok
+test_llm_client_config_no_replicate_or_hf (test_behavior_preservation.TestLLMClientInterface)
+LLMClientConfig must not have Replicate/HF fields. ... ok
+test_llm_client_default_backend_is_lmstudio (test_behavior_preservation.TestLLMClientInterface)
+Default backend should be lmstudio (not huggingface). ... ok
+test_theme_classification_config_default_backend_is_lmstudio (test_behavior_preservation.TestLLMClientInterface)
+ThemeClassificationConfig default backend should be lmstudio. ... ok
+test_build_config_without_framework_field (test_behavior_preservation.TestLegacyConfigBackCompat)
+_build_config when args has no 'framework' attr must not crash. ... ok
+test_config_without_content_validity_field (test_behavior_preservation.TestLegacyConfigBackCompat)
+Config without content_validity must still load (backward compat). ... ok
+test_config_without_purer_classification (test_behavior_preservation.TestLegacyConfigBackCompat)
+Config without purer_classification must still load. ... ok
+test_legacy_flat_test_sets_format (test_behavior_preservation.TestLegacyConfigBackCompat)
+The legacy flat test_sets format {'enabled': True, 'n_sets': 2, ...} must work. ... ok
+test_classifications_io_module_imports (test_behavior_preservation.TestModuleImports)
+New classifications_io module must be importable. ... ok
+test_config_module_imports (test_behavior_preservation.TestModuleImports)
+All config dataclasses must be importable. ... ok
+test_llm_client_has_no_replicate_or_huggingface (test_behavior_preservation.TestModuleImports)
+LLMClient must have removed Replicate and HuggingFace backends. ... ok
+test_orchestrator_exports_all_stage_functions (test_behavior_preservation.TestModuleImports)
+All modular stage functions must be importable. ... ok
+test_process_init_exports_pipeline_observer (test_behavior_preservation.TestModuleImports)
+PipelineObserver must be importable from process package. ... ok
+test_process_init_exports_run_full_pipeline (test_behavior_preservation.TestModuleImports)
+run_full_pipeline must be importable from process package. ... ok
+test_qra_module_imports (test_behavior_preservation.TestModuleImports)
+qra.py must be importable as __main__ proxy. ... ok
+test_segments_io_load_for_stage_importable (test_behavior_preservation.TestModuleImports)
+New load_segments_for_stage must be importable. ... ok
+test_theme_classification_config_has_no_replicate (test_behavior_preservation.TestModuleImports)
+ThemeClassificationConfig must have removed replicate_api_token. ... ok
+test_abspath_returned_for_overlay_path (test_behavior_preservation.TestOutputPathsCompleteness)
+overlay_path must return absolute paths. ... ok
+test_classification_overlay_path_produces_correct_structure (test_behavior_preservation.TestOutputPathsCompleteness)
+classification_overlay_path must produce 02_meta/classifications/<key>_labels.jsonl. ... ok
+test_existing_paths_still_present (test_behavior_preservation.TestOutputPathsCompleteness)
+All paths from working branch must still exist. ... ok
+test_new_classification_paths_exist (test_behavior_preservation.TestOutputPathsCompleteness)
+New Phase 3 classification path functions must exist. ... ok
+test_apply_missing_overlay_is_noop (test_behavior_preservation.TestOverlayIOBehavior)
+Applying a non-existent overlay must return 0, not error. ... ok
+test_codebook_overlay_roundtrip (test_behavior_preservation.TestOverlayIOBehavior)
+Codebook overlay roundtrip preserves multi-label fields. ... ok
+test_manifest_merge_does_not_clobber (test_behavior_preservation.TestOverlayIOBehavior)
+Writing theme manifest must not clobber purer manifest entry. ... ok
+test_manifest_records_timestamp (test_behavior_preservation.TestOverlayIOBehavior)
+Classification manifest must record completed_at timestamp. ... ok
+test_overlay_files_are_sorted_by_segment_id (test_behavior_preservation.TestOverlayIOBehavior)
+Overlay records must be sorted for stable diffs across runs. ... ok
+test_overlays_are_idempotently_writable (test_behavior_preservation.TestOverlayIOBehavior)
+Overlay files can be overwritten without error (unlike frozen segments). ... ok
+test_purer_overlay_roundtrip (test_behavior_preservation.TestOverlayIOBehavior)
+PURER overlay roundtrip preserves all therapist cue fields. ... ok
+test_theme_overlay_roundtrip_preserves_all_reference_fields (test_behavior_preservation.TestOverlayIOBehavior)
+Write and read back theme overlay; all fields roundtrip intact. ... ok
+test_config_has_content_validity_field (test_behavior_preservation.TestPipelineConfigConstruction)
+PipelineConfig must have content_validity field (new feature). ... ok
+test_config_no_replicate_api_token_field (test_behavior_preservation.TestPipelineConfigConstruction)
+PipelineConfig.theme_classification must not have replicate_api_token. ... ok
+test_construct_from_reference_dict (test_behavior_preservation.TestPipelineConfigConstruction)
+build PipelineConfig from the exact working branch config dict. ... ok
+test_construct_with_legacy_test_sets_format (test_behavior_preservation.TestPipelineConfigConstruction)
+Legacy flat test_sets config should be accepted. ... ok
+test_secret_keys_no_replicate (test_behavior_preservation.TestPipelineConfigConstruction)
+_SECRET_KEYS must not contain replicate_api_token. ... ok
+test_base_observer_accepts_scope_id_kwarg (test_behavior_preservation.TestPipelineObserverBackCompat)
+Observer methods must accept the new scope_id kwarg (beta enhancement). ... ok
+test_base_observer_has_all_working_branch_methods (test_behavior_preservation.TestPipelineObserverBackCompat)
+All observer methods from working branch must exist. ... ok
+test_silent_observer_accepts_extra_kwargs (test_behavior_preservation.TestPipelineObserverBackCompat)
+SilentObserver must accept explanation_key and other kwargs. ... ok
+test_silent_observer_has_all_working_branch_methods (test_behavior_preservation.TestPipelineObserverBackCompat)
+SilentObserver must still work with old calling conventions. ... ok
+test_build_config_with_full_reference_args (test_behavior_preservation.TestQRACLIHelpers)
+_build_config handles a full args namespace like cmd_run. ... ok
+test_build_config_with_missing_attrs (test_behavior_preservation.TestQRACLIHelpers)
+_build_config must not crash when called from subparsers that don't ... ok
+test_build_config_with_partial_args (test_behavior_preservation.TestQRACLIHelpers)
+_build_config handles namespace with only some attributes. ... ok
+test_cli_replicate_api_token_arg_removed (test_behavior_preservation.TestQRACLIHelpers)
+--replicate-api-token argument must be removed from CLI. ... ok
+test_cli_replicate_backend_removed_from_choices (test_behavior_preservation.TestQRACLIHelpers)
+--backend choices must NOT include 'replicate' or 'huggingface'. ... ok
+test_command_dispatch_routes_correctly (test_behavior_preservation.TestQRACLIHelpers)
+All new Phase 3 subcommands must be in the dispatch table. ... ok
+test_subparser_setup_includes_new_commands (test_behavior_preservation.TestQRACLIHelpers)
+argparse setup must register Phase 3 subcommands. ... ok
+test_return_type_is_dataframe (test_behavior_preservation.TestRunFullPipelineSignature)
+run_full_pipeline must return pd.DataFrame as documented. ... ok
+test_signature_is_callable_with_working_branch_args (test_behavior_preservation.TestRunFullPipelineSignature)
+Must accept (config, framework, codebook, observer) like working. ... ok
+test_segment_has_codebook_fields (test_behavior_preservation.TestSegmentDataStructure)
+Segment must have codebook fields. ... ok
+test_segment_has_core_metadata_fields (test_behavior_preservation.TestSegmentDataStructure)
+Segment must have core identity and metadata fields. ... ok
+test_segment_has_purer_fields (test_behavior_preservation.TestSegmentDataStructure)
+Segment must have PURER classification fields. ... ok
+test_segment_has_vaamr_fields (test_behavior_preservation.TestSegmentDataStructure)
+Segment must have VAAMR classification fields from working branch. ... ok
+test_build_config_from_wizard_includes_content_validity (test_behavior_preservation.TestSetupWizardEnhancements)
+build_config_from_wizard_data must produce content_validity config. ... ok
+test_build_test_sets_config_from_wizard_handles_nested_format (test_behavior_preservation.TestSetupWizardEnhancements)
+_build_test_sets_config must handle nested per-kind format. ... ok
+test_build_test_sets_config_handles_legacy_flat_format (test_behavior_preservation.TestSetupWizardEnhancements)
+_build_test_sets_config must handle old flat format. ... ok
+test_content_validity_config_builder (test_behavior_preservation.TestSetupWizardEnhancements)
+_build_content_validity_config must handle wizard data. ... ok
+test_setup_wizard_backend_choices_no_replicate_hf (test_behavior_preservation.TestSetupWizardEnhancements)
+SetupWizard's backend prompt must not offer replicate or huggingface. ... ok
+test_setup_wizard_has_new_steps (test_behavior_preservation.TestSetupWizardEnhancements)
+SetupWizard must have _step_10b_content_validity method. ... ok
+test_anonymization_key_txt_path (test_behavior_preservation.TestSpeakerAnonymizationKey)
+anonymization_key_txt_path must point to 02_meta/. ... ok
+test_speaker_key_path_is_in_meta_dir (test_behavior_preservation.TestSpeakerAnonymizationKey)
+Speaker anonymization key must be in 02_meta/. ... ok
+test_stage_ingest_writes_anonymization_key (test_behavior_preservation.TestStageExecutionOrder)
+In beta, speaker anonymization key is written inside stage_ingest ... 
