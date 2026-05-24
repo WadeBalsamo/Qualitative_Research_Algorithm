@@ -242,8 +242,17 @@ class PipelineConfig:
     # Speaker anonymization key import (for seeding participant IDs)
     speaker_anonymization_key_path: Optional[str] = None
 
+    # PHI text scrubbing — replace human names in segment text before freezing
+    anonymize_transcript_text: bool = True
+    anonymize_text_model: str = 'obi/deid_roberta_i2b2'
+    anonymize_text_confidence_threshold: float = 0.6
+
     # Post-pipeline results analysis
     auto_analyze: bool = True
+
+    # Set by the incremental add-data walkthrough when the user indicates new transcripts belong to a previously-unseen cohort.
+    # Applied to segmentation metadata for any new sessions processed during that invocation.
+    incremental_new_cohort_id: Optional[str] = None
 
     # Downstream
     autoresearch_dir: str = '../autoresearch/'
