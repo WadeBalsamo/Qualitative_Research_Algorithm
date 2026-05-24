@@ -12,7 +12,7 @@ What remains is the research-facing work: validation, analysis, reporting, and t
 
 ---
 
-## Phase 1 — Methodology Paper: "Computational Phenomenology in Mindfulness-Based Interventions for Chronic Pain"
+## Phase 1 — Methodology Paper: "Phenomenology at Trial Speed: A Computational Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain"
 
 **Target manuscript:** Journal of Contemplative Studies (or equivalent)
 
