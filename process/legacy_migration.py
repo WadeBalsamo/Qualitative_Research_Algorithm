@@ -5,25 +5,30 @@ process/legacy_migration.py
 # ============================================================================
 # LEGACY MIGRATION SHIM — REMOVE IN NEXT VERSION
 #
-# This module exists solely to upgrade pre-modular project directories
-# (those that have a populated 02_meta/training_data/master_segments.jsonl
-# but no 01_transcripts/segmented/ tree) to the frozen-segments + frozen-
-# testsets layout introduced in Phase 1.
+# This module upgrades older project layouts to the current v3 layout:
 #
-# Once the in-flight projects have all been migrated, delete this file
-# and the two call sites in process/orchestrator.py marked
-# `# LEGACY-MIGRATION CALL SITE` (search the repo).
+# v2.0 (pre-modular): has master_segments.jsonl but no 01_transcripts/segmented/
+#   → migrate_legacy_segments() extracts per-session frozen segments
+#
+# v2.5: has 01_transcripts/diarized/ or 01_transcripts/coded/ (old path layout)
+#   → migrate_v25_to_v3() moves files to their v3 locations
+#
+# Both are called automatically from stage_ingest() on first encounter.
+# Once all in-flight projects have migrated, delete this file and the call
+# site in process/orchestrator.py marked `# LEGACY-MIGRATION CALL SITE`.
 # ============================================================================
 """
-import datetime
-import json
 import os
 import re
 import shutil
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from . import output_paths as _paths
 
+
+# ---------------------------------------------------------------------------
+# v2.0 detection and migration (pre-modular: no per-session frozen segments)
+# ---------------------------------------------------------------------------
 
 def is_legacy_project(run_dir: str) -> bool:
     """True iff there is master_segments.jsonl but no 01_transcripts/segmented/."""
@@ -68,177 +73,131 @@ def migrate_legacy_segments(run_dir: str) -> int:
     return n
 
 
-def migrate_legacy_testsets(run_dir: str) -> int:
+# ---------------------------------------------------------------------------
+# v2.5 detection and migration (old path layout)
+# ---------------------------------------------------------------------------
+
+def is_v25_layout(run_dir: str) -> bool:
+    """True if the project uses the v2.5 path layout (pre-v3 directory structure).
+
+    Detects by presence of the old diarized or coded transcript subdirectories
+    inside 01_transcripts/, or flat content validity files in 04_validation/.
     """
-    For every legacy 04_validation/testsets/{human,AI}_classification_testset_worksheet_<n>.txt
-    pair, create 04_validation/testsets/<name>/ and move the legacy files in.
+    old_diarized = os.path.isdir(os.path.join(run_dir, '01_transcripts', 'diarized'))
+    old_coded = os.path.isdir(os.path.join(run_dir, '01_transcripts', 'coded'))
+    cv_flat = os.path.isfile(
+        os.path.join(run_dir, '04_validation', 'content_validity_test_set.jsonl')
+    )
+    human_class_flat = any(
+        f.startswith('human_classification_') and f.endswith('.txt')
+        for f in _list_dir_safe(os.path.join(run_dir, '04_validation'))
+    )
+    return old_diarized or old_coded or cv_flat or human_class_flat
 
-    Writes manifest.json + segments_snapshot.jsonl alongside the moved worksheets.
-    Returns number of testsets migrated.
+
+def migrate_v25_to_v3(run_dir: str) -> Dict[str, int]:
     """
-    ts_dir = _paths.testsets_dir(run_dir)
-    if not os.path.isdir(ts_dir):
-        return 0
+    Migrate a v2.5 project layout to v3 in-place. Idempotent: skips files
+    whose destination already exists. Never modifies frozen testset worksheets.
 
-    segments = _load_master_segments_raw(run_dir)
-    seg_lookup = {(s.session_id, s.segment_index): s for s in segments}
-
-    pattern = re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
-    indices = []
-    for fname in os.listdir(ts_dir):
-        m = pattern.match(fname)
-        if m:
-            indices.append(int(m.group(1)))
-
-    n = 0
-    for idx in sorted(indices):
-        human_src = os.path.join(ts_dir, f'human_classification_testset_worksheet_{idx}.txt')
-        ai_src = os.path.join(ts_dir, f'AI_classification_testset_worksheet_{idx}.txt')
-        if not os.path.isfile(human_src):
-            continue
-
-        name = f'vaamr_testset_{idx}'
-        new_dir = _paths.testset_dir(run_dir, name)
-        human_dst = _paths.testset_human_worksheet_path(run_dir, name)
-
-        if os.path.exists(human_dst):
-            continue
-
-        os.makedirs(new_dir, exist_ok=True)
-
-        items = _parse_worksheet_items(human_src)
-        segs_in_testset = []
-        for session_id, seg_num_1based in items:
-            seg_index = seg_num_1based - 1
-            seg = seg_lookup.get((session_id, seg_index))
-            if seg is not None:
-                segs_in_testset.append(seg)
-
-        from ._freeze import sha256_text
-
-        manifest = {
-            'kind': 'vaamr',
-            'name': name,
-            'set_index': idx,
-            'n_sets': max(indices),
-            'seed': None,
-            'fraction': None,
-            'framework': {'name': 'vaamr', 'version': 'legacy'},
-            'segment_ids': [s.segment_id for s in segs_in_testset],
-            'content_sha256': {s.segment_id: sha256_text(s.text) for s in segs_in_testset},
-            'created_at': datetime.datetime.utcnow().isoformat() + 'Z',
-            'migrated_from_legacy': True,
-        }
-        with open(os.path.join(new_dir, 'manifest.json'), 'w', encoding='utf-8') as fh:
-            json.dump(manifest, fh, indent=2)
-
-        with open(os.path.join(new_dir, 'segments_snapshot.jsonl'), 'w', encoding='utf-8') as fh:
-            for seg in segs_in_testset:
-                rec = {
-                    'segment_id': seg.segment_id,
-                    'session_id': seg.session_id,
-                    'segment_index': seg.segment_index,
-                    'participant_id': seg.participant_id,
-                    'speaker': seg.speaker,
-                    'start_time_ms': seg.start_time_ms,
-                    'end_time_ms': seg.end_time_ms,
-                    'word_count': seg.word_count,
-                    'speakers_in_segment': seg.speakers_in_segment,
-                    'text': seg.text,
-                    'content_sha256': sha256_text(seg.text),
-                }
-                fh.write(json.dumps(rec) + '\n')
-
-        shutil.move(human_src, human_dst)
-        if os.path.isfile(ai_src):
-            shutil.move(ai_src, _paths.testset_answer_key_path(run_dir, name))
-
-        n += 1
-
-    return n
-
-
-def import_legacy_testset_dirs(run_dir: str) -> int:
+    Returns a dict with move/deletion counts for each migration step.
     """
-    Import legacy folder-based testsets into the canonical flat numbered scheme.
+    results: Dict[str, int] = {}
 
-    A legacy testset directory lives under 04_validation/testsets/<name>/ and holds
-    human_worksheet.txt + manifest.json (+ segments_snapshot.jsonl + AI_answer_key.txt).
-    The active CLI treats human_classification_testset_worksheet_<n>.txt as canonical and
-    its dedup/numbering helpers only scan those flat files, so directory-based testsets are
-    invisible — causing new testsets to overlap them. This converts each directory into a
-    flat worksheet (+ .meta.json + AI key) so dedup and numbering see them.
+    # 1. Move 01_transcripts/diarized/* → 01_transcripts_inputs/
+    old_diarized = os.path.join(run_dir, '01_transcripts', 'diarized')
+    new_inputs = _paths.transcripts_diarized_dir(run_dir)  # 01_transcripts_inputs/
+    if os.path.isdir(old_diarized):
+        os.makedirs(new_inputs, exist_ok=True)
+        n = 0
+        for f in os.listdir(old_diarized):
+            src = os.path.join(old_diarized, f)
+            dst = os.path.join(new_inputs, f)
+            if os.path.isfile(src) and not os.path.exists(dst):
+                shutil.move(src, dst)
+                n += 1
+        if not os.listdir(old_diarized):
+            os.rmdir(old_diarized)
+        results['diarized_moved'] = n
 
-    Idempotent and non-destructive: a directory whose item-set already matches an existing
-    flat worksheet is skipped, and the original directories are left in place as a backup.
-    Returns the number of directories imported.
-    """
-    ts_dir = _paths.testsets_dir(run_dir)
-    if not os.path.isdir(ts_dir):
-        return 0
+    # 2. Move 01_transcripts/coded/* → 04_validation/full_transcripts/
+    old_coded = os.path.join(run_dir, '01_transcripts', 'coded')
+    full_transcripts = _paths.full_transcripts_dir(run_dir)
+    if os.path.isdir(old_coded):
+        os.makedirs(full_transcripts, exist_ok=True)
+        n = 0
+        for f in os.listdir(old_coded):
+            src = os.path.join(old_coded, f)
+            dst = os.path.join(full_transcripts, f)
+            if os.path.isfile(src) and not os.path.exists(dst):
+                shutil.move(src, dst)
+                n += 1
+        if not os.listdir(old_coded):
+            os.rmdir(old_coded)
+        results['coded_moved'] = n
 
-    flat_pattern = re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
-    existing_item_sets = [
-        frozenset(_parse_worksheet_items(os.path.join(ts_dir, f)))
-        for f in os.listdir(ts_dir)
-        if flat_pattern.match(f)
+    # 3. Move 04_validation/human_classification_*.txt → 04_validation/full_transcripts/
+    val_dir = _paths.validation_dir(run_dir)
+    if os.path.isdir(val_dir):
+        os.makedirs(full_transcripts, exist_ok=True)
+        n = 0
+        for f in _list_dir_safe(val_dir):
+            if f.startswith('human_classification_') and f.endswith('.txt'):
+                src = os.path.join(val_dir, f)
+                dst = os.path.join(full_transcripts, f)
+                if os.path.isfile(src) and not os.path.exists(dst):
+                    shutil.move(src, dst)
+                    n += 1
+        results['human_classification_moved'] = n
+
+    # 4. Move flat content validity files → 04_validation/content_validity/
+    cv_dir = _paths.content_validity_dir(run_dir)  # 04_validation/content_validity/
+    _cv_flat_files = [
+        'content_validity_test_set.jsonl',
+        'content_validity_human_worksheet.txt',
+        'content_validity_definition_key.txt',
+        'content_validity_answer_key.txt',
     ]
+    if os.path.isdir(val_dir):
+        os.makedirs(cv_dir, exist_ok=True)
+        n = 0
+        for f in _cv_flat_files:
+            src = os.path.join(val_dir, f)
+            dst = os.path.join(cv_dir, f)
+            if os.path.isfile(src) and not os.path.exists(dst):
+                shutil.move(src, dst)
+                n += 1
+        results['cv_files_moved'] = n
 
+    # 5. Delete legacy worksheetN_base.txt files from testsets dir
+    ts_dir = _paths.testsets_dir(run_dir)
     n = 0
-    for name in sorted(os.listdir(ts_dir)):
-        legacy_dir = os.path.join(ts_dir, name)
-        human_src = os.path.join(legacy_dir, 'human_worksheet.txt')
-        manifest_src = os.path.join(legacy_dir, 'manifest.json')
-        if not (os.path.isdir(legacy_dir)
-                and os.path.isfile(human_src)
-                and os.path.isfile(manifest_src)):
+    _base_pattern = re.compile(r'^worksheet\d+_base\.txt$')
+    for f in _list_dir_safe(ts_dir):
+        if _base_pattern.match(f):
+            os.remove(os.path.join(ts_dir, f))
+            n += 1
+    results['legacy_base_removed'] = n
+
+    # 6. Delete folder-based testset dirs (contain manifest.json or segments_snapshot.jsonl)
+    n = 0
+    for name in _list_dir_safe(ts_dir):
+        d = os.path.join(ts_dir, name)
+        if not os.path.isdir(d):
             continue
+        has_manifest = os.path.isfile(os.path.join(d, 'manifest.json'))
+        has_snapshot = os.path.isfile(os.path.join(d, 'segments_snapshot.jsonl'))
+        if has_manifest or has_snapshot:
+            shutil.rmtree(d)
+            n += 1
+    results['legacy_testset_dirs_removed'] = n
 
-        items = frozenset(_parse_worksheet_items(human_src))
-        if items in existing_item_sets:
-            continue  # already imported
-
-        idx = _paths.next_testset_number(run_dir)
-        shutil.copyfile(human_src, _paths.testset_human_flat_path(run_dir, idx))
-        _write_flat_meta_from_legacy_dir(run_dir, idx, legacy_dir)
-
-        ai_src = os.path.join(legacy_dir, 'AI_answer_key.txt')
-        if os.path.isfile(ai_src):
-            shutil.copyfile(ai_src, _paths.testset_ai_flat_path(run_dir, idx))
-
-        existing_item_sets.append(items)
-        n += 1
-
-    return n
+    return results
 
 
-def _write_flat_meta_from_legacy_dir(run_dir: str, idx: int, legacy_dir: str) -> None:
-    """
-    Write the flat .meta.json drift sidecar for testset #idx from a legacy directory's
-    segments_snapshot.jsonl. Matches the schema written by human_forms._write_testset_meta:
-    {'segments': [{'session_id', 'seg_num' (1-based), 'sha256'}]}.
-    """
-    segs_meta: List[dict] = []
-    snapshot = os.path.join(legacy_dir, 'segments_snapshot.jsonl')
-    if os.path.isfile(snapshot):
-        with open(snapshot, encoding='utf-8') as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                rec = json.loads(line)
-                segs_meta.append({
-                    'session_id': rec['session_id'],
-                    'seg_num': rec['segment_index'] + 1,
-                    'sha256': rec.get('content_sha256', ''),
-                })
-    # 'legacy_import' marks this testset as a frozen, human-validated artifact: its segment
-    # content and AI classifications are preserved (only the 'N of M' header may be synced).
-    meta_path = _paths.testset_meta_path(run_dir, idx)
-    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
-    with open(meta_path, 'w', encoding='utf-8') as fh:
-        json.dump({'legacy_import': True, 'segments': segs_meta}, fh, indent=2)
-
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
 def _load_master_segments_raw(run_dir: str):
     """Load Segment objects from master_segments.jsonl for migration purposes."""

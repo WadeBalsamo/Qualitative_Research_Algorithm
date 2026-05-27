@@ -59,13 +59,18 @@ def codebook_raw_dir(run_dir: str) -> str:
 # ── Transcripts ───────────────────────────────────────────────────────────
 
 def transcripts_diarized_dir(run_dir: str) -> str:
-    """Raw diarized transcript files (provenance)."""
-    return os.path.join(run_dir, '01_transcripts', 'diarized')
+    """Raw diarized transcript files (provenance input copies)."""
+    return os.path.join(run_dir, '01_transcripts_inputs')
+
+
+def full_transcripts_dir(run_dir: str) -> str:
+    """Full-session transcript artifacts: coded transcripts and human classification forms."""
+    return os.path.join(run_dir, '04_validation', 'full_transcripts')
 
 
 def transcripts_coded_dir(run_dir: str) -> str:
-    """Per-session coded transcript .txt files."""
-    return os.path.join(run_dir, '01_transcripts', 'coded')
+    """Per-session coded transcript .txt files (alias for full_transcripts_dir)."""
+    return full_transcripts_dir(run_dir)
 
 
 # ── Machine-readable analysis data ───────────────────────────────────────
@@ -123,8 +128,8 @@ def cross_validation_dir(run_dir: str) -> str:
 
 
 def content_validity_dir(run_dir: str) -> str:
-    """Directory for content_validity_test_set.jsonl."""
-    return os.path.join(run_dir, '04_validation')
+    """Directory for content validity files and frozen CV testset directories."""
+    return os.path.join(run_dir, '04_validation', 'content_validity')
 
 
 def human_eval_dir(run_dir: str) -> str:
@@ -260,38 +265,11 @@ def count_existing_testsets(run_dir: str) -> int:
     return sum(1 for f in os.listdir(ts_dir) if pattern.match(f))
 
 
-# ── Legacy folder-based testsets (kept for backward compat) ───────────────
-
-def testset_dir(run_dir: str, name: str) -> str:
-    """Directory for a single named frozen testset."""
-    return os.path.join(testsets_dir(run_dir), name)
-
-
-def testset_manifest_path(run_dir: str, name: str) -> str:
-    """Frozen manifest (segment IDs + content SHAs) for a testset."""
-    return os.path.join(testset_dir(run_dir, name), 'manifest.json')
-
-
-def testset_snapshot_path(run_dir: str, name: str) -> str:
-    """Frozen segment text snapshot for a testset."""
-    return os.path.join(testset_dir(run_dir, name), 'segments_snapshot.jsonl')
-
-
-def testset_human_worksheet_path(run_dir: str, name: str) -> str:
-    """Frozen blind-coding worksheet for a testset."""
-    return os.path.join(testset_dir(run_dir, name), 'human_worksheet.txt')
-
-
-def testset_answer_key_path(run_dir: str, name: str) -> str:
-    """Refreshable AI answer key for a testset."""
-    return os.path.join(testset_dir(run_dir, name), 'AI_answer_key.txt')
-
-
 # ── Frozen content-validity testsets ─────────────────────────────────────
 
 def cv_testsets_dir(run_dir: str) -> str:
-    """Root for content-validity testset directories."""
-    return os.path.join(run_dir, '04_validation', 'content_validity')
+    """Root for frozen content-validity testset directories (alias for content_validity_dir)."""
+    return content_validity_dir(run_dir)
 
 
 def cv_testset_dir(run_dir: str, name: str) -> str:

@@ -16,8 +16,8 @@ ARCHITECTURE — what the beta codebase does when it sees a legacy project:
   a) legacy_migration.is_legacy_project() → detects pre-modular layout
   b) legacy_migration.migrate_legacy_segments() → extracts per-session frozen segments
      from master_segments.jsonl with params_hash='legacy-pre-modular'
-  c) legacy_migration.migrate_legacy_testsets() → wraps flat .txt testsets into
-     per-testset directories with manifest.json + segments_snapshot.jsonl
+  c) legacy_migration.is_v25_layout() + migrate_v25_to_v3() → moves old-path
+     artifacts to v3 locations (full_transcripts/, content_validity/, inputs/)
   d) stage_ingest() → recognizes 'legacy-pre-modular' hash, skips re-segmentation
   e) classify stages → read frozen segments, write overlays, never touch frozen
   f) assemble → reads frozen + overlays, builds master_segments
@@ -500,157 +500,6 @@ class TestLegacySegmentMigration(unittest.TestCase):
             with open(seg_path, encoding="utf-8") as f:
                 total += sum(1 for l in f if l.strip())
         self.assertEqual(total, 4)
-
-
-class TestLegacyTestsetMigration(unittest.TestCase):
-    """Verify migrate_legacy_testsets() wraps flat worksheets into frozen directories."""
-
-    def setUp(self):
-        self.tmpdir = tempfile.mkdtemp()
-        self._setup_legacy_testset_files()
-
-    def tearDown(self):
-        import shutil
-        shutil.rmtree(self.tmpdir, ignore_errors=True)
-
-    def _make_dir(self, *parts):
-        d = os.path.join(self.tmpdir, *parts)
-        os.makedirs(d, exist_ok=True)
-        return d
-
-    def _setup_legacy_testset_files(self):
-        segs = [
-            _make_segment(segment_id="c1s1_002", session_id="c1s1", segment_index=1,
-                          text="I have a lot of pain and anxiety", word_count=8,
-                          participant_id="Participant_MM001"),
-            _make_segment(segment_id="c1s2_001", session_id="c1s2", segment_index=0,
-                          text="This is session two check-in", word_count=5,
-                          participant_id="Participant_MM005"),
-        ]
-        ms_dir = self._make_dir("02_meta", "training_data")
-        with open(os.path.join(ms_dir, "master_segments.jsonl"), "w", encoding="utf-8") as f:
-            for s in segs:
-                rec = {"segment_id": s.segment_id, "session_id": s.session_id,
-                       "segment_index": s.segment_index, "text": s.text,
-                       "trial_id": s.trial_id, "participant_id": s.participant_id,
-                       "session_number": 1, "cohort_id": 1, "session_variant": "",
-                       "start_time_ms": 0, "end_time_ms": 60000,
-                       "total_segments_in_session": 2,
-                       "speaker": s.speaker, "word_count": s.word_count,
-                       "speakers_in_segment": None, "session_file": "",
-                       "primary_stage": 2, "llm_confidence_primary": 0.85}
-                f.write(json.dumps(rec) + "\n")
-
-        # Write legacy flat worksheets — segment numbers are 1-based (index+1)
-        ts_dir = self._make_dir("04_validation", "testsets")
-        human1 = (
-            "==============================================================================\n"
-            "VALIDATION TEST SET 1 of 2 — HUMAN CODING WORKSHEET\n"
-            "==============================================================================\n"
-            "[ITEM 001]  Session: c1s1   Segment 002\n"  # segment_index=1 → 1-based=2
-            + segs[0].text + "\n"
-            "Primary stage: ___\n"
-            "==============================================================================\n"
-            "[ITEM 002]  Session: c1s2   Segment 001\n"  # segment_index=0 → 1-based=1
-            + segs[1].text + "\n"
-            "Primary stage: ___\n"
-        )
-        with open(os.path.join(ts_dir, "human_classification_testset_worksheet_1.txt"), "w") as f:
-            f.write(human1)
-        with open(os.path.join(ts_dir, "AI_classification_testset_worksheet_1.txt"), "w") as f:
-            f.write("AI answer key content")
-
-    def test_migration_creates_testset_directory(self):
-        from process.legacy_migration import migrate_legacy_testsets
-        n = migrate_legacy_testsets(self.tmpdir)
-        self.assertEqual(n, 1)
-        ts_dir = os.path.join(self.tmpdir, "04_validation", "testsets", "vaamr_testset_1")
-        self.assertTrue(os.path.isdir(ts_dir))
-
-    def test_migration_writes_manifest_json(self):
-        from process.legacy_migration import migrate_legacy_testsets
-        migrate_legacy_testsets(self.tmpdir)
-        manifest_path = os.path.join(
-            self.tmpdir, "04_validation", "testsets", "vaamr_testset_1", "manifest.json")
-        self.assertTrue(os.path.isfile(manifest_path))
-        with open(manifest_path, encoding="utf-8") as f:
-            manifest = json.load(f)
-        self.assertEqual(manifest["kind"], "vaamr")
-        self.assertEqual(manifest["name"], "vaamr_testset_1")
-        self.assertTrue(manifest.get("migrated_from_legacy"))
-        self.assertIn("content_sha256", manifest)
-        self.assertIn("segment_ids", manifest)
-
-    def test_migration_writes_segments_snapshot(self):
-        from process.legacy_migration import migrate_legacy_testsets
-        migrate_legacy_testsets(self.tmpdir)
-        snap_path = os.path.join(
-            self.tmpdir, "04_validation", "testsets", "vaamr_testset_1", "segments_snapshot.jsonl")
-        self.assertTrue(os.path.isfile(snap_path))
-        with open(snap_path, encoding="utf-8") as f:
-            records = [json.loads(l.strip()) for l in f if l.strip()]
-        self.assertEqual(len(records), 2)
-        for rec in records:
-            self.assertIn("segment_id", rec)
-            self.assertIn("text", rec)
-            self.assertIn("content_sha256", rec)
-        from process._freeze import sha256_text
-        self.assertEqual(records[0]["content_sha256"],
-                         sha256_text("I have a lot of pain and anxiety"))
-
-    def test_migration_moves_human_worksheet(self):
-        from process.legacy_migration import migrate_legacy_testsets
-        from process import output_paths as _paths
-        migrate_legacy_testsets(self.tmpdir)
-        flat_path = os.path.join(
-            self.tmpdir, "04_validation", "testsets",
-            "human_classification_testset_worksheet_1.txt")
-        self.assertFalse(os.path.isfile(flat_path))
-        moved_path = _paths.testset_human_worksheet_path(self.tmpdir, "vaamr_testset_1")
-        self.assertTrue(os.path.isfile(moved_path))
-
-    def test_migration_moves_ai_answer_key(self):
-        from process.legacy_migration import migrate_legacy_testsets
-        from process import output_paths as _paths
-        migrate_legacy_testsets(self.tmpdir)
-        flat_path = os.path.join(
-            self.tmpdir, "04_validation", "testsets",
-            "AI_classification_testset_worksheet_1.txt")
-        self.assertFalse(os.path.isfile(flat_path))
-        moved_path = _paths.testset_answer_key_path(self.tmpdir, "vaamr_testset_1")
-        self.assertTrue(os.path.isfile(moved_path))
-
-    def test_migration_idempotent(self):
-        from process.legacy_migration import migrate_legacy_testsets
-        n1 = migrate_legacy_testsets(self.tmpdir)
-        n2 = migrate_legacy_testsets(self.tmpdir)
-        self.assertEqual(n1, 1)
-        self.assertEqual(n2, 0)
-
-    def test_migration_segment_ids_match_human_worksheet(self):
-        from process.legacy_migration import migrate_legacy_testsets
-        migrate_legacy_testsets(self.tmpdir)
-        manifest_path = os.path.join(
-            self.tmpdir, "04_validation", "testsets", "vaamr_testset_1", "manifest.json")
-        with open(manifest_path, encoding="utf-8") as f:
-            manifest = json.load(f)
-        segment_ids = manifest["segment_ids"]
-        self.assertIn("c1s1_002", segment_ids)
-        self.assertIn("c1s2_001", segment_ids)
-
-    def test_migration_content_sha_verifiable(self):
-        from process.legacy_migration import migrate_legacy_testsets
-        from process._freeze import sha256_text
-        migrate_legacy_testsets(self.tmpdir)
-        manifest_path = os.path.join(
-            self.tmpdir, "04_validation", "testsets", "vaamr_testset_1", "manifest.json")
-        with open(manifest_path, encoding="utf-8") as f:
-            manifest = json.load(f)
-        sha_map = manifest["content_sha256"]
-        self.assertEqual(sha_map["c1s1_002"],
-                         sha256_text("I have a lot of pain and anxiety"))
-        self.assertEqual(sha_map["c1s2_001"],
-                         sha256_text("This is session two check-in"))
 
 
 # ============================================================================
@@ -1316,7 +1165,7 @@ class TestEndToEndLegacyImport(unittest.TestCase):
         from process.legacy_migration import is_legacy_project
         self.assertTrue(is_legacy_project(self.tmpdir))
 
-        # Step 3: Migrate segments (testset migration is obsolete — flat format is target)
+        # Step 3: Migrate segments (v2.0 → frozen per-session segments)
         from process.legacy_migration import migrate_legacy_segments
         self.assertEqual(migrate_legacy_segments(self.tmpdir), 2)
 
@@ -1427,6 +1276,49 @@ class TestCLILegacySafeCommands(unittest.TestCase):
             qra._build_config(ns)
         except Exception as e:
             self.fail(f"_build_config failed with minimal namespace: {e}")
+
+
+class TestTestsetRefreshLegacyNotSkipped(unittest.TestCase):
+    """Regression: `testset refresh` regenerates legacy AI keys instead of skipping them.
+
+    Previously legacy (legacy_import=true) testsets were short-circuited to a header-only
+    sync. They must now flow into the refresh engine so re-run models update the AI key,
+    while the human worksheet stays frozen.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        ts = os.path.join(self.tmpdir, "04_validation", "testsets")
+        os.makedirs(ts, exist_ok=True)
+        # Minimal human worksheet so the refresh loop discovers testset #1.
+        with open(os.path.join(ts, "human_classification_testset_worksheet_1.txt"), "w") as f:
+            f.write("VALIDATION TEST SET 1 of 1 — HUMAN CODING WORKSHEET\n")
+        # Mark it as an imported legacy testset.
+        meta = os.path.join(self.tmpdir, "02_meta", "testset_meta")
+        os.makedirs(meta, exist_ok=True)
+        with open(os.path.join(meta, "human_classification_testset_worksheet_1.meta.json"), "w") as f:
+            json.dump({"legacy_import": True, "segments": []}, f)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_legacy_testset_flows_into_refresh_engine(self):
+        from types import SimpleNamespace
+        import qra
+        from process import output_paths as _paths
+        ai_path = _paths.testset_ai_flat_path(self.tmpdir, 1)
+        ns = SimpleNamespace(output_dir=self.tmpdir, framework=None, force=False)
+        with patch.object(qra, "_load_segments_from_output", return_value=[]), \
+             patch.object(qra, "_load_framework", return_value=None), \
+             patch("process.assembly.human_forms.refresh_testset_answer_key",
+                   return_value=ai_path) as mock_refresh:
+            qra.cmd_testset_refresh(ns)
+        refreshed_nums = [c.args[3] for c in mock_refresh.call_args_list]
+        self.assertIn(1, refreshed_nums,
+                      "Legacy testset #1 must be refreshed, not skipped")
+        # force=False must be forwarded so drift stays a hard error.
+        self.assertFalse(mock_refresh.call_args_list[0].kwargs["force"])
 
 
 # ============================================================================

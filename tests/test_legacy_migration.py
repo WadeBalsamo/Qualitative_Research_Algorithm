@@ -110,63 +110,152 @@ class TestMigrateLegacySegments(unittest.TestCase):
         self.assertEqual({s.segment_id for s in segs}, {'seg_1', 'seg_2'})
 
 
-class TestMigrateLegacyTestsets(unittest.TestCase):
+class TestIsV25Layout(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        _write_master_jsonl(self.tmpdir, [
-            _make_row('seg_1', 'c1s1', segment_index=0, text='First.'),
-            _make_row('seg_2', 'c1s1', segment_index=1, text='Second.'),
-        ])
-        ts_dir = _paths.testsets_dir(self.tmpdir)
-        os.makedirs(ts_dir, exist_ok=True)
-        human_ws = os.path.join(ts_dir, 'human_classification_testset_worksheet_1.txt')
-        with open(human_ws, 'w') as f:
-            f.write("=" * 78 + "\n")
-            f.write("VALIDATION TEST SET 1 of 1 — HUMAN CODING WORKSHEET\n")
-            f.write("=" * 78 + "\n")
-            f.write("[ITEM 001]  Session: c1s1   Segment 001\n")
-            f.write("            00:00:00–00:00:03   2w   Participant: participant_1\n")
-            f.write("  First.\n\n")
-        ai_ws = os.path.join(ts_dir, 'AI_classification_testset_worksheet_1.txt')
-        with open(ai_ws, 'w') as f:
-            f.write("AI worksheet content\n")
 
     def tearDown(self):
         import shutil
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def test_creates_new_layout(self):
-        n = legacy_migration.migrate_legacy_testsets(self.tmpdir)
-        self.assertEqual(n, 1)
-        self.assertTrue(os.path.isfile(
-            _paths.testset_human_worksheet_path(self.tmpdir, 'vaamr_testset_1')
-        ))
-        self.assertTrue(os.path.isfile(
-            _paths.testset_answer_key_path(self.tmpdir, 'vaamr_testset_1')
-        ))
-        self.assertTrue(os.path.isfile(
-            _paths.testset_manifest_path(self.tmpdir, 'vaamr_testset_1')
-        ))
+    def test_detects_v25_by_diarized_dir(self):
+        os.makedirs(os.path.join(self.tmpdir, '01_transcripts', 'diarized'))
+        self.assertTrue(legacy_migration.is_v25_layout(self.tmpdir))
 
-    def test_legacy_files_moved_not_copied(self):
-        ts_dir = _paths.testsets_dir(self.tmpdir)
-        legacy_migration.migrate_legacy_testsets(self.tmpdir)
-        self.assertFalse(os.path.isfile(
-            os.path.join(ts_dir, 'human_classification_testset_worksheet_1.txt')
-        ))
+    def test_detects_v25_by_coded_dir(self):
+        os.makedirs(os.path.join(self.tmpdir, '01_transcripts', 'coded'))
+        self.assertTrue(legacy_migration.is_v25_layout(self.tmpdir))
 
-    def test_manifest_has_correct_segment(self):
-        legacy_migration.migrate_legacy_testsets(self.tmpdir)
-        manifest_path = _paths.testset_manifest_path(self.tmpdir, 'vaamr_testset_1')
-        with open(manifest_path) as f:
-            manifest = json.load(f)
-        self.assertIn('seg_1', manifest['segment_ids'])
-        self.assertTrue(manifest.get('migrated_from_legacy'))
+    def test_detects_v25_by_flat_cv_file(self):
+        val_dir = os.path.join(self.tmpdir, '04_validation')
+        os.makedirs(val_dir)
+        open(os.path.join(val_dir, 'content_validity_test_set.jsonl'), 'w').close()
+        self.assertTrue(legacy_migration.is_v25_layout(self.tmpdir))
 
-    def test_skips_already_migrated(self):
-        legacy_migration.migrate_legacy_testsets(self.tmpdir)
-        n = legacy_migration.migrate_legacy_testsets(self.tmpdir)
-        self.assertEqual(n, 0)
+    def test_detects_v25_by_flat_human_classification(self):
+        val_dir = os.path.join(self.tmpdir, '04_validation')
+        os.makedirs(val_dir)
+        open(os.path.join(val_dir, 'human_classification_c1s1.txt'), 'w').close()
+        self.assertTrue(legacy_migration.is_v25_layout(self.tmpdir))
+
+    def test_not_v25_for_fresh_project(self):
+        self.assertFalse(legacy_migration.is_v25_layout(self.tmpdir))
+
+    def test_not_v25_for_v3_with_inputs_dir(self):
+        os.makedirs(os.path.join(self.tmpdir, '01_transcripts_inputs'))
+        os.makedirs(os.path.join(self.tmpdir, '04_validation', 'full_transcripts'))
+        self.assertFalse(legacy_migration.is_v25_layout(self.tmpdir))
+
+
+class TestMigrateV25ToV3(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _make_dir(self, *parts):
+        d = os.path.join(self.tmpdir, *parts)
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _touch(self, *parts):
+        path = os.path.join(self.tmpdir, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, 'w').close()
+        return path
+
+    def test_moves_diarized_to_inputs(self):
+        self._touch('01_transcripts', 'diarized', 'c1s1.vtt')
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmpdir, '01_transcripts_inputs', 'c1s1.vtt')))
+        self.assertFalse(os.path.isfile(os.path.join(self.tmpdir, '01_transcripts', 'diarized', 'c1s1.vtt')))
+
+    def test_removes_empty_diarized_dir(self):
+        self._make_dir('01_transcripts', 'diarized')
+        self._touch('01_transcripts', 'diarized', 'c1s1.vtt')
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        self.assertFalse(os.path.isdir(os.path.join(self.tmpdir, '01_transcripts', 'diarized')))
+
+    def test_moves_coded_transcripts_to_full_transcripts(self):
+        self._touch('01_transcripts', 'coded', 'coded_transcript_c1s1.txt')
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        full_tx = os.path.join(self.tmpdir, '04_validation', 'full_transcripts')
+        self.assertTrue(os.path.isfile(os.path.join(full_tx, 'coded_transcript_c1s1.txt')))
+        self.assertFalse(os.path.isfile(os.path.join(self.tmpdir, '01_transcripts', 'coded', 'coded_transcript_c1s1.txt')))
+
+    def test_moves_human_classification_to_full_transcripts(self):
+        val_dir = self._make_dir('04_validation')
+        self._touch('04_validation', 'human_classification_c1s1.txt')
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        full_tx = os.path.join(self.tmpdir, '04_validation', 'full_transcripts')
+        self.assertTrue(os.path.isfile(os.path.join(full_tx, 'human_classification_c1s1.txt')))
+        self.assertFalse(os.path.isfile(os.path.join(val_dir, 'human_classification_c1s1.txt')))
+
+    def test_moves_cv_files_to_content_validity(self):
+        for fname in ['content_validity_test_set.jsonl', 'content_validity_human_worksheet.txt',
+                      'content_validity_definition_key.txt', 'content_validity_answer_key.txt']:
+            self._touch('04_validation', fname)
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        cv_dir = os.path.join(self.tmpdir, '04_validation', 'content_validity')
+        for fname in ['content_validity_test_set.jsonl', 'content_validity_human_worksheet.txt',
+                      'content_validity_definition_key.txt', 'content_validity_answer_key.txt']:
+            self.assertTrue(os.path.isfile(os.path.join(cv_dir, fname)), f"Missing {fname}")
+            self.assertFalse(os.path.isfile(os.path.join(self.tmpdir, '04_validation', fname)))
+
+    def test_removes_worksheetN_base_files(self):
+        ts_dir = self._make_dir('04_validation', 'testsets')
+        self._touch('04_validation', 'testsets', 'worksheet1_base.txt')
+        self._touch('04_validation', 'testsets', 'worksheet2_base.txt')
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        self.assertFalse(os.path.isfile(os.path.join(ts_dir, 'worksheet1_base.txt')))
+        self.assertFalse(os.path.isfile(os.path.join(ts_dir, 'worksheet2_base.txt')))
+
+    def test_removes_folder_based_testset_dirs(self):
+        ts_dir = self._make_dir('04_validation', 'testsets')
+        legacy_dir = self._make_dir('04_validation', 'testsets', 'vaamr_testset_1')
+        with open(os.path.join(legacy_dir, 'manifest.json'), 'w') as f:
+            json.dump({'kind': 'vaamr'}, f)
+        with open(os.path.join(legacy_dir, 'human_worksheet.txt'), 'w') as f:
+            f.write('worksheet content')
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        self.assertFalse(os.path.isdir(legacy_dir))
+
+    def test_does_not_touch_flat_frozen_worksheets(self):
+        ts_dir = self._make_dir('04_validation', 'testsets')
+        ws_path = os.path.join(ts_dir, 'human_classification_testset_worksheet_1.txt')
+        sentinel = 'FROZEN WORKSHEET - DO NOT MODIFY'
+        with open(ws_path, 'w') as f:
+            f.write(sentinel)
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        with open(ws_path) as f:
+            self.assertEqual(f.read(), sentinel)
+
+    def test_idempotent(self):
+        self._touch('01_transcripts', 'diarized', 'c1s1.vtt')
+        self._touch('01_transcripts', 'coded', 'coded_transcript_c1s1.txt')
+        self._touch('04_validation', 'human_classification_c1s1.txt')
+        self._touch('04_validation', 'content_validity_test_set.jsonl')
+        self._touch('04_validation', 'testsets', 'worksheet1_base.txt')
+        r1 = legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        r2 = legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        # Second run should move/delete nothing
+        self.assertEqual(r2.get('diarized_moved', 0), 0)
+        self.assertEqual(r2.get('coded_moved', 0), 0)
+        self.assertEqual(r2.get('human_classification_moved', 0), 0)
+        self.assertEqual(r2.get('cv_files_moved', 0), 0)
+        self.assertEqual(r2.get('legacy_base_removed', 0), 0)
+
+    def test_skips_destination_if_already_exists(self):
+        self._touch('01_transcripts', 'diarized', 'c1s1.vtt')
+        dst = os.path.join(self.tmpdir, '01_transcripts_inputs', 'c1s1.vtt')
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, 'w') as f:
+            f.write('existing content')
+        legacy_migration.migrate_v25_to_v3(self.tmpdir)
+        with open(dst) as f:
+            self.assertEqual(f.read(), 'existing content')
 
 
 if __name__ == '__main__':

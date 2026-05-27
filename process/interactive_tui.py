@@ -355,7 +355,7 @@ def _action_assemble(config, output_dir: str, framework) -> None:
         'master_segments.jsonl / master_segments.csv with confidence tiers.\n'
         '\n'
         'Also regenerates:\n'
-        '  • coded transcripts  (01_transcripts/coded/)\n'
+        '  • coded transcripts  (04_validation/full_transcripts/)\n'
         '  • human coding forms (04_validation/)\n'
         '  • AI testset answer keys (SHA-verified — aborts if text drifted)\n'
         '  • flagged_for_review.txt\n'

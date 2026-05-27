@@ -944,12 +944,15 @@ def stage_ingest(
 
     if legacy_migration.is_legacy_project(_od):
         _n_segs = legacy_migration.migrate_legacy_segments(_od)
-        # Flat numbered worksheets are canonical; import any folder-based testsets
-        # (incl. those an earlier build migrated into directories) into the flat scheme.
-        _n_ts = legacy_migration.import_legacy_testset_dirs(_od)
         observer.on_stage_progress(
             "Transcript Ingestion and Segmentation",
-            f"Auto-migrated {_n_segs} sessions and {_n_ts} testsets from legacy layout",
+            f"Auto-migrated {_n_segs} sessions from v2.0 legacy layout",
+        )
+    if legacy_migration.is_v25_layout(_od):  # LEGACY-MIGRATION CALL SITE
+        legacy_migration.migrate_v25_to_v3(_od)
+        observer.on_stage_progress(
+            "Transcript Ingestion and Segmentation",
+            "Auto-migrated v2.5 project layout to v3 directory structure",
         )
 
     current_hash = segments_io.params_hash(config.segmentation)
@@ -1601,7 +1604,7 @@ def run_full_pipeline(
         )
         observer.on_stage_progress(
             "Report Generation",
-            f"  Coded transcript: 01_transcripts/coded/coded_transcript_{session_id}.txt",
+            f"  Coded transcript: 04_validation/full_transcripts/coded_transcript_{session_id}.txt",
         )
 
     # Human forms, flagged-for-review, testsets, CV testsets

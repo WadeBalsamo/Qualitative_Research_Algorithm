@@ -54,7 +54,7 @@ def export_coded_transcript(
     def _theme_name(stage) -> str:
         return _theme_name_from(stage, id_to_name)
 
-    coded_dir = _paths.transcripts_coded_dir(run_dir)
+    coded_dir = _paths.full_transcripts_dir(run_dir)
     os.makedirs(coded_dir, exist_ok=True)
     output_path = os.path.join(coded_dir, f'coded_transcript_{session_id}.txt')
 

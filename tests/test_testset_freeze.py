@@ -15,7 +15,6 @@ from process.assembly.human_forms import (
     _collect_used_segment_ids,
     _parse_worksheet_items,
 )
-from process.legacy_migration import import_legacy_testset_dirs
 from process import output_paths as _paths
 
 
@@ -352,8 +351,7 @@ class TestHeaderSync(unittest.TestCase):
         )
         segs_by_id = {s.segment_id: s for s in segs}
         refresh_testset_answer_key(segs_by_id, None, self.tmpdir, 1,
-                                   codebook_enabled=False, n_total=2,
-                                   confirm_fn=lambda _: True)
+                                   codebook_enabled=False, n_total=2)
         header = self._header_line(1)
         self.assertIn('1 of 2', header, f"Expected '1 of 2' in header, got: {header}")
 
@@ -368,15 +366,14 @@ class TestHeaderSync(unittest.TestCase):
         segs_by_id = {s.segment_id: s for s in segs}
         for n in (1, 2, 3):
             refresh_testset_answer_key(segs_by_id, None, self.tmpdir, n,
-                                       codebook_enabled=False, n_total=3,
-                                       confirm_fn=lambda _: True)
+                                       codebook_enabled=False, n_total=3)
         for n in (1, 2, 3):
             header = self._header_line(n)
             self.assertIn(f'{n} of 3', header, f"Testset #{n} header wrong: {header}")
 
 
 class TestContentChangeWarning(unittest.TestCase):
-    """refresh_testset_answer_key warns and prompts when segment text changes."""
+    """refresh_testset_answer_key hard-errors on segment drift unless force=True."""
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -405,39 +402,43 @@ class TestContentChangeWarning(unittest.TestCase):
                 mutated.append(s)
         return {s.segment_id: s for s in mutated}
 
-    def test_no_warning_when_content_unchanged(self):
+    def test_succeeds_silently_when_content_unchanged(self):
         import io, contextlib
         segs_by_id = {s.segment_id: s for s in self.segs}
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             refresh_testset_answer_key(segs_by_id, None, self.tmpdir, 1,
-                                       codebook_enabled=False, confirm_fn=lambda _: True)
+                                       codebook_enabled=False)
         self.assertNotIn('WARNING', buf.getvalue())
 
-    def test_warning_emitted_when_content_changes(self):
+    def test_hard_error_when_content_changes_without_force(self):
+        segs_by_id = self._mutated_segs_by_id()
+        ai_path = _paths.testset_ai_flat_path(self.tmpdir, 1)
+        with open(ai_path, encoding='utf-8') as fh:
+            before = fh.read()
+        with self.assertRaises(FrozenArtifactError):
+            refresh_testset_answer_key(segs_by_id, None, self.tmpdir, 1,
+                                       codebook_enabled=False)
+        # AI key must be left untouched when the refresh aborts.
+        with open(ai_path, encoding='utf-8') as fh:
+            self.assertEqual(before, fh.read())
+
+    def test_force_regenerates_against_changed_text(self):
         import io, contextlib
         segs_by_id = self._mutated_segs_by_id()
         buf = io.StringIO()
-        confirmed = []
-        def capture_confirm(prompt):
-            confirmed.append(prompt)
-            return True
         with contextlib.redirect_stdout(buf):
             refresh_testset_answer_key(segs_by_id, None, self.tmpdir, 1,
-                                       codebook_enabled=False, confirm_fn=capture_confirm)
+                                       codebook_enabled=False, force=True)
         self.assertIn('WARNING', buf.getvalue())
-        self.assertTrue(len(confirmed) == 1, "confirm_fn should have been called once")
+        with open(_paths.testset_ai_flat_path(self.tmpdir, 1), encoding='utf-8') as fh:
+            ai_content = fh.read()
+        self.assertIn('CHANGED TEXT for testing.', ai_content)
 
-    def test_abort_when_user_declines(self):
-        segs_by_id = self._mutated_segs_by_id()
-        with self.assertRaises(FrozenArtifactError):
-            refresh_testset_answer_key(segs_by_id, None, self.tmpdir, 1,
-                                       codebook_enabled=False, confirm_fn=lambda _: False)
-
-    def test_no_warning_if_no_meta_sidecar(self):
+    def test_no_validation_if_no_meta_sidecar(self):
         """Gracefully skips content check when .meta.json is absent (legacy testsets)."""
         import io, contextlib
-        # Remove the meta file to simulate legacy testset
+        # Remove the meta file to simulate a testset with no recorded SHA256.
         meta_path = _paths.testset_meta_path(self.tmpdir, 1)
         os.remove(meta_path)
 
@@ -445,134 +446,8 @@ class TestContentChangeWarning(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             refresh_testset_answer_key(segs_by_id, None, self.tmpdir, 1,
-                                       codebook_enabled=False, confirm_fn=lambda _: True)
+                                       codebook_enabled=False)
         self.assertNotIn('WARNING', buf.getvalue())
-
-
-def _make_legacy_testset_dir(tmpdir, name, segs):
-    """Build a folder-based (pre-flat) testset dir like an old build's migrate step left behind."""
-    import json, hashlib
-    d = os.path.join(_paths.testsets_dir(tmpdir), name)
-    os.makedirs(d, exist_ok=True)
-
-    lines = ['VALIDATION TEST SET 1 of 1 — HUMAN CODING WORKSHEET', '']
-    for i, s in enumerate(segs, 1):
-        lines.append(f'[ITEM {i:03d}]  Session: {s.session_id}   Segment {s.segment_index + 1:03d}')
-        lines.append(s.text)
-        lines.append('')
-    with open(os.path.join(d, 'human_worksheet.txt'), 'w', encoding='utf-8') as fh:
-        fh.write('\n'.join(lines))
-
-    with open(os.path.join(d, 'segments_snapshot.jsonl'), 'w', encoding='utf-8') as fh:
-        for s in segs:
-            fh.write(json.dumps({
-                'segment_id': s.segment_id,
-                'session_id': s.session_id,
-                'segment_index': s.segment_index,
-                'text': s.text,
-                'content_sha256': hashlib.sha256(s.text.encode()).hexdigest(),
-            }) + '\n')
-
-    with open(os.path.join(d, 'manifest.json'), 'w', encoding='utf-8') as fh:
-        json.dump({'name': name, 'kind': 'vaamr', 'migrated_from_legacy': True}, fh)
-    with open(os.path.join(d, 'AI_answer_key.txt'), 'w', encoding='utf-8') as fh:
-        fh.write('legacy AI answer key\n')
-    return d
-
-
-class TestLegacyTestsetDirImport(unittest.TestCase):
-    """import_legacy_testset_dirs converts folder-based testsets into the flat scheme."""
-
-    def setUp(self):
-        self.tmpdir = tempfile.mkdtemp()
-
-    def tearDown(self):
-        import shutil
-        shutil.rmtree(self.tmpdir, ignore_errors=True)
-
-    def _items(self, segs):
-        return {(s.session_id, s.segment_index + 1) for s in segs}
-
-    def test_import_creates_flat_worksheet_with_same_items(self):
-        segs = _make_pool(10)
-        _make_legacy_testset_dir(self.tmpdir, 'vaamr_testset_1', segs[:4])
-        n = import_legacy_testset_dirs(self.tmpdir)
-        self.assertEqual(n, 1)
-        flat = _paths.testset_human_flat_path(self.tmpdir, 1)
-        self.assertTrue(os.path.isfile(flat))
-        self.assertEqual(set(_parse_worksheet_items(flat)), self._items(segs[:4]))
-
-    def test_import_writes_meta_and_ai_key(self):
-        import json
-        segs = _make_pool(10)
-        legacy_dir = _make_legacy_testset_dir(self.tmpdir, 'vaamr_testset_1', segs[:4])
-        import_legacy_testset_dirs(self.tmpdir)
-        with open(_paths.testset_meta_path(self.tmpdir, 1)) as fh:
-            meta = json.load(fh)
-        self.assertEqual(len(meta['segments']), 4)
-        self.assertTrue(meta.get('legacy_import'), "Imported testset must be marked legacy_import")
-        first = meta['segments'][0]
-        self.assertEqual({'session_id', 'seg_num', 'sha256'}, set(first))
-        self.assertEqual(len(first['sha256']), 64)
-        # AI key copied byte-for-byte from the legacy directory.
-        ai_flat = _paths.testset_ai_flat_path(self.tmpdir, 1)
-        self.assertTrue(os.path.isfile(ai_flat))
-        with open(ai_flat) as a, open(os.path.join(legacy_dir, 'AI_answer_key.txt')) as b:
-            self.assertEqual(a.read(), b.read())
-
-    def test_imported_worksheet_content_preserved_through_header_sync(self):
-        """Header sync may update 'N of M' but must never alter the validated segment content."""
-        from process.assembly.human_forms import _sync_worksheet_header
-        segs = _make_pool(10)
-        legacy_dir = _make_legacy_testset_dir(self.tmpdir, 'vaamr_testset_1', segs[:4])
-        import_legacy_testset_dirs(self.tmpdir)
-        flat = _paths.testset_human_flat_path(self.tmpdir, 1)
-        with open(flat) as a, open(os.path.join(legacy_dir, 'human_worksheet.txt')) as b:
-            self.assertEqual(a.read(), b.read(), "Import must copy the worksheet verbatim")
-
-        items_before = set(_parse_worksheet_items(flat))
-        _sync_worksheet_header(flat, 1, 3)
-        self.assertEqual(set(_parse_worksheet_items(flat)), items_before,
-                         "Segment selection must be unchanged by header sync")
-        with open(flat) as f:
-            self.assertIn('1 of 3', f.read(), "Header total should sync to the new count")
-
-    def test_import_is_idempotent(self):
-        segs = _make_pool(10)
-        _make_legacy_testset_dir(self.tmpdir, 'vaamr_testset_1', segs[:4])
-        self.assertEqual(import_legacy_testset_dirs(self.tmpdir), 1)
-        self.assertEqual(import_legacy_testset_dirs(self.tmpdir), 0)
-        flat2 = _paths.testset_human_flat_path(self.tmpdir, 2)
-        self.assertFalse(os.path.isfile(flat2), "Re-import must not create a duplicate worksheet")
-
-    def test_two_dirs_import_as_sequential_flats(self):
-        segs = _make_pool(20)
-        _make_legacy_testset_dir(self.tmpdir, 'vaamr_testset_1', segs[:4])
-        _make_legacy_testset_dir(self.tmpdir, 'vaamr_testset_2', segs[4:8])
-        self.assertEqual(import_legacy_testset_dirs(self.tmpdir), 2)
-        items1 = set(_parse_worksheet_items(_paths.testset_human_flat_path(self.tmpdir, 1)))
-        items2 = set(_parse_worksheet_items(_paths.testset_human_flat_path(self.tmpdir, 2)))
-        self.assertEqual(items1, self._items(segs[:4]))
-        self.assertEqual(items2, self._items(segs[4:8]))
-
-    def test_create_after_import_has_no_overlap_with_legacy(self):
-        segs = _make_pool(20)
-        _make_legacy_testset_dir(self.tmpdir, 'vaamr_testset_1', segs[:4])
-        _make_legacy_testset_dir(self.tmpdir, 'vaamr_testset_2', segs[4:8])
-        import_legacy_testset_dirs(self.tmpdir)
-
-        used = _collect_used_segment_ids(self.tmpdir)
-        new_path = create_frozen_testset(
-            segs, None, self.tmpdir,
-            n_sets=1, set_index=1, fraction_per_set=0.3, random_seed=42,
-            codebook_enabled=False, exclude_segment_ids=used,
-        )
-        self.assertEqual(new_path, _paths.testset_human_flat_path(self.tmpdir, 3),
-                         "New testset must be numbered after the two imported legacy sets")
-        items_new = set(_parse_worksheet_items(new_path))
-        legacy_items = self._items(segs[:8])
-        self.assertEqual(items_new & legacy_items, set(),
-                         "New testset must not overlap imported legacy testsets")
 
 
 if __name__ == '__main__':
