@@ -36,7 +36,7 @@ def export_content_validity_human_worksheet(
             f"{t.theme_id}={t.short_name}" for t in framework.themes
         )
 
-    validation_dir = _paths.validation_dir(run_dir)
+    validation_dir = _paths.content_validity_dir(run_dir)
     os.makedirs(validation_dir, exist_ok=True)
     out_path = os.path.join(validation_dir, 'content_validity_human_worksheet.txt')
 
@@ -100,7 +100,7 @@ def export_content_validity_definition_key(
     if framework is None:
         return None
 
-    validation_dir = _paths.validation_dir(run_dir)
+    validation_dir = _paths.content_validity_dir(run_dir)
     os.makedirs(validation_dir, exist_ok=True)
     out_path = os.path.join(validation_dir, 'content_validity_definition_key.txt')
 
@@ -198,7 +198,7 @@ def export_content_validity_answer_key(
             f"{t.theme_id}={t.short_name}" for t in framework.themes
         )
 
-    validation_dir = _paths.validation_dir(run_dir)
+    validation_dir = _paths.content_validity_dir(run_dir)
     os.makedirs(validation_dir, exist_ok=True)
     out_path = os.path.join(validation_dir, 'content_validity_answer_key.txt')
 
@@ -292,8 +292,8 @@ def export_human_classification_forms(
     def _theme_name(stage) -> str:
         return _theme_name_from(stage, id_to_name)
 
-    validation_dir = _paths.validation_dir(run_dir)
-    os.makedirs(validation_dir, exist_ok=True)
+    full_transcripts = _paths.full_transcripts_dir(run_dir)
+    os.makedirs(full_transcripts, exist_ok=True)
 
     # Group by session
     by_session: Dict[str, List[Segment]] = defaultdict(list)
@@ -325,7 +325,7 @@ def export_human_classification_forms(
         all_pids = sorted({s.participant_id for s in participant_segs if s.participant_id})
         participants_str = ", ".join(all_pids) if all_pids else first.participant_id
 
-        out_path = os.path.join(validation_dir, f'human_classification_{session_id}.txt')
+        out_path = os.path.join(full_transcripts, f'human_classification_{session_id}.txt')
         with open(out_path, 'w', encoding='utf-8') as fh:
             fh.write("=" * 78 + "\n")
             fh.write(f"SESSION: {session_id}\n")
@@ -664,18 +664,20 @@ def refresh_testset_answer_key(
     codebook_enabled: bool,
     codebook=None,
     n_total: int = 0,
-    confirm_fn=None,
+    force: bool = False,
 ) -> str:
     """
     Re-emit AI_classification_testset_worksheet_N.txt from current labels.
 
     Parses the frozen human worksheet to identify which segments are in the set,
     then regenerates the AI key. Also updates the 'N of M' header in the human
-    worksheet to reflect n_total (auto-computed if n_total=0).
+    worksheet to reflect n_total (auto-computed if n_total=0). The human worksheet
+    itself (segment text + blank coding fields) is never rewritten.
 
-    Raises FrozenArtifactError if segment content has changed and the user
-    declines to continue. confirm_fn(prompt) -> bool overrides the interactive
-    stdin prompt (useful in tests or --yes CLI mode).
+    Validates each segment's text against the per-segment SHA256 recorded when the
+    testset was frozen. If any segment's content has drifted, raises
+    FrozenArtifactError (the AI key must correspond to the exact text humans coded).
+    Pass force=True to regenerate against the changed text anyway.
 
     Returns path to the updated AI answer key.
     """
@@ -724,16 +726,21 @@ def refresh_testset_answer_key(
                 if actual != expected:
                     changed.append(f'  {seg.session_id} seg {seg.segment_index + 1}')
         if changed:
-            print(f'WARNING: Testset #{n} — {len(changed)} segment(s) have changed content:')
-            for c in changed[:10]:
-                print(c)
+            detail = '\n'.join(changed[:10])
             if len(changed) > 10:
-                print(f'  ... and {len(changed) - 10} more')
-            _confirm = confirm_fn if confirm_fn is not None else _default_confirm
-            if not _confirm(f'Segment content changed in testset #{n}. Continue? [y/N] '):
+                detail += f'\n  ... and {len(changed) - 10} more'
+            if not force:
                 raise FrozenArtifactError(
-                    f'Refresh aborted: segment content changed in testset #{n}.'
+                    f"Testset #{n}: {len(changed)} segment(s) no longer match the frozen "
+                    f"human worksheet text:\n{detail}\n"
+                    f"Refusing to refresh — the AI answer key must correspond to the exact "
+                    f"segment text humans coded. Re-run with --force to regenerate against "
+                    f"the changed text, or recreate the testset."
                 )
+            print(f'WARNING: Testset #{n} — {len(changed)} segment(s) have changed content '
+                  f'since the testset was frozen:')
+            print(detail)
+            print('  --force given: regenerating AI key against the changed segment text.')
 
     kind = _detect_worksheet_kind(human_path)
     ai_path = _paths.testset_ai_flat_path(run_dir, n)
@@ -837,15 +844,6 @@ def _write_testset_meta(run_dir: str, n: int, segs: List[Segment]) -> None:
     os.makedirs(os.path.dirname(meta_path), exist_ok=True)
     with open(meta_path, 'w', encoding='utf-8') as fh:
         json.dump(meta, fh, indent=2)
-
-
-def _default_confirm(prompt: str) -> bool:
-    """Prompt the user interactively; return True if they confirm."""
-    try:
-        answer = input(prompt)
-    except EOFError:
-        return False
-    return answer.strip().lower() in ('y', 'yes')
 
 
 # Phase 1 back-compat — remove with legacy_migration.py

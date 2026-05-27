@@ -1488,13 +1488,6 @@ def cmd_testset_create(args):
                   "Run qra run with codebook classifier enabled first.")
             sys.exit(2)
 
-    # Import any legacy folder-based testsets into the flat numbered scheme so the
-    # dedup/numbering helpers below can see them (otherwise new testsets overlap them).
-    from process.legacy_migration import import_legacy_testset_dirs
-    n_imported = import_legacy_testset_dirs(args.output_dir)
-    if n_imported:
-        print(f"Imported {n_imported} legacy testset(s) into flat numbered worksheets.")
-
     # Collect segments already in existing testsets to prevent overlap
     used_ids = _collect_used_segment_ids(args.output_dir)
 
@@ -1513,10 +1506,12 @@ def cmd_testset_create(args):
     all_nums = sorted(int(m.group(1)) for f in os.listdir(ts_dir) if (m := pattern.match(f)))
     n_total = len(all_nums)
     new_n = int(os.path.basename(human_path).rsplit('_', 1)[-1].split('.')[0])
-    confirm = (lambda _: True) if getattr(args, 'yes', False) else None
+    force = getattr(args, 'force', False) or getattr(args, 'yes', False)
     for num in all_nums:
         # Imported legacy testsets keep their human-validated content & AI classifications
-        # frozen; only the 'N of M' header is synced (both files) so the set reads consistently.
+        # frozen; only the 'N of M' header is synced (both files) so the set reads
+        # consistently. Regenerating a validated legacy AI key is the explicit job of
+        # `testset refresh`, not a side effect of creating a new testset.
         if _worksheet_is_legacy_import(_paths.testset_meta_path(args.output_dir, num)):
             _sync_worksheet_header(_paths.testset_human_flat_path(args.output_dir, num), num, n_total)
             _sync_worksheet_header(_paths.testset_ai_flat_path(args.output_dir, num), num, n_total)
@@ -1526,7 +1521,7 @@ def cmd_testset_create(args):
                 segments_by_id, framework, args.output_dir, num,
                 codebook_enabled=(kind == 'codebook'),
                 n_total=n_total,
-                confirm_fn=confirm,
+                force=force,
             )
             if num != new_n:
                 print(f"Updated header: {os.path.relpath(ai_path, args.output_dir)}")
@@ -1535,11 +1530,17 @@ def cmd_testset_create(args):
 
 
 def cmd_testset_refresh(args):
-    """qra testset refresh — refresh AI answer key(s) for flat numbered testsets."""
+    """qra testset refresh — refresh AI answer key(s) for flat numbered testsets.
+
+    Regenerates the AI answer key (model codes + justifications) for every testset,
+    including imported legacy ones, from the current master segments. The human coding
+    worksheet is never rewritten (only its 'N of M' header is synced). Each segment's
+    text is validated against the SHA256 frozen at testset creation; drift is a hard
+    error (use --force to regenerate against changed text).
+    """
     import re as _re
     from process.assembly.human_forms import (
         refresh_testset_answer_key, _worksheet_is_legacy_import,
-        _sync_worksheet_header,
     )
     from process import output_paths as _paths
 
@@ -1563,23 +1564,27 @@ def cmd_testset_refresh(args):
         return
 
     n_total = len(nums)
-    confirm = (lambda _: True) if getattr(args, 'yes', False) else None
+    force = getattr(args, 'force', False) or getattr(args, 'yes', False)
+    failed = []
     for n in nums:
-        if _worksheet_is_legacy_import(_paths.testset_meta_path(args.output_dir, n)):
-            _sync_worksheet_header(_paths.testset_human_flat_path(args.output_dir, n), n, n_total)
-            _sync_worksheet_header(_paths.testset_ai_flat_path(args.output_dir, n), n, n_total)
-            print(f"Legacy testset #{n}: header synced; classifications preserved (frozen).")
-            continue
+        is_legacy = _worksheet_is_legacy_import(_paths.testset_meta_path(args.output_dir, n))
         try:
             path = refresh_testset_answer_key(
                 segments_by_id, framework, args.output_dir, n,
                 codebook_enabled=False,
                 n_total=n_total,
-                confirm_fn=confirm,
+                force=force,
             )
-            print(f"Refreshed: {os.path.relpath(path, args.output_dir)}")
+            tag = " (legacy validated set)" if is_legacy else ""
+            print(f"Refreshed{tag}: {os.path.relpath(path, args.output_dir)}")
         except Exception as e:
             print(f"Error refreshing testset #{n}: {e}")
+            failed.append(n)
+
+    if failed:
+        print(f"\n{len(failed)} testset(s) could not be refreshed: "
+              f"{', '.join(f'#{n}' for n in failed)}")
+        sys.exit(1)
 
 
 def cmd_testset_list(args):
@@ -2010,14 +2015,16 @@ Examples:
     _ts_create.add_argument('--framework', default=None)
     _ts_create.add_argument('--fraction', type=float, default=0.10)
     _ts_create.add_argument('--seed', type=int, default=42)
-    _ts_create.add_argument('--yes', '-y', action='store_true',
-                            help='Skip interactive confirmation when segment content has changed')
+    _ts_create.add_argument('--force', '--yes', '-y', dest='force', action='store_true',
+                            help="Regenerate an AI key even if a segment's text no longer "
+                                 "matches the frozen human worksheet (--yes is a deprecated alias)")
 
     _ts_refresh = testset_sub.add_parser('refresh', help='Refresh AI answer key(s)')
     _ts_refresh.add_argument('--output-dir', '-o', required=True)
     _ts_refresh.add_argument('--framework', default=None)
-    _ts_refresh.add_argument('--yes', '-y', action='store_true',
-                             help='Skip interactive confirmation when segment content has changed')
+    _ts_refresh.add_argument('--force', '--yes', '-y', dest='force', action='store_true',
+                             help="Regenerate an AI key even if a segment's text no longer "
+                                  "matches the frozen human worksheet (--yes is a deprecated alias)")
 
     _ts_list = testset_sub.add_parser('list', help='List existing frozen testsets')
     _ts_list.add_argument('--output-dir', '-o', required=True)

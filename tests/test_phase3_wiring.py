@@ -599,8 +599,8 @@ class TestStageValidationArtifactsWrites(unittest.TestCase):
             None, get_vaamr_framework(),
             segments=self.segs, output_dir=self.tmpdir,
         )
-        validation_dir = os.path.join(self.tmpdir, '04_validation')
-        forms = [f for f in os.listdir(validation_dir)
+        full_transcripts_dir = os.path.join(self.tmpdir, '04_validation', 'full_transcripts')
+        forms = [f for f in os.listdir(full_transcripts_dir)
                  if f.startswith('human_classification')]
         self.assertTrue(len(forms) >= 1, "human classification form must be written")
 
@@ -719,7 +719,9 @@ class TestQraValidateCLI(unittest.TestCase):
             validation_dir = os.path.join(d, '04_validation')
             self.assertTrue(os.path.isdir(validation_dir),
                             "04_validation must be created by qra validate")
-            forms = [f for f in os.listdir(validation_dir)
+            # Human classification forms go to 04_validation/full_transcripts/ in v3
+            full_transcripts_dir = os.path.join(d, '04_validation', 'full_transcripts')
+            forms = [f for f in os.listdir(full_transcripts_dir)
                      if f.startswith('human_classification')]
             self.assertTrue(len(forms) >= 1, "human classification form must exist")
 
@@ -730,17 +732,20 @@ class TestQraValidateCLI(unittest.TestCase):
             _write_frozen(d, segs)
             _write_theme_overlay(d, segs)
 
-            # Create a testset worksheet and record its content
-            testset_dir = os.path.join(d, '04_validation', 'testsets', 'vaamr_testset_1')
-            os.makedirs(testset_dir, exist_ok=True)
-            worksheet_path = os.path.join(testset_dir, 'human_worksheet.txt')
-            sentinel_content = 'HUMAN CODED WORKSHEET - DO NOT OVERWRITE'
+            # Create a flat numbered testset worksheet and record its content
+            from process import output_paths as _paths
+            ts_dir = _paths.testsets_dir(d)
+            os.makedirs(ts_dir, exist_ok=True)
+            worksheet_path = _paths.testset_human_flat_path(d, 1)
+            sentinel_content = (
+                '=' * 78 + '\n'
+                'VALIDATION TEST SET 1 of 1 — HUMAN CODING WORKSHEET\n'
+                '=' * 78 + '\n'
+                '[ITEM 001]  Session: c1s1   Segment 001\n'
+                '  DO NOT OVERWRITE\n'
+            )
             with open(worksheet_path, 'w') as f:
                 f.write(sentinel_content)
-            manifest_path = os.path.join(testset_dir, 'manifest.json')
-            with open(manifest_path, 'w') as f:
-                json.dump({'name': 'vaamr_testset_1', 'kind': 'vaamr',
-                           'n_items': 2, 'created_at': '2026-01-01'}, f)
 
             _run('validate', '-o', d)
 

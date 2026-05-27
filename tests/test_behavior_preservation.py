@@ -1304,7 +1304,7 @@ class TestOutputPathsCompleteness(unittest.TestCase):
         self.assertTrue(callable(op.transcripts_diarized_dir))
         self.assertTrue(callable(op.master_segments_dir))
         self.assertTrue(callable(op.human_eval_dir))
-        self.assertTrue(callable(op.testset_dir))
+        self.assertTrue(callable(op.full_transcripts_dir))
         self.assertTrue(callable(op.cv_testset_dir))
         self.assertTrue(callable(op.llm_prompts_path))
         self.assertTrue(callable(op.theme_definitions_txt_path))
