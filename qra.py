@@ -333,9 +333,16 @@ def _build_config(args):
     """Build PipelineConfig from CLI args, optionally merging a config file."""
     from process.config import PipelineConfig
 
-    # Start from config file if provided
+    # Start from config file if provided, or auto-detect one in the output directory
     if args.config:
-        with open(args.config) as f:
+        config_path = args.config
+    else:
+        _od = getattr(args, 'output_dir', None)
+        _auto = os.path.join(_od, '02_meta', 'qra_config.json') if _od else None
+        config_path = _auto if (_auto and os.path.isfile(_auto)) else None
+
+    if config_path:
+        with open(config_path) as f:
             file_data = json.load(f)
         # Use from_json for proper nested reconstruction
         config = PipelineConfig.from_json(_flatten_wizard_config(file_data))
@@ -1288,7 +1295,13 @@ def cmd_classify(args):
         stage_cross_validation(config, framework, segments=segments, output_dir=output_dir)
         print(f"  cross_validation_labels.jsonl written")
 
-    print("\nClassification overlay(s) written. Run `qra assemble` to rebuild master_segments.")
+    print("\nClassification overlay(s) written.")
+
+    if not getattr(args, 'no_downstream', False):
+        print("\nRunning downstream pipeline...")
+        cmd_assemble(args)
+        cmd_testset_refresh(args)
+        cmd_analyze(args)
 
 
 def cmd_assemble(args):
@@ -1425,8 +1438,8 @@ def cmd_testsets(args):
     )
 
     print(f"\nGenerated/refreshed {len(testset_dirs)} testset(s):")
-    for d in testset_dirs:
-        print(f"  {os.path.relpath(d, output_dir)}")
+    for p in testset_dirs:
+        print(f"  {os.path.relpath(p, output_dir)}")
 
 
 # =========================================================================
@@ -1447,11 +1460,17 @@ def _load_segments_from_output(output_dir: str):
 
 
 def cmd_testset_create(args):
-    """qra testset create — create a single named frozen testset."""
-    from process.assembly.human_forms import create_frozen_testset, _pool_purer, _pool_codebook
-    from process._freeze import FrozenArtifactError
+    """qra testset create — create a flat numbered testset worksheet."""
+    import re as _re
+    from process.assembly.human_forms import (
+        create_frozen_testset, refresh_testset_answer_key,
+        _pool_purer, _pool_codebook, _collect_used_segment_ids,
+        _worksheet_is_legacy_import, _sync_worksheet_header,
+    )
+    from process import output_paths as _paths
 
     segments = _load_segments_from_output(args.output_dir)
+    segments_by_id = {s.segment_id: s for s in segments}
     framework = _load_framework(args.framework)
 
     kind = args.kind
@@ -1469,24 +1488,59 @@ def cmd_testset_create(args):
                   "Run qra run with codebook classifier enabled first.")
             sys.exit(2)
 
-    name = args.name or f'{kind}_testset'
-    try:
-        d = create_frozen_testset(
-            segments, framework, args.output_dir,
-            name=name, kind=kind, n_sets=1, set_index=1,
-            fraction_per_set=args.fraction, random_seed=args.seed,
-            codebook_enabled=(kind == 'codebook'),
-            force=args.force,
-        )
-        print(f"Created testset: {os.path.relpath(d, args.output_dir)}")
-    except FrozenArtifactError as e:
-        print(f"Error: {e}\n  Use --force to overwrite.")
-        sys.exit(2)
+    # Import any legacy folder-based testsets into the flat numbered scheme so the
+    # dedup/numbering helpers below can see them (otherwise new testsets overlap them).
+    from process.legacy_migration import import_legacy_testset_dirs
+    n_imported = import_legacy_testset_dirs(args.output_dir)
+    if n_imported:
+        print(f"Imported {n_imported} legacy testset(s) into flat numbered worksheets.")
+
+    # Collect segments already in existing testsets to prevent overlap
+    used_ids = _collect_used_segment_ids(args.output_dir)
+
+    human_path = create_frozen_testset(
+        segments, framework, args.output_dir,
+        kind=kind, n_sets=1, set_index=1,
+        fraction_per_set=args.fraction, random_seed=args.seed,
+        codebook_enabled=(kind == 'codebook'),
+        exclude_segment_ids=used_ids,
+    )
+    print(f"Created testset: {os.path.relpath(human_path, args.output_dir)}")
+
+    # Refresh all testsets (including newly created) to sync 'N of M' headers and AI keys
+    ts_dir = _paths.testsets_dir(args.output_dir)
+    pattern = _re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
+    all_nums = sorted(int(m.group(1)) for f in os.listdir(ts_dir) if (m := pattern.match(f)))
+    n_total = len(all_nums)
+    new_n = int(os.path.basename(human_path).rsplit('_', 1)[-1].split('.')[0])
+    confirm = (lambda _: True) if getattr(args, 'yes', False) else None
+    for num in all_nums:
+        # Imported legacy testsets keep their human-validated content & AI classifications
+        # frozen; only the 'N of M' header is synced (both files) so the set reads consistently.
+        if _worksheet_is_legacy_import(_paths.testset_meta_path(args.output_dir, num)):
+            _sync_worksheet_header(_paths.testset_human_flat_path(args.output_dir, num), num, n_total)
+            _sync_worksheet_header(_paths.testset_ai_flat_path(args.output_dir, num), num, n_total)
+            continue
+        try:
+            ai_path = refresh_testset_answer_key(
+                segments_by_id, framework, args.output_dir, num,
+                codebook_enabled=(kind == 'codebook'),
+                n_total=n_total,
+                confirm_fn=confirm,
+            )
+            if num != new_n:
+                print(f"Updated header: {os.path.relpath(ai_path, args.output_dir)}")
+        except Exception as e:
+            print(f"Warning: could not refresh testset #{num}: {e}")
 
 
 def cmd_testset_refresh(args):
-    """qra testset refresh — refresh AI answer key(s) for frozen testsets."""
-    from process.assembly.human_forms import refresh_testset_answer_key
+    """qra testset refresh — refresh AI answer key(s) for flat numbered testsets."""
+    import re as _re
+    from process.assembly.human_forms import (
+        refresh_testset_answer_key, _worksheet_is_legacy_import,
+        _sync_worksheet_header,
+    )
     from process import output_paths as _paths
 
     segments = _load_segments_from_output(args.output_dir)
@@ -1498,63 +1552,69 @@ def cmd_testset_refresh(args):
         print("No testsets directory found.")
         sys.exit(0)
 
-    if getattr(args, 'name', None) and not args.all:
-        names = [args.name]
-    else:
-        names = sorted(
-            e.name for e in os.scandir(testsets_root)
-            if e.is_dir() and os.path.isfile(os.path.join(e.path, 'manifest.json'))
-        )
+    pattern = _re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
+    nums = sorted(
+        int(m.group(1)) for f in os.listdir(testsets_root)
+        if (m := pattern.match(f))
+    )
 
-    if not names:
+    if not nums:
         print("No testsets found.")
         return
 
-    for name in names:
+    n_total = len(nums)
+    confirm = (lambda _: True) if getattr(args, 'yes', False) else None
+    for n in nums:
+        if _worksheet_is_legacy_import(_paths.testset_meta_path(args.output_dir, n)):
+            _sync_worksheet_header(_paths.testset_human_flat_path(args.output_dir, n), n, n_total)
+            _sync_worksheet_header(_paths.testset_ai_flat_path(args.output_dir, n), n, n_total)
+            print(f"Legacy testset #{n}: header synced; classifications preserved (frozen).")
+            continue
         try:
             path = refresh_testset_answer_key(
-                segments_by_id, framework, args.output_dir, name,
+                segments_by_id, framework, args.output_dir, n,
                 codebook_enabled=False,
+                n_total=n_total,
+                confirm_fn=confirm,
             )
             print(f"Refreshed: {os.path.relpath(path, args.output_dir)}")
         except Exception as e:
-            print(f"Error refreshing {name!r}: {e}")
+            print(f"Error refreshing testset #{n}: {e}")
 
 
 def cmd_testset_list(args):
-    """qra testset list — list existing frozen testsets."""
+    """qra testset list — list existing flat numbered testsets."""
+    import re as _re
+    from process.assembly.human_forms import _detect_worksheet_kind
     from process import output_paths as _paths
-    import json as _json
 
     testsets_root = _paths.testsets_dir(args.output_dir)
     if not os.path.isdir(testsets_root):
         print("No testsets found.")
         return
 
+    pattern = _re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
     rows = []
-    for entry in sorted(os.scandir(testsets_root), key=lambda e: e.name):
-        if not entry.is_dir():
+    for fname in sorted(os.listdir(testsets_root)):
+        m = pattern.match(fname)
+        if not m:
             continue
-        mp = os.path.join(entry.path, 'manifest.json')
-        if not os.path.isfile(mp):
-            continue
-        with open(mp) as f:
-            m = _json.load(f)
-        rows.append({
-            'name': m.get('name', entry.name),
-            'kind': m.get('kind', '?'),
-            'n_items': len(m.get('segment_ids', [])),
-            'created_at': m.get('created_at', '?')[:10],
-        })
+        n = int(m.group(1))
+        human_path = _paths.testset_human_flat_path(args.output_dir, n)
+        ai_path = _paths.testset_ai_flat_path(args.output_dir, n)
+        kind = _detect_worksheet_kind(human_path)
+        has_ai = os.path.isfile(ai_path)
+        rows.append({'n': n, 'kind': kind, 'has_ai': has_ai})
 
     if not rows:
         print("No testsets found.")
         return
 
-    print(f"{'Name':<30} {'Kind':<10} {'Items':>6} {'Created'}")
-    print('-' * 60)
+    print(f"{'#':>4} {'Kind':<10} {'AI Key'}")
+    print('-' * 30)
     for r in rows:
-        print(f"{r['name']:<30} {r['kind']:<10} {r['n_items']:>6}   {r['created_at']}")
+        ai_status = 'yes' if r['has_ai'] else 'missing'
+        print(f"{r['n']:>4}  {r['kind']:<10} {ai_status}")
 
 
 # =========================================================================
@@ -1859,6 +1919,11 @@ Examples:
              'subtle/adversarial utterances). Per-invocation; not persisted to config. '
              'Scope follows --what (theme → VAAMR only, purer → PURER only, all → both).',
     )
+    classify_parser.add_argument(
+        '--no-downstream',
+        action='store_true',
+        help='Skip automatic assemble → testset refresh → analyze after classification.',
+    )
 
     # ---- assemble (Phase 3) ----
     assemble_parser = subparsers.add_parser(
@@ -1939,20 +2004,20 @@ Examples:
     )
     testset_sub = testset_parser.add_subparsers(dest='testset_command')
 
-    _ts_create = testset_sub.add_parser('create', help='Create a new frozen testset')
+    _ts_create = testset_sub.add_parser('create', help='Create a new flat numbered testset')
     _ts_create.add_argument('--output-dir', '-o', required=True)
     _ts_create.add_argument('--kind', required=True, choices=['vaamr', 'purer', 'codebook'])
-    _ts_create.add_argument('--name', default=None)
     _ts_create.add_argument('--framework', default=None)
     _ts_create.add_argument('--fraction', type=float, default=0.10)
     _ts_create.add_argument('--seed', type=int, default=42)
-    _ts_create.add_argument('--force', action='store_true')
+    _ts_create.add_argument('--yes', '-y', action='store_true',
+                            help='Skip interactive confirmation when segment content has changed')
 
     _ts_refresh = testset_sub.add_parser('refresh', help='Refresh AI answer key(s)')
     _ts_refresh.add_argument('--output-dir', '-o', required=True)
-    _ts_refresh.add_argument('--name', default=None)
-    _ts_refresh.add_argument('--all', action='store_true')
     _ts_refresh.add_argument('--framework', default=None)
+    _ts_refresh.add_argument('--yes', '-y', action='store_true',
+                             help='Skip interactive confirmation when segment content has changed')
 
     _ts_list = testset_sub.add_parser('list', help='List existing frozen testsets')
     _ts_list.add_argument('--output-dir', '-o', required=True)

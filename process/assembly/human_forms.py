@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 from classification_tools.data_structures import Segment
 from .. import output_paths as _paths
-from .._freeze import FrozenArtifactError, sha256_text, verify_content_sha, write_frozen
+from .._freeze import FrozenArtifactError, write_frozen
 from ._shared import _ms_to_hms, _fmt_conf, _theme_name_from
 
 _W = 78  # column width used across all human-readable forms
@@ -501,14 +501,13 @@ def generate_or_refresh_validation_testsets(
     """
     Coordinator for multi-kind validation testset generation/refresh.
 
-    For each enabled kind in test_sets_config, generates or refreshes
-    the frozen testset directory. Returns a list of testset directory paths.
+    Creates flat numbered worksheet files in testsets_dir. Returns list of
+    human worksheet paths written or refreshed.
 
-    When create_missing=False, only refreshes testsets that already exist on
-    disk; skips kinds whose directory is absent. Used by `qra assemble` so
-    it doesn't inadvertently create new testsets outside of the normal
-    `qra run` / `qra testset create` flow.
+    When create_missing=False, only refreshes AI keys for existing flat worksheets;
+    does not create new ones. Used by `qra assemble`.
     """
+    import re as _re
     from process.config import TestSetsConfig, TestSetSpec
 
     # Legacy call-site back-compat: if TestSetsConfig not provided, build from old args
@@ -522,8 +521,27 @@ def generate_or_refresh_validation_testsets(
         )
 
     segments_by_id = {s.segment_id: s for s in segments}
-    dirs: List[str] = []
+    paths: List[str] = []
 
+    if not create_missing:
+        # Refresh AI keys for all existing flat worksheets
+        ts_dir = _paths.testsets_dir(run_dir)
+        pattern = _re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
+        nums = sorted(
+            int(m.group(1)) for f in (os.listdir(ts_dir) if os.path.isdir(ts_dir) else [])
+            if (m := pattern.match(f))
+        )
+        n_total = len(nums)
+        for n in nums:
+            refresh_testset_answer_key(
+                segments_by_id, framework, run_dir, n,
+                codebook_enabled=codebook_enabled, codebook=codebook,
+                n_total=n_total,
+            )
+            paths.append(_paths.testset_human_flat_path(run_dir, n))
+        return paths
+
+    # Create new flat numbered worksheets
     for kind, spec in [
         ('vaamr', test_sets_config.vaamr),
         ('purer', test_sets_config.purer),
@@ -532,35 +550,19 @@ def generate_or_refresh_validation_testsets(
         if not spec.enabled:
             continue
         for i in range(1, spec.n_sets + 1):
-            # Use name_i suffix when n_sets > 1, plain name when n_sets == 1
-            name = f'{spec.name}_{i}' if spec.n_sets > 1 else spec.name
-            manifest_path = _paths.testset_manifest_path(run_dir, name)
+            human_path = create_frozen_testset(
+                segments, framework, run_dir,
+                kind=kind,
+                n_sets=spec.n_sets,
+                set_index=i,
+                fraction_per_set=spec.fraction_per_set,
+                random_seed=spec.random_seed,
+                codebook_enabled=codebook_enabled,
+                codebook=codebook,
+            )
+            paths.append(human_path)
 
-            if os.path.isfile(manifest_path):
-                refresh_testset_answer_key(
-                    segments_by_id, framework, run_dir, name,
-                    codebook_enabled=codebook_enabled,
-                    codebook=codebook,
-                )
-            elif create_missing:
-                create_frozen_testset(
-                    segments, framework, run_dir,
-                    name=name,
-                    kind=kind,
-                    n_sets=spec.n_sets,
-                    set_index=i,
-                    fraction_per_set=spec.fraction_per_set,
-                    random_seed=spec.random_seed,
-                    codebook_enabled=codebook_enabled,
-                    codebook=codebook,
-                )
-            else:
-                # create_missing=False and testset does not yet exist — skip
-                continue
-
-            dirs.append(_paths.testset_dir(run_dir, name))
-
-    return dirs
+    return paths
 
 
 def create_frozen_testset(
@@ -568,7 +570,7 @@ def create_frozen_testset(
     framework,
     run_dir: str,
     *,
-    name: str,
+    name: str = '',  # kept for call-site back-compat; unused for output paths
     kind: str = 'vaamr',
     n_sets: int,
     set_index: int,
@@ -577,26 +579,20 @@ def create_frozen_testset(
     codebook_enabled: bool,
     codebook=None,
     force: bool = False,
+    exclude_segment_ids: Optional[set] = None,
 ) -> str:
     """
-    Compute the stratified sample for set_index and write frozen artifacts:
-      manifest.json, segments_snapshot.jsonl, human_worksheet.txt (all via write_frozen)
-    Then write (NOT frozen) AI_answer_key.txt.
+    Compute the stratified sample for set_index and write flat numbered worksheet files:
+      human_classification_testset_worksheet_N.txt  (frozen — immutable once written)
+      AI_classification_testset_worksheet_N.txt     (refreshable)
 
+    N is auto-assigned as the next available number in testsets_dir.
     kind must be 'vaamr', 'purer', or 'codebook'.
-    Returns the path to the testset directory.
-    Raises FrozenArtifactError if the testset already exists and force=False.
+    exclude_segment_ids: optional set of (session_id, seg_num_1based) to exclude from the
+      sampling pool — used by the CLI to prevent overlap with existing testsets.
+    Returns path to the human worksheet.
+    Raises FrozenArtifactError if the worksheet already exists and force=False.
     """
-    import datetime as _dt
-    import random
-
-    human_path = _paths.testset_human_worksheet_path(run_dir, name)
-    if not force and os.path.isfile(human_path):
-        raise FrozenArtifactError(
-            f"Testset {name!r} already exists at {human_path}. "
-            "Pass force=True to overwrite."
-        )
-
     # Build pool by kind
     if kind == 'purer':
         pool = _pool_purer(segments)
@@ -608,129 +604,248 @@ def create_frozen_testset(
         pool = _pool_vaamr(segments)
         _key_fn = lambda s: s.cohort_id if s.cohort_id is not None else 'none'
 
+    # Exclude already-used segments when caller provides the set (e.g. CLI incremental adds)
+    if exclude_segment_ids:
+        pool = [s for s in pool if (s.session_id, s.segment_index + 1) not in exclude_segment_ids]
+        if not pool:
+            raise ValueError(
+                "No unused segments remain for a new testset. "
+                "All pool segments are already covered by existing testsets."
+            )
+
     segs = _stratified_sample(pool, n_sets, set_index, fraction_per_set, random_seed, _key_fn)
 
-    testset_d = _paths.testset_dir(run_dir, name)
-    os.makedirs(testset_d, exist_ok=True)
+    os.makedirs(_paths.testsets_dir(run_dir), exist_ok=True)
+    n = _paths.next_testset_number(run_dir)
+    human_path = _paths.testset_human_flat_path(run_dir, n)
+    ai_path = _paths.testset_ai_flat_path(run_dir, n)
 
-    fw_name = getattr(framework, 'name', kind) if framework else kind
-    fw_version = getattr(framework, 'version', '1') if framework else '1'
-    now_iso = _dt.datetime.utcnow().isoformat() + 'Z'
-    manifest = {
-        'kind': kind,
-        'name': name,
-        'set_index': set_index,
-        'n_sets': n_sets,
-        'seed': random_seed,
-        'fraction': fraction_per_set,
-        'framework': {'name': fw_name, 'version': fw_version},
-        'segment_ids': [s.segment_id for s in segs],
-        'content_sha256': {s.segment_id: sha256_text(s.text) for s in segs},
-        'created_at': now_iso,
-    }
+    if not force and os.path.isfile(human_path):
+        raise FrozenArtifactError(
+            f"Testset worksheet #{n} already exists at {human_path}. "
+            "Pass force=True to overwrite."
+        )
 
-    write_frozen(
-        _paths.testset_manifest_path(run_dir, name),
-        lambda fh: json.dump(manifest, fh, indent=2),
-        force=force,
-    )
-    write_frozen(
-        _paths.testset_snapshot_path(run_dir, name),
-        lambda fh: _write_snapshot(fh, segs),
-        force=force,
-    )
-
-    # Dispatch human worksheet by kind
+    # Dispatch human worksheet and AI key by kind
     if kind == 'purer':
         write_frozen(
             human_path,
             lambda fh: _write_purer_human_worksheet_to_handle(segs, framework, fh, set_index, n_sets),
             force=force,
         )
-        _write_purer_answer_key(segs, framework, _paths.testset_answer_key_path(run_dir, name),
-                                set_index, n_sets)
+        _write_purer_answer_key(segs, framework, ai_path, set_index, n_sets)
     elif kind == 'codebook':
         write_frozen(
             human_path,
             lambda fh: _write_codebook_human_worksheet_to_handle(segs, codebook, fh, set_index, n_sets),
             force=force,
         )
-        _write_codebook_answer_key(segs, codebook, _paths.testset_answer_key_path(run_dir, name),
-                                   set_index, n_sets)
+        _write_codebook_answer_key(segs, codebook, ai_path, set_index, n_sets)
     else:
         write_frozen(
             human_path,
             lambda fh: _write_human_testset_to_handle(segs, framework, fh, set_index, n_sets),
             force=force,
         )
-        _write_ai_testset(
-            segs, framework, _paths.testset_answer_key_path(run_dir, name),
-            set_index, n_sets, codebook_enabled,
-        )
+        _write_ai_testset(segs, framework, ai_path, set_index, n_sets, codebook_enabled)
 
-    return testset_d
+    # Write per-segment content SHA sidecar for drift detection on future refreshes
+    _write_testset_meta(run_dir, n, segs)
+
+    return human_path
 
 
 def refresh_testset_answer_key(
     segments_by_id: Dict[str, Segment],
     framework,
     run_dir: str,
-    name: str,
+    n: int,
     *,
     codebook_enabled: bool,
     codebook=None,
+    n_total: int = 0,
+    confirm_fn=None,
 ) -> str:
     """
-    Re-emit only the AI_answer_key.txt using the segments in the frozen manifest.
+    Re-emit AI_classification_testset_worksheet_N.txt from current labels.
 
-    Reads manifest kind and dispatches to the correct writer.
-    Verifies that no segment text has drifted since the testset was frozen
-    (raises FrozenArtifactError listing drifted IDs if any).
-    Returns path to the updated AI_answer_key.txt.
+    Parses the frozen human worksheet to identify which segments are in the set,
+    then regenerates the AI key. Also updates the 'N of M' header in the human
+    worksheet to reflect n_total (auto-computed if n_total=0).
+
+    Raises FrozenArtifactError if segment content has changed and the user
+    declines to continue. confirm_fn(prompt) -> bool overrides the interactive
+    stdin prompt (useful in tests or --yes CLI mode).
+
+    Returns path to the updated AI answer key.
     """
-    manifest_path = _paths.testset_manifest_path(run_dir, name)
-    snapshot_path = _paths.testset_snapshot_path(run_dir, name)
+    import hashlib
 
-    with open(manifest_path, encoding='utf-8') as fh:
-        manifest = json.load(fh)
-
-    sha_results = verify_content_sha(snapshot_path, segments_by_id)
-    drifted = [sid for sid, ok in sha_results.items() if not ok]
-    if drifted:
+    human_path = _paths.testset_human_flat_path(run_dir, n)
+    if not os.path.isfile(human_path):
         raise FrozenArtifactError(
-            f"Testset {name!r}: {len(drifted)} segment(s) have drifted text "
-            f"since the testset was frozen: {drifted[:5]}"
-            + (" (and more)" if len(drifted) > 5 else "")
+            f"No human worksheet found for testset #{n} at {human_path}."
         )
 
-    segment_ids = manifest['segment_ids']
-    set_index = manifest['set_index']
-    n_sets = manifest['n_sets']
-    kind = manifest.get('kind', 'vaamr')
+    if n_total == 0:
+        n_total = _paths.count_existing_testsets(run_dir)
 
+    items = _parse_worksheet_items(human_path)
+    # Build lookup by (session_id, segment_index) for fast access
+    by_session_seg = {
+        (s.session_id, s.segment_index): s for s in segments_by_id.values()
+    }
     segs = []
     missing = []
-    for sid in segment_ids:
-        seg = segments_by_id.get(sid)
+    for session_id, seg_num_1based in items:
+        seg = by_session_seg.get((session_id, seg_num_1based - 1))
         if seg is None:
-            missing.append(sid)
+            missing.append(f'{session_id}:{seg_num_1based}')
         else:
             segs.append(seg)
     if missing:
         raise FrozenArtifactError(
-            f"Testset {name!r}: {len(missing)} frozen segment(s) not found in "
-            f"current master segments: {missing[:5]}"
-            + (" (and more)" if len(missing) > 5 else "")
+            f"Testset #{n}: {len(missing)} segment(s) not found in current master segments: "
+            f"{missing[:5]}" + (" (and more)" if len(missing) > 5 else "")
         )
 
-    ai_path = _paths.testset_answer_key_path(run_dir, name)
+    # Validate segment content has not changed since testset was created
+    meta_path = _paths.testset_meta_path(run_dir, n)
+    if os.path.isfile(meta_path):
+        with open(meta_path, encoding='utf-8') as fh:
+            meta = json.load(fh)
+        by_key = {(e['session_id'], e['seg_num']): e['sha256'] for e in meta['segments']}
+        changed = []
+        for seg in segs:
+            key = (seg.session_id, seg.segment_index + 1)
+            expected = by_key.get(key)
+            if expected is not None:
+                actual = hashlib.sha256(seg.text.encode()).hexdigest()
+                if actual != expected:
+                    changed.append(f'  {seg.session_id} seg {seg.segment_index + 1}')
+        if changed:
+            print(f'WARNING: Testset #{n} — {len(changed)} segment(s) have changed content:')
+            for c in changed[:10]:
+                print(c)
+            if len(changed) > 10:
+                print(f'  ... and {len(changed) - 10} more')
+            _confirm = confirm_fn if confirm_fn is not None else _default_confirm
+            if not _confirm(f'Segment content changed in testset #{n}. Continue? [y/N] '):
+                raise FrozenArtifactError(
+                    f'Refresh aborted: segment content changed in testset #{n}.'
+                )
+
+    kind = _detect_worksheet_kind(human_path)
+    ai_path = _paths.testset_ai_flat_path(run_dir, n)
+
     if kind == 'purer':
-        _write_purer_answer_key(segs, framework, ai_path, set_index, n_sets)
+        _write_purer_answer_key(segs, framework, ai_path, n, n_total)
     elif kind == 'codebook':
-        _write_codebook_answer_key(segs, codebook, ai_path, set_index, n_sets)
+        _write_codebook_answer_key(segs, codebook, ai_path, n, n_total)
     else:
-        _write_ai_testset(segs, framework, ai_path, set_index, n_sets, codebook_enabled)
+        _write_ai_testset(segs, framework, ai_path, n, n_total, codebook_enabled)
+
+    # Update the human worksheet header to reflect testset number and current total
+    _sync_worksheet_header(human_path, n, n_total)
+
     return ai_path
+
+
+def _parse_worksheet_items(worksheet_path: str) -> List[tuple]:
+    """Parse (session_id, segment_number_1based) pairs from [ITEM NNN] lines."""
+    import re as _re
+    pattern = _re.compile(r'\[ITEM\s+\d+\]\s+Session:\s+(\S+)\s+Segment\s+(\d+)')
+    items = []
+    with open(worksheet_path, encoding='utf-8') as fh:
+        for line in fh:
+            m = pattern.search(line)
+            if m:
+                items.append((m.group(1), int(m.group(2))))
+    return items
+
+
+def _detect_worksheet_kind(worksheet_path: str) -> str:
+    """Detect testset kind ('purer', 'codebook', or 'vaamr') from worksheet header."""
+    with open(worksheet_path, encoding='utf-8') as fh:
+        for line in fh:
+            if 'PURER' in line and 'VALIDATION TEST SET' in line:
+                return 'purer'
+            if 'CODEBOOK' in line and 'VALIDATION TEST SET' in line:
+                return 'codebook'
+            if 'VALIDATION TEST SET' in line:
+                return 'vaamr'
+    return 'vaamr'
+
+
+import re as _re_module
+_HEADER_RE = _re_module.compile(
+    r'((?:PURER |CODEBOOK )?VALIDATION TEST SET\s+)\d+(\s+of\s+)\d+(\s*—)'
+)
+
+
+def _worksheet_is_legacy_import(meta_path: str) -> bool:
+    """True if a worksheet's .meta.json marks it as an imported legacy (validated) testset."""
+    try:
+        with open(meta_path, encoding='utf-8') as fh:
+            return bool(json.load(fh).get('legacy_import'))
+    except (OSError, ValueError):
+        return False
+
+
+def _sync_worksheet_header(path: str, n: int, n_total: int) -> None:
+    """Replace the 'K of M' in a worksheet header (human or AI key) with 'n of n_total'.
+
+    Only the header line changes; segment selection, text and item order are untouched.
+    """
+    with open(path, encoding='utf-8') as fh:
+        content = fh.read()
+    updated = _HEADER_RE.sub(
+        lambda m: f'{m.group(1)}{n}{m.group(2)}{n_total}{m.group(3)}',
+        content, count=1,
+    )
+    if updated != content:
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write(updated)
+
+
+def _collect_used_segment_ids(run_dir: str) -> set:
+    """Return set of (session_id, seg_num_1based) for all segments in existing testsets."""
+    import re as _re
+    ts_dir = _paths.testsets_dir(run_dir)
+    if not os.path.isdir(ts_dir):
+        return set()
+    pattern = _re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
+    used: set = set()
+    for f in os.listdir(ts_dir):
+        if pattern.match(f):
+            used.update(_parse_worksheet_items(os.path.join(ts_dir, f)))
+    return used
+
+
+def _write_testset_meta(run_dir: str, n: int, segs: List[Segment]) -> None:
+    """Write per-segment SHA256 sidecar for human worksheet #n (under 02_meta)."""
+    import hashlib
+    meta = {'segments': [
+        {
+            'session_id': s.session_id,
+            'seg_num': s.segment_index + 1,
+            'sha256': hashlib.sha256(s.text.encode()).hexdigest(),
+        }
+        for s in segs
+    ]}
+    meta_path = _paths.testset_meta_path(run_dir, n)
+    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+    with open(meta_path, 'w', encoding='utf-8') as fh:
+        json.dump(meta, fh, indent=2)
+
+
+def _default_confirm(prompt: str) -> bool:
+    """Prompt the user interactively; return True if they confirm."""
+    try:
+        answer = input(prompt)
+    except EOFError:
+        return False
+    return answer.strip().lower() in ('y', 'yes')
 
 
 # Phase 1 back-compat — remove with legacy_migration.py
@@ -1032,24 +1147,6 @@ def _write_codebook_answer_key(segs, codebook, output_path, set_idx, n_sets):
 # ---------------------------------------------------------------------------
 # Snapshot writer
 # ---------------------------------------------------------------------------
-
-def _write_snapshot(fh, segs: List[Segment]) -> None:
-    """Write segments_snapshot.jsonl to an open file handle."""
-    for seg in segs:
-        rec = {
-            'segment_id': seg.segment_id,
-            'session_id': seg.session_id,
-            'segment_index': seg.segment_index,
-            'participant_id': seg.participant_id,
-            'speaker': seg.speaker,
-            'start_time_ms': seg.start_time_ms,
-            'end_time_ms': seg.end_time_ms,
-            'word_count': seg.word_count,
-            'speakers_in_segment': seg.speakers_in_segment,
-            'text': seg.text,
-            'content_sha256': sha256_text(seg.text),
-        }
-        fh.write(json.dumps(rec) + '\n')
 
 
 def _write_human_testset(

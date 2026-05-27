@@ -87,6 +87,11 @@ def _collect_therapist_cue(
         return ''
     if from_end_ms is None or to_start_ms is None:
         return ''
+    # 0 is the Segment dataclass default (field unset), not a real recording anchor.
+    # -1 is used by callers as a fillna sentinel for NaN timestamps.
+    # Either value means no valid bound — return empty rather than a full-session dump.
+    if from_end_ms <= 0 or to_start_ms <= 0:
+        return ''
     if to_start_ms <= from_end_ms:
         return ''
 
