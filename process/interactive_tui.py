@@ -145,14 +145,16 @@ def _detect_state(output_dir: str) -> dict:
     ms_dir = _paths.master_segments_dir(output_dir)
     has_master = bool(glob.glob(os.path.join(ms_dir, 'master_segments*.jsonl')))
 
-    # Testsets
+    # Testsets — flat numbered worksheets
+    import re as _re
     ts_dir = _paths.testsets_dir(output_dir)
     has_testsets: list = []
     if os.path.isdir(ts_dir):
-        for name in sorted(os.listdir(ts_dir)):
-            manifest = os.path.join(ts_dir, name, 'manifest.json')
-            if os.path.isfile(manifest):
-                has_testsets.append(name)
+        _ts_pattern = _re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
+        for fname in sorted(os.listdir(ts_dir)):
+            m = _ts_pattern.match(fname)
+            if m:
+                has_testsets.append(int(m.group(1)))
 
     # Content-validity testsets
     cv_dir = _paths.cv_testsets_dir(output_dir)
@@ -451,34 +453,35 @@ def _action_testset_menu(config, output_dir: str, state: dict, framework) -> Non
 
 
 def _action_testset_create(config, output_dir: str, framework, kind: str) -> None:
+    from . import output_paths as _paths
     from .assembly.human_forms import generate_or_refresh_validation_testsets
     from . import segments_io as _sio
 
     _section(f'Create New {kind.upper()} Testset')
-    name_default = f'{kind}_testset_{len(os.listdir(os.path.join(output_dir, "04_validation", "testsets"))) + 1 if os.path.isdir(os.path.join(output_dir, "04_validation", "testsets")) else 1}'
-    name = _ask('Testset name', name_default)
+    next_n = _paths.next_testset_number(output_dir)
     n_sets = int(_ask('Number of parallel testsets (for IRR between coders)', '2'))
     frac = float(_ask('Fraction of eligible segments per set', '0.10'))
     seed = int(_ask('Random seed', '42'))
 
-    _info(f'\nWill create {n_sets} testset(s) named "{name}" sampling {frac*100:.0f}% of {kind} segments.')
+    _info(f'\nWill create {n_sets} testset(s) (worksheet #{next_n}–#{next_n + n_sets - 1}) '
+          f'sampling {frac*100:.0f}% of {kind} segments.')
     if not _confirm('Create now?'):
         return
 
     from .config import TestSetsConfig, TestSetSpec
     config.test_sets = TestSetsConfig(
-        **{kind: TestSetSpec(enabled=True, name=name, n_sets=n_sets,
+        **{kind: TestSetSpec(enabled=True, name=f'{kind}_testset', n_sets=n_sets,
                             fraction_per_set=frac, random_seed=seed)}
     )
     segments = _sio.load_segments_for_stage(output_dir)
-    by_id = {s.segment_id: s for s in segments}
-    generate_or_refresh_validation_testsets(
-        by_id, framework, output_dir=output_dir,
+    paths = generate_or_refresh_validation_testsets(
+        segments, framework, output_dir,
         test_sets_config=config.test_sets,
         create_missing=True, codebook_enabled=config.run_codebook_classifier,
     )
     print()
-    _ok(f'Testset "{name}" created and frozen.')
+    for p in paths:
+        _ok(f'Created: {os.path.basename(p)}')
     _pause()
 
 
@@ -486,20 +489,18 @@ def _action_testset_refresh_all(config, output_dir: str, framework, state: dict)
     from . import segments_io as _sio
     from .assembly.human_forms import refresh_testset_answer_key
     from ._freeze import FrozenArtifactError
-    from . import output_paths as _paths
 
     _section('Refresh All Testset AI Answer Keys')
     if not state['has_testsets']:
-        _warn('No frozen testsets found in this project.')
+        _warn('No testsets found in this project.')
         _pause()
         return
 
     _info(f'Found {len(state["has_testsets"])} testset(s):')
-    for name in state['has_testsets']:
-        _info(f'  • {name}')
+    for n in state['has_testsets']:
+        _info(f'  • worksheet #{n}')
     print()
     _info('Each AI answer key will be re-emitted from current overlay labels.\n'
-          'SHA-256 of each segment\'s text is verified against the frozen snapshot.\n'
           'Human worksheets are NEVER modified.')
     print()
     if not _confirm('Refresh all AI answer keys now?'):
@@ -508,15 +509,17 @@ def _action_testset_refresh_all(config, output_dir: str, framework, state: dict)
     segments = _sio.load_segments_for_stage(output_dir)
     by_id = {s.segment_id: s for s in segments}
 
-    for name in state['has_testsets']:
+    for n in state['has_testsets']:
         try:
             path = refresh_testset_answer_key(
-                by_id, framework, output_dir, name,
+                by_id, framework, output_dir, n,
                 codebook_enabled=config.run_codebook_classifier,
             )
-            _ok(f'{name}: AI answer key updated → {os.path.basename(path)}')
+            _ok(f'Worksheet #{n}: AI answer key updated → {os.path.basename(path)}')
         except FrozenArtifactError as exc:
-            _err(f'{name}: SHA drift detected — {exc}')
+            _err(f'Worksheet #{n}: {exc}')
+        except Exception as exc:
+            _err(f'Worksheet #{n}: {exc}')
         except Exception as exc:
             _err(f'{name}: {exc}')
     print()
@@ -525,23 +528,18 @@ def _action_testset_refresh_all(config, output_dir: str, framework, state: dict)
 
 def _action_testset_list(output_dir: str, state: dict) -> None:
     from . import output_paths as _paths
-    _section('Frozen Testsets')
+    from .assembly.human_forms import _detect_worksheet_kind
+    _section('Validation Testsets')
     if not state['has_testsets']:
-        _warn('No frozen testsets found.')
+        _warn('No testsets found.')
         _pause()
         return
-    for name in state['has_testsets']:
-        manifest_path = _paths.testset_manifest_path(output_dir, name)
-        try:
-            with open(manifest_path) as fh:
-                m = json.load(fh)
-            kind = m.get('kind', 'vaamr')
-            n = len(m.get('segment_ids', []))
-            created = m.get('created_at', 'unknown')[:10]
-            migrated = ' [migrated from legacy]' if m.get('migrated_from_legacy') else ''
-            print(f'  • {name}  ({kind}, {n} segments, created {created}){migrated}')
-        except Exception:
-            print(f'  • {name}  [unreadable manifest]')
+    for n in state['has_testsets']:
+        human_path = _paths.testset_human_flat_path(output_dir, n)
+        ai_path = _paths.testset_ai_flat_path(output_dir, n)
+        kind = _detect_worksheet_kind(human_path)
+        ai_status = 'AI key present' if os.path.isfile(ai_path) else 'AI key missing'
+        print(f'  • Worksheet #{n}  ({kind}, {ai_status})')
     print()
     _pause()
 

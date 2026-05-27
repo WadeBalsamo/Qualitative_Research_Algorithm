@@ -64,8 +64,8 @@ def _find_transition_examples_by_cohort_session(
         texts = group['text'].tolist()
         confs = (group['llm_confidence_primary'].tolist() if has_conf else [0.0] * len(texts))
         seg_indices = group['segment_index'].tolist()
-        end_times = group['end_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
-        start_times = group['start_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
+        end_times = group['end_time_ms'].fillna(-1).astype(int).tolist() if has_times else [-1] * len(labels)
+        start_times = group['start_time_ms'].fillna(-1).astype(int).tolist() if has_times else [-1] * len(labels)
 
         for i in range(len(labels) - 1):
             if labels[i] == from_stage and labels[i + 1] == to_stage:
@@ -512,8 +512,8 @@ def generate_therapist_cues_report(
         except (ValueError, TypeError):
             continue
         texts = pgroup['text'].tolist()
-        end_times = pgroup['end_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
-        start_times = pgroup['start_time_ms'].fillna(0).astype(int).tolist() if has_times else [0] * len(labels)
+        end_times = pgroup['end_time_ms'].fillna(-1).astype(int).tolist() if has_times else [-1] * len(labels)
+        start_times = pgroup['start_time_ms'].fillna(-1).astype(int).tolist() if has_times else [-1] * len(labels)
 
         for i in range(len(labels) - 1):
             fr, to = labels[i], labels[i + 1]
