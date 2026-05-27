@@ -891,24 +891,26 @@ class TestTestsetLocking(unittest.TestCase):
             name="vaamr_testset_1", kind="vaamr", n_sets=2, set_index=1,
             fraction_per_set=1.0, random_seed=42,
             codebook_enabled=False, codebook=None, force=True)
-        ts_dir = os.path.join(self.tmpdir, "04_validation", "testsets", "vaamr_testset_1")
-        for path in (
-            os.path.join(ts_dir, "manifest.json"),
-            os.path.join(ts_dir, "segments_snapshot.jsonl"),
-            _paths.testset_human_worksheet_path(self.tmpdir, "vaamr_testset_1"),
-            _paths.testset_answer_key_path(self.tmpdir, "vaamr_testset_1"),
-        ):
-            self.assertTrue(os.path.isfile(path), f"Missing {os.path.basename(path)}")
+        self.assertTrue(os.path.isfile(_paths.testset_human_flat_path(self.tmpdir, 1)),
+                        "Missing human worksheet #1")
+        self.assertTrue(os.path.isfile(_paths.testset_ai_flat_path(self.tmpdir, 1)),
+                        "Missing AI answer key #1")
+        # No subdirectory, no manifest, no snapshot
+        ts_dir = _paths.testsets_dir(self.tmpdir)
+        self.assertFalse(
+            any(os.path.isdir(os.path.join(ts_dir, e)) for e in os.listdir(ts_dir)),
+            "No subdirectory should exist"
+        )
 
     def test_human_worksheet_has_no_classification_fields(self):
         from process.assembly.human_forms import create_frozen_testset
         from process import output_paths as _paths
         create_frozen_testset(
             self._segments, self._mock_framework(), self.tmpdir,
-            name="vaamr_testset_1", kind="vaamr", n_sets=2, set_index=1,
+            kind="vaamr", n_sets=2, set_index=1,
             fraction_per_set=1.0, random_seed=42,
-            codebook_enabled=False, codebook=None, force=True)
-        with open(_paths.testset_human_worksheet_path(self.tmpdir, "vaamr_testset_1")) as f:
+            codebook_enabled=False, codebook=None)
+        with open(_paths.testset_human_flat_path(self.tmpdir, 1)) as f:
             content = f.read()
         self.assertNotIn("RATER BALLOTS", content)
         self.assertNotIn("CONSENSUS:", content)
@@ -920,29 +922,30 @@ class TestTestsetLocking(unittest.TestCase):
         from process import output_paths as _paths
         create_frozen_testset(
             self._segments, self._mock_framework(), self.tmpdir,
-            name="vaamr_testset_1", kind="vaamr", n_sets=2, set_index=1,
+            kind="vaamr", n_sets=2, set_index=1,
             fraction_per_set=1.0, random_seed=42,
-            codebook_enabled=False, codebook=None, force=True)
-        with open(_paths.testset_answer_key_path(self.tmpdir, "vaamr_testset_1")) as f:
+            codebook_enabled=False, codebook=None)
+        with open(_paths.testset_ai_flat_path(self.tmpdir, 1)) as f:
             content = f.read()
         self.assertIn("RATER BALLOTS", content)
         self.assertIn("CONSENSUS:", content)
 
-    def test_create_frozen_testset_raises_on_existing_no_force(self):
+    def test_create_frozen_testset_sequential_numbering(self):
         from process.assembly.human_forms import create_frozen_testset
-        from process._freeze import FrozenArtifactError
+        from process import output_paths as _paths
         mock_fw = MagicMock(); mock_fw.name = "vaamr"; mock_fw.version = "2.0"; mock_fw.themes = []
-        create_frozen_testset(
+        p1 = create_frozen_testset(
             self._segments, mock_fw, self.tmpdir,
-            name="vaamr_testset_1", kind="vaamr", n_sets=2, set_index=1,
+            kind="vaamr", n_sets=2, set_index=1,
             fraction_per_set=1.0, random_seed=42,
-            codebook_enabled=False, codebook=None, force=True)
-        with self.assertRaises(FrozenArtifactError):
-            create_frozen_testset(
-                self._segments, mock_fw, self.tmpdir,
-                name="vaamr_testset_1", kind="vaamr", n_sets=2, set_index=1,
-                fraction_per_set=1.0, random_seed=42,
-                codebook_enabled=False, codebook=None, force=False)
+            codebook_enabled=False, codebook=None)
+        p2 = create_frozen_testset(
+            self._segments, mock_fw, self.tmpdir,
+            kind="vaamr", n_sets=2, set_index=1,
+            fraction_per_set=1.0, random_seed=42,
+            codebook_enabled=False, codebook=None)
+        self.assertEqual(p1, _paths.testset_human_flat_path(self.tmpdir, 1))
+        self.assertEqual(p2, _paths.testset_human_flat_path(self.tmpdir, 2))
 
     def test_refresh_updates_classifications_preserves_text(self):
         from process.assembly.human_forms import create_frozen_testset, refresh_testset_answer_key
@@ -950,9 +953,9 @@ class TestTestsetLocking(unittest.TestCase):
         mock_fw = self._mock_framework()
         create_frozen_testset(
             self._segments, mock_fw, self.tmpdir,
-            name="vaamr_testset_1", kind="vaamr", n_sets=2, set_index=1,
+            kind="vaamr", n_sets=2, set_index=1,
             fraction_per_set=1.0, random_seed=42,
-            codebook_enabled=False, codebook=None, force=True)
+            codebook_enabled=False, codebook=None)
         # Re-classify
         for seg in self._segments:
             seg.primary_stage = 3
@@ -962,30 +965,26 @@ class TestTestsetLocking(unittest.TestCase):
             seg.llm_confidence_secondary = 0.70
         refresh_testset_answer_key(
             {s.segment_id: s for s in self._segments}, mock_fw, self.tmpdir,
-            "vaamr_testset_1", codebook_enabled=False, codebook=None)
-        with open(_paths.testset_answer_key_path(self.tmpdir, "vaamr_testset_1")) as f:
+            1, codebook_enabled=False, codebook=None)
+        with open(_paths.testset_ai_flat_path(self.tmpdir, 1)) as f:
             content = f.read()
         # AI key shows updated consensus stage (Metacognition = stage 3) and updated confidence
         self.assertIn("Metacognition", content)
         self.assertIn("0.95", content)
 
-    def test_refresh_detects_text_drift(self):
+    def test_refresh_with_missing_segment_raises(self):
         from process.assembly.human_forms import create_frozen_testset, refresh_testset_answer_key
         from process._freeze import FrozenArtifactError
         mock_fw = MagicMock(); mock_fw.name = "vaamr"; mock_fw.version = "2.0"; mock_fw.themes = []
         create_frozen_testset(
             self._segments, mock_fw, self.tmpdir,
-            name="vaamr_testset_1", kind="vaamr", n_sets=2, set_index=1,
+            kind="vaamr", n_sets=2, set_index=1,
             fraction_per_set=1.0, random_seed=42,
-            codebook_enabled=False, codebook=None, force=True)
-        for seg in self._segments:
-            if seg.segment_id == "c1s1_001":
-                seg.text = "CORRUPTED TEXT"
-        with self.assertRaises(FrozenArtifactError) as ctx:
+            codebook_enabled=False, codebook=None)
+        with self.assertRaises(FrozenArtifactError):
             refresh_testset_answer_key(
-                {s.segment_id: s for s in self._segments}, mock_fw, self.tmpdir,
-                "vaamr_testset_1", codebook_enabled=False, codebook=None)
-        self.assertIn("drifted", str(ctx.exception))
+                {}, mock_fw, self.tmpdir, 1,
+                codebook_enabled=False, codebook=None)
 
     def test_refresh_detects_missing_segments(self):
         from process.assembly.human_forms import create_frozen_testset, refresh_testset_answer_key
@@ -1317,10 +1316,9 @@ class TestEndToEndLegacyImport(unittest.TestCase):
         from process.legacy_migration import is_legacy_project
         self.assertTrue(is_legacy_project(self.tmpdir))
 
-        # Step 3: Migrate
-        from process.legacy_migration import migrate_legacy_segments, migrate_legacy_testsets
+        # Step 3: Migrate segments (testset migration is obsolete — flat format is target)
+        from process.legacy_migration import migrate_legacy_segments
         self.assertEqual(migrate_legacy_segments(self.tmpdir), 2)
-        self.assertEqual(migrate_legacy_testsets(self.tmpdir), 1)
 
         # Step 4: Verify segments match original
         from process.segments_io import read_session_segments
@@ -1351,19 +1349,20 @@ class TestEndToEndLegacyImport(unittest.TestCase):
                           MagicMock(theme_id=2, short_name="Attention"),
                           MagicMock(theme_id=3, short_name="Metacognition")]
         from process.assembly.human_forms import refresh_testset_answer_key
+        from process import output_paths as _paths
+        # Worksheet was created as #1 (first flat testset)
         refresh_testset_answer_key(
             {s.segment_id: s for s in segs}, mock_fw, self.tmpdir,
-            "vaamr_testset_1", codebook_enabled=False, codebook=None)
+            1, codebook_enabled=False, codebook=None)
 
         # Step 8: Verify AI key updated — shows new consensus stage, not old rater ballot stage
-        from process import output_paths as _paths
-        with open(_paths.testset_answer_key_path(self.tmpdir, "vaamr_testset_1")) as f:
+        with open(_paths.testset_ai_flat_path(self.tmpdir, 1)) as f:
             ai_content = f.read()
         self.assertIn("Metacognition", ai_content)
         self.assertIn("0.92", ai_content)  # updated confidence
 
         # Step 9: Verify human worksheet unchanged
-        with open(_paths.testset_human_worksheet_path(self.tmpdir, "vaamr_testset_1")) as f:
+        with open(_paths.testset_human_flat_path(self.tmpdir, 1)) as f:
             human_content_migrated = f.read()
         self.assertIn("I would like to avoid surgery and have less pain", human_content_migrated)
         self.assertIn("I'm seeing results already with mindfulness", human_content_migrated)
@@ -1514,15 +1513,15 @@ class TestRegressionGuards(unittest.TestCase):
         seg = _make_segment(primary_stage=0)
         write_session_segments(self.tmpdir, "c1s1", [seg], "legacy-pre-modular")
         create_frozen_testset(
-            [seg], mock_fw, self.tmpdir, name="vaamr_testset_1", kind="vaamr",
+            [seg], mock_fw, self.tmpdir, kind="vaamr",
             n_sets=1, set_index=1, fraction_per_set=1.0, random_seed=42,
-            codebook_enabled=False, codebook=None, force=True)
-        hw_path = _paths.testset_human_worksheet_path(self.tmpdir, "vaamr_testset_1")
+            codebook_enabled=False, codebook=None)
+        hw_path = _paths.testset_human_flat_path(self.tmpdir, 1)
         with open(hw_path) as f:
             original_human = f.read()
         seg.primary_stage = 4
         refresh_testset_answer_key(
-            {seg.segment_id: seg}, mock_fw, self.tmpdir, "vaamr_testset_1",
+            {seg.segment_id: seg}, mock_fw, self.tmpdir, 1,
             codebook_enabled=False, codebook=None)
         with open(hw_path) as f:
             self.assertEqual(original_human, f.read(),

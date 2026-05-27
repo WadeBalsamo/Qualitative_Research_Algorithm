@@ -218,7 +218,49 @@ def classification_manifest_path(run_dir: str) -> str:
     return os.path.join(classifications_dir(run_dir), 'classification_manifest.json')
 
 
-# ── Frozen testsets ───────────────────────────────────────────────────────
+# ── Flat numbered testsets ─────────────────────────────────────────────────
+
+def testset_human_flat_path(run_dir: str, n: int) -> str:
+    """Human coding worksheet for flat testset #n."""
+    return os.path.join(testsets_dir(run_dir), f'human_classification_testset_worksheet_{n}.txt')
+
+
+def testset_ai_flat_path(run_dir: str, n: int) -> str:
+    """AI answer key for flat testset #n."""
+    return os.path.join(testsets_dir(run_dir), f'AI_classification_testset_worksheet_{n}.txt')
+
+
+def next_testset_number(run_dir: str) -> int:
+    """Return the next unused worksheet number (1-based) by scanning testsets_dir."""
+    import re
+    ts_dir = testsets_dir(run_dir)
+    if not os.path.isdir(ts_dir):
+        return 1
+    pattern = re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
+    used = [int(m.group(1)) for f in os.listdir(ts_dir) if (m := pattern.match(f))]
+    return max(used) + 1 if used else 1
+
+
+def testset_meta_path(run_dir: str, n: int) -> str:
+    """Sidecar metadata for flat testset #n (per-segment SHA256 + legacy flag).
+
+    Kept under 02_meta so it does not clutter the 04_validation worksheet output.
+    """
+    return os.path.join(meta_dir(run_dir), 'testset_meta',
+                        f'human_classification_testset_worksheet_{n}.meta.json')
+
+
+def count_existing_testsets(run_dir: str) -> int:
+    """Count how many flat human worksheets exist in testsets_dir."""
+    import re
+    ts_dir = testsets_dir(run_dir)
+    if not os.path.isdir(ts_dir):
+        return 0
+    pattern = re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
+    return sum(1 for f in os.listdir(ts_dir) if pattern.match(f))
+
+
+# ── Legacy folder-based testsets (kept for backward compat) ───────────────
 
 def testset_dir(run_dir: str, name: str) -> str:
     """Directory for a single named frozen testset."""

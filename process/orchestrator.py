@@ -616,18 +616,28 @@ def _purer_llm_classify(config, segments, output_dir, observer):
         for i in range(len(p_segs) - 1):
             from_seg = p_segs[i]
             to_seg = p_segs[i + 1]
-            between = [
-                t for t in th_segs
-                if t.start_time_ms < to_seg.start_time_ms
-                and t.end_time_ms > from_seg.end_time_ms
-            ]
+            from_idx = seg_id_to_idx.get(from_seg.segment_id, -1)
+            # Prefer timestamp-based overlap. Fall back to sorted-index positions
+            # when from_seg.end_time_ms == 0 (Segment default / field unset), to
+            # avoid collecting the entire preceding session as the cue.
+            if from_seg.end_time_ms > 0:
+                between = [
+                    t for t in th_segs
+                    if t.start_time_ms < to_seg.start_time_ms
+                    and t.end_time_ms > from_seg.end_time_ms
+                ]
+            else:
+                to_pos = seg_id_to_idx.get(to_seg.segment_id, -1)
+                between = [
+                    t for t in th_segs
+                    if from_idx < seg_id_to_idx.get(t.segment_id, -1) < to_pos
+                ]
             if not between:
                 continue
             cue_text = '\n'.join(t.text.strip() for t in between if t.text.strip())
             cue_words = len(cue_text.split())
             if skip_lessons and cue_words > max_lesson_words:
                 continue
-            from_idx = seg_id_to_idx.get(from_seg.segment_id, -1)
             exchange_ctx = (
                 _build_context_block_for_purer(sorted_segs, from_idx, window_size=ctx_window,
                                                max_words=max_ctx_words)
@@ -934,7 +944,9 @@ def stage_ingest(
 
     if legacy_migration.is_legacy_project(_od):
         _n_segs = legacy_migration.migrate_legacy_segments(_od)
-        _n_ts = legacy_migration.migrate_legacy_testsets(_od)
+        # Flat numbered worksheets are canonical; import any folder-based testsets
+        # (incl. those an earlier build migrated into directories) into the flat scheme.
+        _n_ts = legacy_migration.import_legacy_testset_dirs(_od)
         observer.on_stage_progress(
             "Transcript Ingestion and Segmentation",
             f"Auto-migrated {_n_segs} sessions and {_n_ts} testsets from legacy layout",
@@ -1041,7 +1053,7 @@ def stage_ingest(
                 model_name=getattr(config, 'anonymize_text_model', 'obi/deid_roberta_i2b2'),
             )
             if _anon_stats['n_known'] or _anon_stats['n_unknown']:
-                plog.write(
+                plog._write(
                     f"[text_anonymization] {sid}: "
                     f"{_anon_stats['n_known']} known + {_anon_stats['n_unknown']} unknown "
                     f"replacements in {_anon_stats['n_segments_modified']} segments "
