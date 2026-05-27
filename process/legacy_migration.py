@@ -158,6 +158,88 @@ def migrate_legacy_testsets(run_dir: str) -> int:
     return n
 
 
+def import_legacy_testset_dirs(run_dir: str) -> int:
+    """
+    Import legacy folder-based testsets into the canonical flat numbered scheme.
+
+    A legacy testset directory lives under 04_validation/testsets/<name>/ and holds
+    human_worksheet.txt + manifest.json (+ segments_snapshot.jsonl + AI_answer_key.txt).
+    The active CLI treats human_classification_testset_worksheet_<n>.txt as canonical and
+    its dedup/numbering helpers only scan those flat files, so directory-based testsets are
+    invisible — causing new testsets to overlap them. This converts each directory into a
+    flat worksheet (+ .meta.json + AI key) so dedup and numbering see them.
+
+    Idempotent and non-destructive: a directory whose item-set already matches an existing
+    flat worksheet is skipped, and the original directories are left in place as a backup.
+    Returns the number of directories imported.
+    """
+    ts_dir = _paths.testsets_dir(run_dir)
+    if not os.path.isdir(ts_dir):
+        return 0
+
+    flat_pattern = re.compile(r'^human_classification_testset_worksheet_(\d+)\.txt$')
+    existing_item_sets = [
+        frozenset(_parse_worksheet_items(os.path.join(ts_dir, f)))
+        for f in os.listdir(ts_dir)
+        if flat_pattern.match(f)
+    ]
+
+    n = 0
+    for name in sorted(os.listdir(ts_dir)):
+        legacy_dir = os.path.join(ts_dir, name)
+        human_src = os.path.join(legacy_dir, 'human_worksheet.txt')
+        manifest_src = os.path.join(legacy_dir, 'manifest.json')
+        if not (os.path.isdir(legacy_dir)
+                and os.path.isfile(human_src)
+                and os.path.isfile(manifest_src)):
+            continue
+
+        items = frozenset(_parse_worksheet_items(human_src))
+        if items in existing_item_sets:
+            continue  # already imported
+
+        idx = _paths.next_testset_number(run_dir)
+        shutil.copyfile(human_src, _paths.testset_human_flat_path(run_dir, idx))
+        _write_flat_meta_from_legacy_dir(run_dir, idx, legacy_dir)
+
+        ai_src = os.path.join(legacy_dir, 'AI_answer_key.txt')
+        if os.path.isfile(ai_src):
+            shutil.copyfile(ai_src, _paths.testset_ai_flat_path(run_dir, idx))
+
+        existing_item_sets.append(items)
+        n += 1
+
+    return n
+
+
+def _write_flat_meta_from_legacy_dir(run_dir: str, idx: int, legacy_dir: str) -> None:
+    """
+    Write the flat .meta.json drift sidecar for testset #idx from a legacy directory's
+    segments_snapshot.jsonl. Matches the schema written by human_forms._write_testset_meta:
+    {'segments': [{'session_id', 'seg_num' (1-based), 'sha256'}]}.
+    """
+    segs_meta: List[dict] = []
+    snapshot = os.path.join(legacy_dir, 'segments_snapshot.jsonl')
+    if os.path.isfile(snapshot):
+        with open(snapshot, encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                segs_meta.append({
+                    'session_id': rec['session_id'],
+                    'seg_num': rec['segment_index'] + 1,
+                    'sha256': rec.get('content_sha256', ''),
+                })
+    # 'legacy_import' marks this testset as a frozen, human-validated artifact: its segment
+    # content and AI classifications are preserved (only the 'N of M' header may be synced).
+    meta_path = _paths.testset_meta_path(run_dir, idx)
+    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+    with open(meta_path, 'w', encoding='utf-8') as fh:
+        json.dump({'legacy_import': True, 'segments': segs_meta}, fh, indent=2)
+
+
 def _load_master_segments_raw(run_dir: str):
     """Load Segment objects from master_segments.jsonl for migration purposes."""
     import glob

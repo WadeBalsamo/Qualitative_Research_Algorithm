@@ -81,6 +81,8 @@ PURER_CUE_PROMPT_TEMPLATE = """You are a qualitative researcher trained in the \
 {framework_name} framework for analyzing therapist guided-inquiry moves in \
 Mindfulness-Oriented Recovery Enhancement (MORE) sessions.
 
+{framework_description}
+
 {codebook_string}
 
 {context_block}The participant made the following statement:
