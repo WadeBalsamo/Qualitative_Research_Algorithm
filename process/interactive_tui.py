@@ -366,7 +366,7 @@ def _action_assemble(config, output_dir: str, framework) -> None:
     print()
     if not _confirm('Assemble master dataset now?'):
         return
-    stage_assemble(config, framework, output_dir=output_dir)
+    stage_assemble(config, output_dir=output_dir)
     print()
     _ok('master_segments.jsonl written and validation artifacts refreshed.')
     _pause()
@@ -414,7 +414,7 @@ def _action_validate(config, output_dir: str, framework) -> None:
     print()
     if not _confirm('Refresh validation artifacts now?'):
         return
-    stage_assemble(config, framework, output_dir=output_dir)
+    stage_assemble(config, output_dir=output_dir)
     print()
     _ok('Validation artifacts refreshed.')
     _pause()
@@ -920,7 +920,7 @@ def _about() -> None:
         '\n'
         'CLI surface (all features also reachable from the TUI above):\n'
         '  qra ingest     Segment + freeze transcripts\n'
-        '  qra classify   Overlay: --what theme|purer|codebook|cross-validation|all\n'
+        '  qra classify   Overlay: --what vaamr|purer|codebook|cross-validation|all\n'
         '                          --zero-shot  (strip exemplars from prompts)\n'
         '  qra assemble   Join overlays → master_segments + validation artifacts\n'
         '  qra analyze    Post-hoc analysis on assembled dataset\n'
