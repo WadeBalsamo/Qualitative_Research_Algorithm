@@ -59,8 +59,8 @@ ingest
 
 classify
   Stages 3-3c: Run classifiers on frozen segments without re-segmenting (Phase 3)
-  --what theme   : Classify VAAMR constructs only
-  --what purer   : Classify PURER constructs only
+  --what vaamr   : Classify VAAMR constructs only (participant segments)
+  --what purer   : Classify PURER constructs only (therapist segments)
   --what codebook: Classify VCE phenomenology codes only
   --what all     : Run all enabled classifiers (default)
   Output: Classification overlays written to output_dir/03_classification/
@@ -1236,7 +1236,7 @@ def cmd_classify(args):
 
     output_dir = args.output_dir
     what = getattr(args, 'what', 'all') or 'all'
-    valid = {'theme', 'purer', 'codebook', 'cross-validation', 'all'}
+    valid = {'vaamr', 'purer', 'codebook', 'cross-validation', 'all'}
     if what not in valid:
         print(f"Error: --what must be one of {sorted(valid)}, got {what!r}")
         sys.exit(2)
@@ -1255,7 +1255,7 @@ def cmd_classify(args):
 
     # --zero-shot: per-invocation override scoped by --what.
     if getattr(args, 'zero_shot', False):
-        if what in ('theme', 'all'):
+        if what in ('vaamr', 'all'):
             config.theme_classification.zero_shot_prompt = True
         if what in ('purer', 'all'):
             config.purer_classification.zero_shot_prompt = True
@@ -1265,7 +1265,7 @@ def cmd_classify(args):
     print(f"  Output: {output_dir}")
     print(f"  Sessions: {len(sessions)}")
 
-    to_run = {what} if what != 'all' else {'theme', 'purer', 'codebook', 'cross-validation'}
+    to_run = {what} if what != 'all' else {'vaamr', 'purer', 'codebook', 'cross-validation'}
 
     # Load frozen segments once (raw); apply overlays selectively per stage below.
     from process import classifications_io as _cio
@@ -1274,8 +1274,8 @@ def cmd_classify(args):
     by_id = {s.segment_id: s for s in segments}
     _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv'))
 
-    if 'theme' in to_run:
-        print("  Running theme classifier...")
+    if 'vaamr' in to_run:
+        print("  Running VAAMR classifier...")
         stage_classify_theme(config, framework, segments=segments, output_dir=output_dir)
         print(f"  theme_labels.jsonl written ({len(segments)} segments)")
 
@@ -1844,14 +1844,14 @@ Examples:
 
   # Modular re-classification workflow (existing / legacy project):
   python qra.py ingest -o ./data/output/
-  python qra.py classify --what theme --backend lmstudio --model <new_model> -o ./data/output/
+  python qra.py classify --what vaamr --backend lmstudio --model <new_model> -o ./data/output/
   python qra.py classify --what purer --backend lmstudio --model <new_model> -o ./data/output/
   python qra.py assemble -o ./data/output/
   python qra.py validate -o ./data/output/
   python qra.py analyze -o ./data/output/
 
   # Re-classify everything with new models (no config file needed):
-  python qra.py classify --what all --backend lmstudio --model <m> -o ./data/output/
+  python qra.py classify --what vaamr --backend lmstudio --model <m> -o ./data/output/
   python qra.py assemble -o ./data/output/
 
   # Testset management
@@ -1906,13 +1906,19 @@ Examples:
     )
     classify_parser.add_argument('--output-dir', '-o', required=True)
     classify_parser.add_argument('--config', '-c', default=None)
-    classify_parser.add_argument('--framework', default=None)
     classify_parser.add_argument('--codebook', default=None)
     classify_parser.add_argument(
         '--what',
         default='all',
-        choices=['theme', 'purer', 'codebook', 'cross-validation', 'all'],
-        help='Which classifier to run (default: all enabled in config)',
+        choices=['vaamr', 'purer', 'codebook', 'cross-validation', 'all'],
+        help=(
+            'Which classifier to run (default: all).\n'
+            '  vaamr            — VAAMR participant-stage classification\n'
+            '  purer            — PURER therapist-move classification\n'
+            '  codebook         — VCE phenomenology codebook\n'
+            '  cross-validation — cross-validation overlay\n'
+            '  all              — run every enabled classifier'
+        ),
     )
     classify_parser.add_argument('--backend', default=None)
     classify_parser.add_argument('--model', default=None)
@@ -1922,7 +1928,7 @@ Examples:
         action='store_true',
         help='Run classification with zero-shot prompts (definitions only, no exemplar/'
              'subtle/adversarial utterances). Per-invocation; not persisted to config. '
-             'Scope follows --what (theme → VAAMR only, purer → PURER only, all → both).',
+             'Scope follows --what (vaamr → VAAMR only, purer → PURER only, all → both).',
     )
     classify_parser.add_argument(
         '--no-downstream',
