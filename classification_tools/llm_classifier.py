@@ -39,26 +39,26 @@ THEME_PROMPT_TEMPLATE = """You are a qualitative researcher trained in the \
 
 {codebook_string}
 
-{context_block}Classify the following {utterance_role} utterance according to these {num_themes} \
-themes. The utterance starts and ends with ```.
+{context_block} Classify the following {utterance_role} segment of dialogue according to these {num_themes} \
+themes. The segment starts and ends with ```.
 
-Utterance:
+Segment:
 ```
 {text}
 ```
 
 Provide your classification as JSON with these exact fields:
 {{
+    "justification": "<brief explanation of why you identified the stage or stages you considered, referencing specific language to support your primary choice>",
     "primary_stage": "<theme name or null>",
     "primary_confidence": <float 0-1>,
     "secondary_stage": "<theme name or null>",
-    "secondary_confidence": <float 0-1 or null>,
-    "justification": "<brief explanation referencing specific language>"
+    "secondary_confidence": <float 0-1 or null>
 }}
 
 Rules:
-- Assign exactly one primary theme, or null if the utterance is irrelevant to the study
-- Assign a secondary theme ONLY if the utterance clearly expresses two themes
+- Assign exactly one primary theme, or null if the segment is irrelevant to the study
+- Assign a secondary theme ONLY if the segment clearly expresses two themes
 - Confidence should reflect how prototypical the expression is (1.0 = textbook example)
 - Reference specific words or phrases in your justification
 - Do NOT provide any text outside the JSON
@@ -102,11 +102,11 @@ THERAPIST RESPONSE:
 
 Provide your classification as JSON with these exact fields:
 {{
+    "justification": "<brief explanation of why you identified this as the primary therapist move, referencing specific language from the THERAPIST RESPONSE>",
     "primary_stage": "<construct name or null>",
     "primary_confidence": <float 0-1>,
     "secondary_stage": "<construct name or null>",
-    "secondary_confidence": <float 0-1 or null>,
-    "justification": "<brief explanation referencing specific language from the THERAPIST RESPONSE>"
+    "secondary_confidence": <float 0-1 or null>
 }}
 
 Rules:
