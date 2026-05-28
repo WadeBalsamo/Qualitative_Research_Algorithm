@@ -149,7 +149,7 @@ The `CueBlock` data structure (`analysis/purer_analysis.py:CueBlock`) pairs ever
 
 > Lift(PURER move | transition type) = P(move | from\_stage, to\_stage) / P(move)
 
-This generates a conditional probability table: *given that a participant just crossed the Avoidance barrier, which therapist inquiry moves were overrepresented in the preceding cue block?* The outputs are `purer_transition_profiles.csv`, `purer_vammr_lift.csv`, and `purer_empty_cue_rates.csv` (transitions where no therapist speech occurred between participant segments — spontaneous, unmediated progressions tracked separately).
+This generates a conditional probability table: *given that a participant just crossed the Avoidance barrier, which therapist inquiry moves were overrepresented in the preceding cue block?* The outputs are `purer_transition_profiles.csv`, `purer_vaamr_lift.csv`, and `purer_empty_cue_rates.csv` (transitions where no therapist speech occurred between participant segments — spontaneous, unmediated progressions tracked separately).
 
 The clinically actionable question this answers: *is Reframing overrepresented before Reappraisal transitions? Is Phenomenology inquiry the dominant cue for Avoidance → Attention Regulation crossings, or does Reframing do more work there?* That distinction directly informs therapist training and session structure.
 
@@ -198,7 +198,7 @@ Therapist and participant segments are separated at this stage. Therapist segmen
 
 Boundaries are calculated with embeddings, and ambiguous-case LLM-assisted boundary refinements: `boundary_review`, `context_expansion`, `coherence_check`.
 
-**Output:** `01_transcripts/segmented/<sid>/segments.jsonl` — frozen, never rewritten upon adding new data or changing framework definitions/exemplars.
+**Output:** `01_transcripts/segmented/<sid>/segments.jsonl` + `segmentation_meta.json` — frozen, never rewritten upon adding new data or changing framework definitions/exemplars. Raw input files are preserved at `01_transcripts_inputs/`.
 
 ### Stage 3 — VAAMR Classification
 
@@ -246,7 +246,7 @@ Lift(stage, code) = P(code | stage) / P(code). Default thresholds: lift ≥ 1.5 
 
 Joins frozen segments + all overlay files. Final label priority: `adjudicated > human_consensus > llm_zero_shot`. Provenance fully auditable per segment.
 
-**Output:** `02_meta/training_data/master_segments.jsonl`, `master_segments.csv`
+**Output:** `02_meta/training_data/master_segments.jsonl`, `master_segments.csv`. Coded transcripts → `04_validation/full_transcripts/`. Human classification forms → `04_validation/full_transcripts/`.
 
 ---
 
@@ -256,11 +256,10 @@ Joins frozen segments + all overlay files. Final label priority: `adjudicated > 
 output_dir/
 ├── 00_index.txt
 ├── 01_transcripts/
-│   ├── diarized/                 # Raw input copies (provenance)
-│   ├── segmented/<sid>/          # FROZEN — never rewritten
-│   │   ├── segments.jsonl
-│   │   └── segmentation_meta.json
-│   └── coded/                    # Human-readable coded transcripts
+│   └── segmented/<sid>/          # FROZEN — never rewritten
+│       ├── segments.jsonl
+│       └── segmentation_meta.json
+├── 01_transcripts_inputs/        # Raw input VTT/JSON copies (provenance)
 ├── 02_meta/
 │   ├── classifications/          # Refreshable overlays
 │   │   ├── theme_labels.jsonl
@@ -274,16 +273,20 @@ output_dir/
 │   └── speaker_anonymization_key.json
 ├── 03_analysis_data/             # Session stats, graphing CSVs
 ├── 04_validation/
-│   ├── testsets/<name>/          # FROZEN validation test sets
-│   │   ├── manifest.json, segments_snapshot.jsonl
-│   │   ├── human_worksheet.txt   # frozen
-│   │   └── AI_answer_key.txt     # refreshable
-│   ├── content_validity/<name>/  # FROZEN content-validity test sets
-│   │   ├── manifest.json, items.jsonl
-│   │   ├── human_worksheet.txt, definition_key.txt  # frozen
-│   │   └── AI_answer_key.txt     # refreshable
-│   ├── cross_validation/
-│   └── human_coding_evaluation_set.csv
+│   ├── flagged_for_review.txt
+│   ├── human_coding_evaluation_set.csv
+│   ├── content_validity/         # Content-validity test sets
+│   │   ├── content_validity_test_set.jsonl
+│   │   ├── content_validity_human_worksheet.txt   # frozen
+│   │   ├── content_validity_definition_key.txt    # frozen
+│   │   ├── content_validity_answer_key.txt        # refreshable
+│   │   └── <named_cv_testset>/   # FROZEN named CV test sets
+│   ├── full_transcripts/         # Session-level human-readable forms
+│   │   ├── coded_transcript_<sid>.txt
+│   │   └── human_classification_<sid>.txt
+│   └── testsets/                 # Flat numbered validation test sets
+│       ├── human_classification_testset_worksheet_N.txt  # frozen
+│       └── AI_classification_testset_worksheet_N.txt    # refreshable
 ├── 05_figures/
 └── 06_reports/
 ```
@@ -305,6 +308,7 @@ output_dir/
 | `process/speaker_anonymization.py` | Persistent speaker ID mapping across runs |
 | `process/speaker_filter.py` | Speaker inclusion/exclusion rules per classifier |
 | `process/output_paths.py` | Single source of truth for all output directory paths |
+| `process/legacy_migration.py` | Auto-migration: v2.0 → per-session segments; v2.5 → v3 directory layout |
 | `process/cross_validation.py` | VAAMR × VCE lift statistics |
 | `process/setup_wizard.py` | Interactive configuration wizard (14 steps) |
 | `process/assembly/master_dataset.py` | `assemble_master_dataset` |
@@ -386,7 +390,7 @@ The setup wizard serializes to `qra_config.json`; `--config` reproduces any run 
 
 ## Validation Architecture
 
-QRA implements a scalable pipeline for maintaing human-validated datasets across a scaling content database:
+QRA implements a scalable pipeline for maintaining human-validated datasets across a scaling content database:
 
 - **Content validity** — frozen content-validity test sets at `04_validation/content_validity/` with exemplar, subtle, and adversarial utterances from each framework definition. Run the classifier against known labels before touching real transcripts.
 - **Construct validity** — empirical VAAMR × VCE lift statistics. Currently exploratory (Cohorts 1–2 characterization). An `expected_codes` pre-specification (encoding theoretical VCE predictions per VAAMR stage) is a committed engineering item before Cohort 3 begins, which will enable mechanical expected-vs-observed comparison.
