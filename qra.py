@@ -1304,6 +1304,137 @@ def cmd_classify(args):
         cmd_analyze(args)
 
 
+def cmd_reclassify_run(args):
+    """qra reclassify-run — redo a single classification run without re-processing the others."""
+    import glob
+    from classification_tools.classification_loop import patch_runs_checkpoint
+    from process.orchestrator import (
+        stage_classify_theme,
+        stage_assemble,
+        stage_validation_artifacts,
+    )
+    from analysis.runner import run_analysis
+
+    output_dir = args.output_dir
+    run_number = args.run          # 1-indexed (user-facing)
+    new_model = getattr(args, 'model', None)
+    explicit_checkpoint = getattr(args, 'checkpoint', None)
+
+    # -- Load config -------------------------------------------------------
+    config_path = getattr(args, 'config', None)
+    if not config_path:
+        candidate = os.path.join(output_dir, '02_meta', 'qra_config.json')
+        if os.path.isfile(candidate):
+            config_path = candidate
+
+    if config_path:
+        with open(config_path) as f:
+            file_data = json.load(f)
+        config = _build_config_from_file(file_data)
+    else:
+        from process.config import PipelineConfig
+        config = PipelineConfig()
+
+    tc = config.theme_classification
+    n_runs = tc.n_runs
+    run_idx = run_number - 1
+
+    if not (1 <= run_number <= n_runs):
+        print(f"Error: --run must be between 1 and {n_runs} (got {run_number}).")
+        sys.exit(2)
+
+    # -- Locate checkpoint -------------------------------------------------
+    if explicit_checkpoint:
+        checkpoint_path = explicit_checkpoint
+    else:
+        checkpoints_dir = os.path.join(
+            output_dir, '02_meta', 'auditable_logs', 'checkpoints'
+        )
+        glob_pattern = os.path.join(checkpoints_dir, 'llm_results_*_runs.json')
+        candidates = sorted(glob.glob(glob_pattern))
+        if not candidates:
+            print(
+                f"Error: no *_runs.json checkpoint found in {checkpoints_dir}.\n"
+                "  Pass --checkpoint <path> to specify one explicitly."
+            )
+            sys.exit(1)
+        checkpoint_path = candidates[-1]  # latest by filename timestamp
+
+    print(f"\nQRA RECLASSIFY-RUN")
+    print(f"  Output dir   : {output_dir}")
+    print(f"  Checkpoint   : {os.path.basename(checkpoint_path)}")
+    print(f"  Run          : {run_number}/{n_runs} (index {run_idx})")
+    if new_model:
+        print(f"  New model    : {new_model}")
+    else:
+        current_model = (tc.per_run_models[run_idx]
+                         if run_idx < len(tc.per_run_models) else tc.model)
+        print(f"  Model        : {current_model} (unchanged)")
+
+    # -- Patch checkpoint --------------------------------------------------
+    updated_per_run_models = patch_runs_checkpoint(
+        checkpoint_path, run_idx, new_model=new_model
+    )
+
+    # Apply model update to config so classify stage uses the right model
+    if new_model and run_idx < len(tc.per_run_models):
+        tc.per_run_models[run_idx] = new_model
+
+    # Tell the classifier to resume from this checkpoint (so other runs are skipped)
+    config.resume_from = checkpoint_path
+
+    # -- Re-run theme classification (updates consensus + theme_labels.jsonl) --
+    framework = _load_framework(
+        getattr(config, 'participant_framework', None) or 'vaamr'
+    )
+    print(f"\nStep 1/5 — Theme classification (run {run_number} only)...")
+    stage_classify_theme(config, framework, output_dir=output_dir)
+    print(f"  theme_labels.jsonl updated.")
+
+    # -- Re-assemble master dataset ----------------------------------------
+    print("\nStep 2/5 — Assembling master dataset...")
+    stage_assemble(config, output_dir=output_dir)
+    print(f"  master_segments.jsonl updated.")
+
+    # -- Refresh testset AI answer keys + CV testsets ----------------------
+    # create_missing=False so we only refresh existing artifacts, not create new ones
+    print("\nStep 3/5 — Refreshing testset + CV answer keys...")
+    try:
+        stage_validation_artifacts(
+            config, framework,
+            output_dir=output_dir,
+            create_missing=False,
+        )
+        print(f"  Testset and CV answer keys refreshed.")
+    except Exception as e:
+        print(f"  Warning: validation artifact refresh failed: {e}")
+
+    # -- Re-run analysis (figures, reports) --------------------------------
+    print("\nStep 4/5 — Re-running analysis and figures...")
+    try:
+        result = run_analysis(output_dir, verbose=False)
+        print(
+            f"  Analysis complete: {result['n_segments']} segments | "
+            f"{result['n_participants']} participants | "
+            f"{result['n_sessions']} sessions"
+        )
+        print(f"  Reports: {output_dir}/06_reports/")
+    except Exception as e:
+        print(f"  Warning: analysis failed: {e}")
+
+    # -- Done --------------------------------------------------------------
+    print(f"\nStep 5/5 — Complete.")
+    print(f"  Run {run_number} re-classified with: "
+          f"{updated_per_run_models[run_idx] if run_idx < len(updated_per_run_models) else new_model or 'unchanged model'}")
+    print(f"  per_run_models: {updated_per_run_models}")
+
+
+def _build_config_from_file(file_data: dict):
+    """Load a PipelineConfig from a raw JSON dict (wizard or flat format)."""
+    from process.config import PipelineConfig
+    return PipelineConfig.from_json(_flatten_wizard_config(file_data))
+
+
 def cmd_assemble(args):
     """qra assemble — join frozen segments + overlays into master_segments."""
     from process import segments_io as _segments_io, output_paths as _paths
@@ -2060,6 +2191,30 @@ Examples:
     _cv_list = cv_sub.add_parser('list', help='List content-validity testsets')
     _cv_list.add_argument('--output-dir', '-o', required=True)
 
+    # ---- reclassify-run ----
+    reclassify_parser = subparsers.add_parser(
+        'reclassify-run',
+        help='Re-classify a single run (e.g. to fix wrong model) without redoing other runs',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Patches the existing model-first checkpoint to remove one run\'s results,\n'
+            'then re-classifies only that run using the specified model.\n\n'
+            'Example: run 3 accidentally used gemma instead of nemotron:\n'
+            '  qra reclassify-run -o ./data/MMORE_Processed --run 3 --model nvidia/nemotron-3-nano-30b\n'
+        ),
+    )
+    reclassify_parser.add_argument('--output-dir', '-o', required=True,
+                                   help='Pipeline output directory')
+    reclassify_parser.add_argument('--run', type=int, required=True,
+                                   help='1-indexed run number to redo (e.g. 3 for run 3/3)')
+    reclassify_parser.add_argument('--model', default=None,
+                                   help='New model for this run (overrides config and checkpoint)')
+    reclassify_parser.add_argument('--checkpoint', default=None, metavar='PATH',
+                                   help='Explicit path to *_runs.json checkpoint (auto-detected '
+                                        'from output-dir if omitted)')
+    reclassify_parser.add_argument('--config', '-c', default=None,
+                                   help='Path to qra_config.json (auto-detected if omitted)')
+
     # ---- apply-anonymization ----
     anon_parser = subparsers.add_parser(
         'apply-anonymization',
@@ -2150,6 +2305,8 @@ def main():
                 cmd_cv_list(args)
             else:
                 cv_parser.print_help()
+        elif args.command == 'reclassify-run':
+            cmd_reclassify_run(args)
         elif args.command == 'apply-anonymization':
             cmd_apply_anonymization(args)
     except KeyboardInterrupt:
