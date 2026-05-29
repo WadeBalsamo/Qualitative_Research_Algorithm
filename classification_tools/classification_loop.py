@@ -277,6 +277,15 @@ def _classify_segments_model_first(
 
         client.config.model = model
         print(f"  Run {run_idx + 1}/{n_runs}: {model}")
+        if client.config.backend == 'lmstudio' and not client.check_loaded_model(model):
+            print(
+                f"\n  *** MODEL MISMATCH WARNING ***\n"
+                f"  Requested : {model}\n"
+                f"  LMStudio does not appear to have this model loaded.\n"
+                f"  Load '{model}' in LMStudio, then recover with:\n"
+                f"    qra reclassify-run --output-dir <output_dir> --run {run_idx + 1} --model {model}\n"
+                f"  Continuing — results for this run will use whatever LMStudio has loaded.\n"
+            )
 
         for i, segment in enumerate(segments):
             seg_id = segment.segment_id
@@ -349,6 +358,70 @@ def _classify_segments_model_first(
         _save_checkpoint(results, output_dir, file_prefix, model_tag, timestamp, serialize_result)
 
     return results
+
+
+def patch_runs_checkpoint(
+    checkpoint_path: str,
+    run_idx: int,
+    new_model: Optional[str] = None,
+) -> List[str]:
+    """
+    Remove one run's results from a model_first_v1 checkpoint so it can be
+    re-classified without disturbing the other runs.
+
+    Removes *run_idx* from ``completed_runs``, deletes the ``str(run_idx)``
+    key from every segment's result dict, and (if *new_model* is given)
+    updates ``per_run_models[run_idx]``.  Writes the patched data back to
+    *checkpoint_path* in place and returns the (possibly updated)
+    ``per_run_models`` list.
+
+    Raises ``ValueError`` if the file is not in ``model_first_v1`` format or
+    if *run_idx* is out of range.
+    """
+    with open(checkpoint_path, 'r') as f:
+        data = json.load(f)
+
+    meta = data.get('_meta', {})
+    if meta.get('format') != 'model_first_v1':
+        raise ValueError(
+            f"{os.path.basename(checkpoint_path)} is not a model_first_v1 checkpoint "
+            f"(format={meta.get('format')!r}). Only model-first runs checkpoints can be patched."
+        )
+
+    per_run_models: List[str] = meta.get('per_run_models', [])
+    n_runs: int = meta.get('n_runs', len(per_run_models))
+
+    if not (0 <= run_idx < n_runs):
+        raise ValueError(
+            f"run_idx {run_idx} is out of range for a {n_runs}-run checkpoint "
+            f"(valid: 0–{n_runs - 1})."
+        )
+
+    if new_model is not None:
+        per_run_models[run_idx] = new_model
+        meta['per_run_models'] = per_run_models
+
+    completed_runs: List[int] = meta.get('completed_runs', [])
+    meta['completed_runs'] = [r for r in completed_runs if r != run_idx]
+
+    run_key = str(run_idx)
+    cleared = 0
+    for seg_data in data.get('run_results', {}).values():
+        if run_key in seg_data:
+            del seg_data[run_key]
+            cleared += 1
+
+    with open(checkpoint_path, 'w') as f:
+        json.dump(data, f, indent=2, default=str)
+
+    print(
+        f"  Patched checkpoint: run {run_idx + 1} removed from completed_runs, "
+        f"{cleared} segment result(s) cleared."
+    )
+    if new_model is not None:
+        print(f"  Updated per_run_models[{run_idx}] → {new_model}")
+
+    return per_run_models
 
 
 def _save_runs_checkpoint(

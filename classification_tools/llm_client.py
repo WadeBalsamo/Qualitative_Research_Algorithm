@@ -113,6 +113,33 @@ class LLMClient:
 
         return results
 
+    def check_loaded_model(self, expected_model: str) -> bool:
+        """
+        Verify that LMStudio currently has *expected_model* loaded.
+
+        Queries /v1/models and checks whether any returned model ID contains
+        expected_model as a case-insensitive substring (LMStudio IDs can vary
+        by version/platform).  Returns True when the model appears loaded or
+        when the check cannot be performed (network error, wrong backend).
+        Returns False only when the endpoint is reachable and the model is
+        definitively not in the loaded list — the caller should warn loudly.
+        """
+        if self.config.backend != 'lmstudio':
+            return True
+        import requests
+        base_url = self.config.lmstudio_base_url.rstrip('/')
+        try:
+            resp = requests.get(
+                f"{base_url}/models",
+                headers={"Authorization": "Bearer lm-studio"},
+                timeout=10,
+            )
+            loaded_ids = [m.get('id', '') for m in resp.json().get('data', [])]
+            needle = expected_model.lower()
+            return any(needle in mid.lower() for mid in loaded_ids)
+        except Exception:
+            return True  # non-blocking: can't reach server, assume OK
+
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
