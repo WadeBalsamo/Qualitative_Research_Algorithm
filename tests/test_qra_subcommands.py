@@ -57,7 +57,7 @@ class TestQraClassifyGuards(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_classify_errors_without_frozen_segments(self):
-        r = _run(['classify', '-o', self.tmpdir, '--what', 'theme'])
+        r = _run(['classify', '-o', self.tmpdir, '--what', 'vaamr'])
         self.assertNotEqual(r.returncode, 0)
         combined = r.stdout + r.stderr
         # Should mention ingest
