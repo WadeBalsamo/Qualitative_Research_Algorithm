@@ -1223,6 +1223,120 @@ def cmd_apply_anonymization(args):
     print("Run `qra assemble` to rebuild master_segments with the updated text.")
 
 
+def _split_kv(spec: str, flag: str):
+    """Split an OLD=NEW CLI spec on the first '='. Raises ValueError on bad input."""
+    if '=' not in spec:
+        raise ValueError(f"{flag} expects OLD=NEW, got {spec!r}")
+    left, right = spec.split('=', 1)
+    left, right = left.strip(), right.strip()
+    if not left or not right:
+        raise ValueError(f"{flag} expects non-empty OLD=NEW, got {spec!r}")
+    return left, right
+
+
+def cmd_edit_anonymization(args):
+    """qra edit-anonymization — edit the speaker anonymization key and cascade downstream.
+
+    With no edit flags this launches an interactive TUI.  With edit flags it
+    applies them non-interactively, then propagates the change across frozen
+    segments, classification overlays, checkpoints, validation worksheets, and
+    regenerated master/analysis artifacts.
+    """
+    from process import anonymization_editor as _ae
+
+    output_dir = args.output_dir
+    if not os.path.isdir(output_dir):
+        print(f"Error: output directory not found: {output_dir}")
+        sys.exit(1)
+
+    old_key = _ae.load_key(output_dir)
+
+    renames = getattr(args, 'rename', None) or []
+    rename_raws = getattr(args, 'rename_raw', None) or []
+    set_roles = getattr(args, 'set_role', None) or []
+    merges = getattr(args, 'merge', None) or []
+    remove_names = getattr(args, 'remove_names', False)
+    has_edits = bool(renames or rename_raws or set_roles or merges)
+
+    # No edits requested → interactive editor.
+    if not has_edits and not remove_names:
+        config = _build_config(args)
+        _ae.run_anonymization_tui(output_dir, config=config)
+        return
+
+    new_key = old_key
+    try:
+        for spec in renames:
+            old_id, new_id = _split_kv(spec, '--rename')
+            new_key = _ae.rename_anon_id(new_key, old_id, new_id)
+        for spec in rename_raws:
+            old_raw, new_raw = _split_kv(spec, '--rename-raw')
+            new_key = _ae.rename_raw_name(new_key, old_raw, new_raw)
+        for spec in set_roles:
+            anon_id, role = _split_kv(spec, '--set-role')
+            new_key = _ae.change_role(new_key, anon_id, role)
+        for spec in merges:
+            raws_part, target = _split_kv(spec, '--merge')
+            raw_list = [r.strip() for r in raws_part.split(',') if r.strip()]
+            new_key = _ae.merge_speakers(new_key, raw_list, target)
+    except (KeyError, ValueError) as exc:
+        print(f"Error: {exc}")
+        sys.exit(2)
+
+    rescrub_opts = None
+    if remove_names:
+        rescrub_opts = {
+            'use_transformer': not getattr(args, 'no_spacy', False),
+            'confidence_threshold': getattr(args, 'confidence', None) or 0.6,
+            'model_name': getattr(args, 'model', None) or 'obi/deid_roberta_i2b2',
+        }
+
+    prev = _ae.preview_key_update(output_dir, old_key, new_key)
+    print("\nQRA EDIT-ANONYMIZATION")
+    print(f"  Output dir       : {output_dir}")
+    print(f"  Renamed IDs      : {prev['n_renamed_ids']}  {prev['relabel_map'] or ''}")
+    print(f"  Segment IDs      : {prev['n_segment_ids']} to rewrite across {prev['n_sessions']} session(s)")
+    print(f"  Overlays / ckpts : {prev['n_overlays']} / {prev['n_checkpoints']}")
+    print(f"  Re-run scrub     : {'yes' if remove_names else 'no'}")
+
+    if getattr(args, 'dry_run', False):
+        print("\nDry run — no files written.")
+        return
+
+    if not getattr(args, 'yes', False):
+        confirm = input(
+            "\n  This will OVERWRITE frozen segments, overlays, checkpoints, validation\n"
+            "  worksheets, and regenerate master + analysis. A backup is written first.\n"
+            "  Type 'yes' to continue: "
+        ).strip().lower()
+        if confirm != 'yes':
+            print("Aborted.")
+            sys.exit(0)
+
+    config = _build_config(args)
+    stats = _ae.apply_key_update(
+        output_dir, old_key, new_key,
+        remove_names=remove_names,
+        include_locked=getattr(args, 'include_locked', True),
+        rescrub_opts=rescrub_opts,
+        backup=not getattr(args, 'no_backup', False),
+        config=config,
+        regenerate=not getattr(args, 'no_regenerate', False),
+        verbose=True,
+    )
+    print("\nDone.")
+    print(f"  Backup            : {stats.get('backup')}")
+    print(f"  Sessions rewritten: {stats['sessions_rewritten']}")
+    print(f"  Overlay rows      : {stats['overlay_rows']}")
+    print(f"  Checkpoint keys   : {stats['checkpoint_keys']}")
+    print(f"  Testset txt files : {stats['testset_txt_files']}")
+    print(f"  CV item rows      : {stats['cv_item_rows']}")
+    print(f"  Testset meta files: {stats['testset_meta_files']}")
+    if stats.get('regenerated'):
+        print(f"  Regenerated master: {stats['regenerated']['master']} segments, "
+              f"{stats['regenerated']['analysis_files']} analysis files")
+
+
 def cmd_classify(args):
     """qra classify — run classifier(s) on frozen segments and write overlays."""
     from process import segments_io as _segments_io
@@ -2250,6 +2364,55 @@ Examples:
         help='Confidence threshold for model/Presidio predictions (default: 0.6)',
     )
 
+    # ---- edit-anonymization ----
+    edit_anon_parser = subparsers.add_parser(
+        'edit-anonymization',
+        help='Edit the speaker anonymization key and cascade the change downstream',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Edit the speaker anonymization key (rename anonymized IDs, fix raw\n'
+            'names, change roles, merge speakers) and propagate the change across\n'
+            'EVERY downstream artifact: frozen segment fields + segment_ids +\n'
+            '{token} text, classification overlays, checkpoints, validation\n'
+            'worksheets, and regenerated master + analysis/reports.\n\n'
+            'With no edit flags, an interactive editor (TUI) is launched.\n\n'
+            'Examples:\n'
+            '  qra edit-anonymization -o ./data/MMORE_Processed\n'
+            '  qra edit-anonymization -o ./data/MMORE_Processed --rename therapist_1=therapist_9\n'
+            '  qra edit-anonymization -o ./data/MMORE_Processed --remove-names --dry-run\n'
+        ),
+    )
+    edit_anon_parser.add_argument('--output-dir', '-o', required=True,
+                                  help='Project output directory')
+    edit_anon_parser.add_argument('--config', '-c', default=None,
+                                  help='Path to qra_config.json (auto-detected if omitted)')
+    edit_anon_parser.add_argument('--rename', action='append', metavar='OLD=NEW',
+                                  help='Rename an anonymized_id (repeatable)')
+    edit_anon_parser.add_argument('--rename-raw', action='append', metavar='OLD=NEW',
+                                  help='Rename an original/raw speaker label (repeatable)')
+    edit_anon_parser.add_argument('--set-role', action='append', metavar='ID=ROLE',
+                                  help='Set a speaker role: participant/therapist/staff (repeatable)')
+    edit_anon_parser.add_argument('--merge', action='append', metavar='RAW1,RAW2=ANON_ID',
+                                  help='Point several raw labels at one anonymized_id (repeatable)')
+    edit_anon_parser.add_argument('--remove-names', action='store_true',
+                                  help='Re-run the NLP de-id scrub over segment text after remapping')
+    edit_anon_parser.add_argument('--include-locked', action='store_true', default=True,
+                                  help='Rewrite frozen ("locked") segments (default: on)')
+    edit_anon_parser.add_argument('--no-spacy', action='store_true',
+                                  help='With --remove-names: regex heuristics only (skip NLP engine)')
+    edit_anon_parser.add_argument('--model', default=None,
+                                  help='With --remove-names: HF de-id model (default: obi/deid_roberta_i2b2)')
+    edit_anon_parser.add_argument('--confidence', type=float, default=None,
+                                  help='With --remove-names: confidence threshold (default: 0.6)')
+    edit_anon_parser.add_argument('--no-regenerate', action='store_true',
+                                  help='Skip Phase B regeneration of master + analysis')
+    edit_anon_parser.add_argument('--no-backup', action='store_true',
+                                  help='Skip the timestamped backup written before any change')
+    edit_anon_parser.add_argument('--dry-run', action='store_true',
+                                  help='Print the relabel/segment-id maps and counts, write nothing')
+    edit_anon_parser.add_argument('--yes', '-y', action='store_true',
+                                  help='Skip interactive confirmation prompt')
+
     return parser, testset_parser, cv_parser
 
 
@@ -2309,6 +2472,8 @@ def main():
             cmd_reclassify_run(args)
         elif args.command == 'apply-anonymization':
             cmd_apply_anonymization(args)
+        elif args.command == 'edit-anonymization':
+            cmd_edit_anonymization(args)
     except KeyboardInterrupt:
         print("\n\nPipeline interrupted by user.")
         sys.exit(1)

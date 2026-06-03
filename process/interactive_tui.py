@@ -783,6 +783,9 @@ def _existing_project_flow() -> None:
              'Re-emit human forms, coded transcripts, and AI answer keys without re-classifying.'),
             ('Edit Configuration',
              'Change models, LM Studio URL, feature flags, or open config in $EDITOR.'),
+            ('Edit Speaker Anonymization Key',
+             'Rename / merge / relabel speakers and cascade the change across\n'
+             'segments, overlays, checkpoints, validation, and analysis.'),
         ]
 
         choice = _menu(f'Project: {os.path.basename(output_dir)}', opts, back_label='Back to main menu')
@@ -816,6 +819,9 @@ def _existing_project_flow() -> None:
                 _action_validate(config, output_dir, framework)
             elif choice == 9:
                 _action_edit_config(state['config_path'])
+            elif choice == 10:
+                from .anonymization_editor import run_anonymization_tui
+                run_anonymization_tui(output_dir, config=config)
         except KeyboardInterrupt:
             print()
             _warn('Action interrupted.')
