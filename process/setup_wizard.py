@@ -34,6 +34,7 @@ from .config import (
     SessionSummariesConfig,
     ParticipantSummariesConfig,
 )
+from gnn_layer.config import GnnLayerConfig
 from .transcript_ingestion import scan_speakers
 
 
@@ -1527,6 +1528,10 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         participant_summaries=ParticipantSummariesConfig(
             **{k: v for k, v in data.get('participant_summaries', {}).items()
                if k in ('enabled', 'max_words_per_session')}
+        ),
+        gnn_layer=GnnLayerConfig(
+            **{k: v for k, v in data.get('gnn_layer', {}).items()
+               if k in GnnLayerConfig.__dataclass_fields__}
         ),
     )
 

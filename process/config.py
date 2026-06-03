@@ -16,6 +16,7 @@ from codebook.config import (
     LLMCodebookConfig,
     EnsembleConfig,
 )
+from gnn_layer.config import GnnLayerConfig
 
 # Keys that hold secrets and must never be written to config JSON
 _SECRET_KEYS = frozenset({'api_key'})
@@ -235,6 +236,8 @@ class PipelineConfig:
     purer_cue: PurerCueConfig = field(default_factory=PurerCueConfig)
     session_summaries: SessionSummariesConfig = field(default_factory=SessionSummariesConfig)
     participant_summaries: ParticipantSummariesConfig = field(default_factory=ParticipantSummariesConfig)
+    # GNN representation-and-discovery layer (analysis-time; OFF by default)
+    gnn_layer: GnnLayerConfig = field(default_factory=GnnLayerConfig)
 
     # Resume from checkpoint
     resume_from: Optional[str] = None
@@ -300,6 +303,7 @@ class PipelineConfig:
             'purer_cue': PurerCueConfig,
             'session_summaries': SessionSummariesConfig,
             'participant_summaries': ParticipantSummariesConfig,
+            'gnn_layer': GnnLayerConfig,
         }
 
         kwargs = {}

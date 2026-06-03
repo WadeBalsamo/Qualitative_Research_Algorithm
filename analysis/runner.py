@@ -428,6 +428,24 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             if verbose:
                 traceback.print_exc()
 
+    # ----------------------------------------------------------------
+    # 11. GNN representation-and-discovery layer (optional; OFF by default)
+    # ----------------------------------------------------------------
+    _gnn_cfg = getattr(_pipeline_config, 'gnn_layer', None) if _pipeline_config is not None else None
+    if df_all is not None and _gnn_cfg is not None and getattr(_gnn_cfg, 'enabled', False):
+        try:
+            from gnn_layer.runner import run_gnn_analysis
+            log("[11/8] Running GNN representation-and-discovery layer...")
+            gnn_result = run_gnn_analysis(
+                df_all, output_dir, framework=framework, config=_gnn_cfg, llm_client=llm_client,
+            )
+            files_generated.extend(gnn_result.get('files_written', []))
+            log(f"    GNN layer status: {gnn_result.get('status', 'ok')}")
+        except Exception as e:
+            print(f"  Warning: GNN layer failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
     try:
         from process.output_index import write_index
         write_index(output_dir)
