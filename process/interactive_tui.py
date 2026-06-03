@@ -312,6 +312,8 @@ def _action_classify_theme(config, output_dir: str, framework) -> None:
 
 
 def _action_classify_purer(config, output_dir: str) -> None:
+    import glob as _glob
+    from . import output_paths as _paths
     from .orchestrator import stage_classify_purer
     _section('Stage 3c — PURER Therapist Classification')
     _info(
@@ -327,6 +329,148 @@ def _action_classify_purer(config, output_dir: str) -> None:
     )
     print()
 
+    purer_model = (getattr(config.purer_classification, 'model', None)
+                   or config.theme_classification.model)
+    n_runs = getattr(config.purer_classification, 'n_runs', 1)
+    per_run_models = list(getattr(config.purer_classification, 'per_run_models', []) or [])
+
+    _info(f'Model:   {purer_model}')
+    _info(f'Runs:    {n_runs}')
+    if per_run_models:
+        for i, m in enumerate(per_run_models):
+            tag = ' (primary)' if i == 0 else f' (checker {i})'
+            _info(f'  Run {i+1}: {m}{tag}')
+    print()
+
+    config_path = os.path.join(output_dir, '02_meta', 'qra_config.json')
+
+    def _save_purer_to_disk():
+        if not os.path.isfile(config_path):
+            return
+        try:
+            with open(config_path) as _f:
+                _raw = json.load(_f)
+            pc = _raw.setdefault('purer_classification', {})
+            pc['model'] = config.purer_classification.model
+            pc['n_runs'] = config.purer_classification.n_runs
+            pc['per_run_models'] = list(
+                getattr(config.purer_classification, 'per_run_models', []) or []
+            )
+            with open(config_path, 'w') as _f:
+                json.dump(_raw, _f, indent=2)
+            _ok('Config updated on disk.')
+        except Exception as _e:
+            _warn(f'Could not save config: {_e}')
+
+    def _delete_purer_checkpoints():
+        ckpt_dir = _paths.llm_checkpoints_dir(output_dir)
+        removed = 0
+        for _f in _glob.glob(os.path.join(ckpt_dir, 'purer_cue_results_*')):
+            os.remove(_f)
+            removed += 1
+        if removed:
+            _ok(f'Removed {removed} PURER checkpoint file(s).')
+
+    already_done = os.path.isfile(_paths.classification_overlay_path(output_dir, 'purer'))
+
+    if already_done:
+        _info('PURER classification already exists for this project.')
+        print()
+        opts = [
+            ('Re-run all', 'Full reclassification from scratch with the same models.'),
+            ('Re-run all with new model', 'Change the PURER model and re-run everything.'),
+            ('Add a new run', 'Append one more run with a different checker model.'),
+            ('Reclassify a specific run', 'Re-run just one run, optionally with a new model.'),
+        ]
+        sub = _menu('PURER Reclassify Options', opts)
+        if sub == 0:
+            return
+
+        if sub == 1:
+            if not _confirm('Delete PURER checkpoints and re-run all classification now?'):
+                return
+            _delete_purer_checkpoints()
+            config.resume_from = None
+            stage_classify_purer(config, output_dir=output_dir)
+            print()
+            _ok('purer_labels.jsonl written. Run Assemble to rebuild master_segments.')
+            _pause()
+            return
+
+        elif sub == 2:
+            new_model = _ask('New PURER primary model ID', purer_model)
+            if not new_model:
+                return
+            config.purer_classification.model = new_model
+            if per_run_models:
+                config.purer_classification.per_run_models = [new_model] + per_run_models[1:]
+            _save_purer_to_disk()
+            if not _confirm('Delete PURER checkpoints and re-run with new model now?'):
+                return
+            _delete_purer_checkpoints()
+            config.resume_from = None
+            stage_classify_purer(config, output_dir=output_dir)
+            print()
+            _ok('purer_labels.jsonl written. Run Assemble to rebuild master_segments.')
+            _pause()
+            return
+
+        elif sub == 3:
+            new_checker = _ask('Model for the new run', '')
+            if not new_checker:
+                return
+            new_per_run = per_run_models + [new_checker]
+            config.purer_classification.per_run_models = new_per_run
+            config.purer_classification.n_runs = len(new_per_run)
+            _save_purer_to_disk()
+            if not _confirm(f'Add run {len(new_per_run)} with model {new_checker!r}?'):
+                return
+            config.resume_from = None
+            stage_classify_purer(config, output_dir=output_dir)
+            print()
+            _ok('purer_labels.jsonl written. Run Assemble to rebuild master_segments.')
+            _pause()
+            return
+
+        elif sub == 4:
+            from classification_tools.classification_loop import patch_runs_checkpoint
+            ckpt_dir = _paths.llm_checkpoints_dir(output_dir)
+            candidates = sorted(
+                _glob.glob(os.path.join(ckpt_dir, 'purer_cue_results_*_runs.json'))
+            )
+            if not candidates:
+                _err('No PURER *_runs.json checkpoint found. Cannot reclassify an individual run.')
+                _pause()
+                return
+            checkpoint_path = candidates[-1]
+            _info(f'Checkpoint: {os.path.basename(checkpoint_path)}')
+            print()
+            run_number = int(_ask(f'Which run to reclassify? (1–{n_runs})', '1'))
+            if not (1 <= run_number <= n_runs):
+                _err(f'Run number must be between 1 and {n_runs}.')
+                _pause()
+                return
+            run_idx = run_number - 1
+            current = (per_run_models[run_idx] if run_idx < len(per_run_models) else purer_model)
+            new_model = _ask(f'New model for run {run_number} (Enter = keep current)', current)
+            new_model_val = new_model if new_model != current else None
+            if not _confirm(f'Reclassify PURER run {run_number} now?'):
+                return
+            patch_runs_checkpoint(checkpoint_path, run_idx, new_model=new_model_val)
+            if new_model_val:
+                prm = list(getattr(config.purer_classification, 'per_run_models', []) or [])
+                if run_idx < len(prm):
+                    prm[run_idx] = new_model_val
+                    config.purer_classification.per_run_models = prm
+                _save_purer_to_disk()
+            config.resume_from = checkpoint_path
+            stage_classify_purer(config, output_dir=output_dir)
+            print()
+            _ok('purer_labels.jsonl written. Run Assemble to rebuild master_segments.')
+            _pause()
+            return
+
+    # First-time classification
     zero_shot = _confirm(
         'Use zero-shot prompting? (definitions only, no examples)', default=False
     )
@@ -335,8 +479,11 @@ def _action_classify_purer(config, output_dir: str) -> None:
         _ok('Zero-shot mode ON.')
     print()
 
-    model = getattr(config.purer_classification, 'model', None) or config.theme_classification.model
-    _info(f'Model:   {model}  (n_runs=1, single-run)')
+    if _confirm('Change PURER model before running?', default=False):
+        new_model = _ask('New PURER model ID', purer_model)
+        if new_model:
+            config.purer_classification.model = new_model
+            _save_purer_to_disk()
     print()
 
     if not _confirm('Run PURER classification now?'):
@@ -678,15 +825,24 @@ def _action_edit_config(config_path: str) -> None:
         raw.setdefault('purer_classification', {})['lmstudio_base_url'] = url
         changed = True
     elif choice == 2:
-        model = _ask('Primary model ID', raw.get('theme_classification', {}).get('model', ''))
+        theme_model = raw.get('theme_classification', {}).get('model', '')
+        purer_model = raw.get('purer_classification', {}).get('model', theme_model)
+        model = _ask('VAAMR (theme) primary model ID', theme_model)
         raw.setdefault('theme_classification', {})['model'] = model
-        per_run_raw = _ask('Per-run models (comma-separated, blank = use primary only)', '')
+        purer = _ask('PURER primary model ID (Enter = same as VAAMR)', purer_model)
+        raw.setdefault('purer_classification', {})['model'] = purer or model
+        per_run_raw = _ask('Per-run models (comma-separated, blank = keep current)', '')
         if per_run_raw:
-            raw['theme_classification']['per_run_models'] = [m.strip() for m in per_run_raw.split(',')]
+            per_run = [m.strip() for m in per_run_raw.split(',')]
+            raw['theme_classification']['per_run_models'] = per_run
+            raw['purer_classification']['per_run_models'] = per_run
+            raw['theme_classification']['n_runs'] = len(per_run)
+            raw['purer_classification']['n_runs'] = len(per_run)
         changed = True
     elif choice == 3:
         n = int(_ask('Number of classification runs', str(raw.get('theme_classification', {}).get('n_runs', 3))))
         raw.setdefault('theme_classification', {})['n_runs'] = n
+        raw.setdefault('purer_classification', {})['n_runs'] = n
         changed = True
     elif choice == 4:
         cur = raw.get('pipeline', {}).get('run_codebook_classifier', False)
@@ -819,6 +975,13 @@ def _existing_project_flow() -> None:
                 _action_validate(config, output_dir, framework)
             elif choice == 9:
                 _action_edit_config(state['config_path'])
+                if state['config_path']:
+                    try:
+                        config = _load_config(state['config_path'])
+                        config.output_dir = output_dir
+                        _ok('Config reloaded into session.')
+                    except Exception:
+                        pass
             elif choice == 10:
                 from .anonymization_editor import run_anonymization_tui
                 run_anonymization_tui(output_dir, config=config)
