@@ -64,6 +64,40 @@ def write_cue_motifs(motif_stats: dict, purity: dict, exemplars: dict, output_di
     return path
 
 
+def write_gnn_construct_signal(ablation_rows: List[dict], output_dir: str) -> str:
+    """Ablation result: loss delta per removed construct head → 06_reports/ + CSV.
+
+    A larger positive delta (loss rises more when the head is removed) means that
+    construct family carried more signal. Directional importance ranking.
+    """
+    import pandas as pd
+    d = _gnn_dir(output_dir)
+    pd.DataFrame(ablation_rows).to_csv(os.path.join(d, 'gnn_construct_signal.csv'), index=False)
+    rep = _reports_dir(output_dir)
+    lines = ["=" * 78, "GNN CONSTRUCT-SIGNAL ABLATION", "=" * 78, "",
+             "Each head is removed and the model retrained; a larger loss increase means",
+             "that construct family carried more independent signal. Directional.", ""]
+    for r in sorted(ablation_rows, key=lambda x: -(x.get('delta') or 0)):
+        lines.append(f"  remove {str(r.get('ablate')):<12} "
+                     f"Δloss={r.get('delta'):+.4f}  "
+                     f"(full={r.get('best_loss_full'):.4f} → ablated={r.get('best_loss_ablated'):.4f})")
+    lines.append("")
+    path = os.path.join(rep, 'report_gnn_construct_signal.txt')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write("\n".join(lines))
+    return path
+
+
+def write_gnn_head_predictions(head_preds: dict, output_dir: str) -> str:
+    """Per-segment GNN head predictions (gnn_vaamr_pred / gnn_purer_pred) → CSV."""
+    import pandas as pd
+    d = _gnn_dir(output_dir)
+    df = pd.DataFrame({k: v for k, v in head_preds.items() if isinstance(v, list)})
+    path = os.path.join(d, 'gnn_head_predictions.csv')
+    df.to_csv(path, index=False)
+    return path
+
+
 def write_cue_block_assignments(rows: List[dict], motif_ids, output_dir: str) -> str:
     """Per-cue-block motif assignment: session_id, from/to seg ids, stages, motif_id.
 

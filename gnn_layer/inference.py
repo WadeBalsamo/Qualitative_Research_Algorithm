@@ -43,6 +43,38 @@ def infer_segment_positions(model, graph, config) -> dict:
     return res
 
 
+def infer_head_predictions(model, graph, config=None) -> dict:
+    """Per-segment predictions from the trained PURER / VAAMR heads (the independent read).
+
+    The GNN's prediction heads are trained on LLM/ballot labels but their outputs were
+    never extracted — discarding the GNN's independent measurement of each segment.
+    This runs a forward pass and returns argmax predictions + max prob for the
+    single-label heads (soft_vaamr, purer), which downstream triangulation compares
+    against the LLM/human labels. Returns row-aligned lists keyed by segment_id.
+    """
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+
+    model.eval()
+    with torch.no_grad():
+        out = model(graph.x, graph.edge_index,
+                    graph.edge_weight if graph.edge_weight is not None else None)
+    res = {
+        'segment_id': list(graph.node_ids),
+        'node_type': list(graph.node_types),
+    }
+    if 'soft_vaamr' in out:
+        p = F.softmax(out['soft_vaamr'], dim=1).cpu().numpy()
+        res['gnn_vaamr_pred'] = p.argmax(axis=1).tolist()
+        res['gnn_vaamr_conf'] = p.max(axis=1).round(4).tolist()
+    if 'purer' in out:
+        p = F.softmax(out['purer'], dim=1).cpu().numpy()
+        res['gnn_purer_pred'] = p.argmax(axis=1).tolist()
+        res['gnn_purer_conf'] = p.max(axis=1).round(4).tolist()
+    return res
+
+
 def build_cue_blocks_with_segments(df_all) -> List[dict]:
     """Cue blocks (FROM->CUE->TO) retaining the therapist segment ids in each block.
 

@@ -71,3 +71,6 @@ class GnnLayerConfig:
     # ---- Capability E (coupling / latent factors) ----
     n_latent_factors: int = 5
     interpret_against_cf_ic: bool = True   # label latent factors against the inline CF/IC lexicon
+
+    # ---- Capability D (ablation) ----
+    run_gnn_ablation: bool = False         # retrain per-head to rank construct signal (doubles training cost)

@@ -541,6 +541,18 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                 if verbose:
                     traceback.print_exc()
 
+            # Therapeutic language atlas (readable patterns behind the statistics).
+            try:
+                from .reports.language_atlas import generate_language_atlas
+                atlas_path = generate_language_atlas(df, df_all, framework, output_dir)
+                if atlas_path:
+                    files_generated.append(atlas_path)
+                    log("    Language atlas: 06_reports/report_language_atlas.txt")
+            except Exception as e:
+                print(f"  Warning: language atlas failed: {e}")
+                if verbose:
+                    traceback.print_exc()
+
     try:
         from process.output_index import write_index
         write_index(output_dir)
