@@ -64,6 +64,29 @@ def write_cue_motifs(motif_stats: dict, purity: dict, exemplars: dict, output_di
     return path
 
 
+def write_cue_block_assignments(rows: List[dict], motif_ids, output_dir: str) -> str:
+    """Per-cue-block motif assignment: session_id, from/to seg ids, stages, motif_id.
+
+    Sidecar consumed by analysis.mechanism to aggregate Δprogression by emergent
+    motif. Row order matches motif_ids (both produced by cue_block_embeddings).
+    """
+    import pandas as pd
+    d = _gnn_dir(output_dir)
+    out = []
+    for r, m in zip(rows, list(motif_ids)):
+        out.append({
+            'session_id': r.get('session_id', ''),
+            'from_seg_id': r.get('from_seg_id', ''),
+            'to_seg_id': r.get('to_seg_id', ''),
+            'from_stage': r.get('from_stage'),
+            'to_stage': r.get('to_stage'),
+            'motif_id': int(m),
+        })
+    path = os.path.join(d, 'cue_block_assignments.csv')
+    pd.DataFrame(out).to_csv(path, index=False)
+    return path
+
+
 def write_gnn_vs_llm_lift(comparison, output_dir: str) -> str:
     d = _gnn_dir(output_dir)
     path = os.path.join(d, 'gnn_vs_llm_lift.csv')

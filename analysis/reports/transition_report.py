@@ -294,6 +294,32 @@ def generate_transition_explanation(
         lines.append(f'  {stage_names[fr]:<20} → {stage_names[to]:<20} {cnt:>4}x  [{direction}]')
     lines.append('')
 
+    # Superposition view: mean continuous Δprogression per transition type.
+    # Hard transitions collapse the mixture; the continuous coordinate shows the
+    # *magnitude* of movement. Directional — see report_mechanism.txt for the
+    # therapist-behaviour breakdown. (Self-contained; uses progression_coord only.)
+    if 'progression_coord' in df.columns:
+        deltas = {'forward': [], 'backward': [], 'stay': []}
+        for (pid, sid), g in df.groupby(['participant_id', 'session_id']):
+            g = g[g['final_label'].notna()].sort_values('segment_index')
+            coords = g['progression_coord'].tolist()
+            labels = g['final_label'].astype(int).tolist()
+            for i in range(len(labels) - 1):
+                d = coords[i + 1] - coords[i]
+                key = 'stay' if labels[i] == labels[i + 1] else ('forward' if labels[i + 1] > labels[i] else 'backward')
+                deltas[key].append(d)
+        import numpy as _np
+        lines.append('Continuous Δprogression (mixture-based, E[stage] change) by transition type:')
+        for key in ('forward', 'backward', 'stay'):
+            vals = deltas[key]
+            if vals:
+                lines.append(f'  {key:<10} mean Δ={_np.mean(vals):+.3f}  (n={len(vals)})')
+        liminal_note = ''
+        if 'is_liminal' in df.columns and len(df):
+            liminal_note = f"  |  liminal (mixed-stage) segments: {100 * float(df['is_liminal'].mean()):.1f}%"
+        lines.append(f'  See 06_reports/report_superposition.txt and report_mechanism.txt.{liminal_note}')
+        lines.append('')
+
     # ── PURER × transition correlation table ──
     _purer_profiles = _build_purer_transition_profiles(df, df_all if df_all is not None else df)
     if _purer_profiles:

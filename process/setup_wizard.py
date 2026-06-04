@@ -33,6 +33,7 @@ from .config import (
     PurerCueConfig,
     SessionSummariesConfig,
     ParticipantSummariesConfig,
+    SuperpositionConfig,
 )
 from gnn_layer.config import GnnLayerConfig
 from .transcript_ingestion import scan_speakers
@@ -1545,6 +1546,10 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         gnn_layer=GnnLayerConfig(
             **{k: v for k, v in data.get('gnn_layer', {}).items()
                if k in GnnLayerConfig.__dataclass_fields__}
+        ),
+        superposition=SuperpositionConfig(
+            **{k: v for k, v in data.get('superposition', {}).items()
+               if k in SuperpositionConfig.__dataclass_fields__}
         ),
     )
 
