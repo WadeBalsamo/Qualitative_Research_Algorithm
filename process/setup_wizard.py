@@ -18,7 +18,7 @@ from typing import Optional, List
 from theme_framework.theme_schema import ThemeFramework
 from theme_framework.registry import load as _registry_load_fw
 from theme_framework.config import ThemeClassificationConfig
-from codebook.config import EmbeddingClassifierConfig
+from codebook.config import EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
 from .config import (
     PipelineConfig,
     SegmentationConfig,
@@ -1438,6 +1438,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         output_dir=pipeline.get('output_dir', './data/output/'),
         run_theme_labeler=pipeline.get('run_theme_labeler', True),
         run_codebook_classifier=pipeline.get('run_codebook_classifier', False),
+        run_microskill_classifier=pipeline.get('run_microskill_classifier', False),
         speaker_anonymization_key_path=pipeline.get('speaker_anonymization_key_path'),
         anonymize_transcript_text=pipeline.get('anonymize_transcript_text', True),
         anonymize_text_model=pipeline.get('anonymize_text_model', 'obi/deid_roberta_i2b2'),
@@ -1504,6 +1505,18 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             two_pass=cb_emb.get('two_pass', True),
             embedding_model=cb_emb.get('embedding_model', 'Qwen/Qwen3-Embedding-8B'),
             exemplar_import_path=cb_emb.get('exemplar_import_path'),
+        ),
+        microskill_embedding=EmbeddingClassifierConfig(
+            **{k: v for k, v in data.get('microskill_embedding', {}).items()
+               if k in EmbeddingClassifierConfig.__dataclass_fields__}
+        ),
+        microskill_llm=LLMCodebookConfig(
+            **{k: v for k, v in data.get('microskill_llm', {}).items()
+               if k in LLMCodebookConfig.__dataclass_fields__}
+        ),
+        microskill_ensemble=EnsembleConfig(
+            **{k: v for k, v in data.get('microskill_ensemble', {}).items()
+               if k in EnsembleConfig.__dataclass_fields__}
         ),
         validation=ValidationConfig(),
         test_sets=_build_test_sets_config(data.get('test_sets', {})),

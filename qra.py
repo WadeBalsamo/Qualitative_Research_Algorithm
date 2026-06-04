@@ -1090,7 +1090,14 @@ def cmd_analyze(args):
     print(f"  Output dir: {output_dir}")
     print()
 
-    result = run_analysis(output_dir, verbose=True)
+    # --gnn / --no-gnn override the config's gnn_layer.enabled for this run.
+    force_gnn = None
+    if getattr(args, 'gnn', False):
+        force_gnn = True
+    elif getattr(args, 'no_gnn', False):
+        force_gnn = False
+
+    result = run_analysis(output_dir, verbose=True, force_gnn=force_gnn)
 
     print(f"\nAnalysis complete.")
     print(f"  {result['n_segments']} segments | "
@@ -1230,13 +1237,14 @@ def cmd_classify(args):
         stage_classify_theme,
         stage_classify_purer,
         stage_classify_codebook,
+        stage_classify_microskill,
         stage_cross_validation,
     )
     from process._freeze import FrozenArtifactError
 
     output_dir = args.output_dir
     what = getattr(args, 'what', 'all') or 'all'
-    valid = {'vaamr', 'purer', 'codebook', 'cross-validation', 'all'}
+    valid = {'vaamr', 'purer', 'codebook', 'microskill', 'cross-validation', 'all'}
     if what not in valid:
         print(f"Error: --what must be one of {sorted(valid)}, got {what!r}")
         sys.exit(2)
@@ -1265,14 +1273,14 @@ def cmd_classify(args):
     print(f"  Output: {output_dir}")
     print(f"  Sessions: {len(sessions)}")
 
-    to_run = {what} if what != 'all' else {'vaamr', 'purer', 'codebook', 'cross-validation'}
+    to_run = {what} if what != 'all' else {'vaamr', 'purer', 'codebook', 'microskill', 'cross-validation'}
 
     # Load frozen segments once (raw); apply overlays selectively per stage below.
     from process import classifications_io as _cio
     segments = _segments_io.load_segments_for_stage(output_dir, apply=())
     # Apply all existing overlays up-front so each stage sees the current on-disk state.
     by_id = {s.segment_id: s for s in segments}
-    _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv'))
+    _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'microskill', 'cv'))
 
     if 'vaamr' in to_run:
         print("  Running VAAMR classifier...")
@@ -1289,6 +1297,13 @@ def cmd_classify(args):
         print("  Running codebook classifier...")
         stage_classify_codebook(config, codebook, segments=segments, output_dir=output_dir)
         print(f"  codebook_labels.jsonl written")
+
+    if 'microskill' in to_run:
+        from codebook.microcounseling_codebook import get_microcounseling_codebook
+        micro_cb = get_microcounseling_codebook()
+        print("  Running microcounseling-skill classifier...")
+        stage_classify_microskill(config, micro_cb, segments=segments, output_dir=output_dir)
+        print(f"  microskill_labels.jsonl written")
 
     if 'cross-validation' in to_run:
         print("  Running cross-validation...")
@@ -2041,12 +2056,13 @@ Examples:
     classify_parser.add_argument(
         '--what',
         default='all',
-        choices=['vaamr', 'purer', 'codebook', 'cross-validation', 'all'],
+        choices=['vaamr', 'purer', 'codebook', 'microskill', 'cross-validation', 'all'],
         help=(
             'Which classifier to run (default: all).\n'
             '  vaamr            — VAAMR participant-stage classification\n'
             '  purer            — PURER therapist-move classification\n'
             '  codebook         — VCE phenomenology codebook\n'
+            '  microskill       — therapist microcounseling-skill codebook\n'
             '  cross-validation — cross-validation overlay\n'
             '  all              — run every enabled classifier'
         ),
@@ -2113,6 +2129,16 @@ Examples:
         '--output-dir', '-o',
         required=True,
         help='Path to pipeline output directory containing master_segment_dataset.csv',
+    )
+    _gnn_grp = analyze_parser.add_mutually_exclusive_group()
+    _gnn_grp.add_argument(
+        '--gnn', action='store_true',
+        help='Force-enable the GNN representation-and-discovery layer for this run '
+             '(overrides config.gnn_layer.enabled).',
+    )
+    _gnn_grp.add_argument(
+        '--no-gnn', action='store_true',
+        help='Force-disable the GNN layer for this run.',
     )
 
     # ---- validate ----

@@ -9,24 +9,29 @@ repo or specified here.
 
 ---
 
-## 0. Status: what is already built vs. what this guide specifies
+## 0. Status: fully implemented
 
-This commit ships **artifacts + a compiling scaffold**. The heavier classifier/analytical logic is fully specified
-here but left as typed stubs.
+This guide originally accompanied a scaffold; the layer is now **fully implemented and tested** (synthetic
+unit tests; the 16 GB embedding model is the only piece exercised lazily/at runtime).
 
-| Component | State in this commit |
+| Component | State |
 |---|---|
 | `MICROCOUNSELING_CODEBOOK.md` (8 codes, VCE format) | **Built** — parses via `codebook/markdown_loader.load_codebook_md` |
 | `codebook/microcounseling_codebook.py` (`get_microcounseling_codebook()`) | **Built** — mirror of `phenomenology_codebook.py` |
-| `gnn_layer/` package (14 modules) | **Built as scaffold** — imports cleanly (lazy heavy imports); `GnnLayerConfig` is real; all other functions `raise NotImplementedError` with full docstrings |
-| `process/config.py` `gnn_layer: GnnLayerConfig` field + `sub_config_map` | **Built** (default `enabled=False`) |
-| `process/setup_wizard.py` carries `gnn_layer` | **Built** |
-| `analysis/runner.py` guarded hook → `run_gnn_analysis` | **Built** (only fires when `gnn_layer.enabled`) |
-| Microcounseling **classifier stage** (overlay, Segment fields, orchestrator, master row, CLI) | **Specified here, not built** (Part I) |
-| GNN analytical **logic** (graph/model/train/inference/motifs/lift/ablation/coupling) | **Specified here, not built** (Part II) |
+| Microcounseling **classifier stage** (Segment fields, `microskill` overlay, orchestrator `stage_classify_microskill` + `_microskill_classify`, master row, `classify --what microskill`, gating) | **Built** (Part I) |
+| `gnn_layer/` package (14 modules) | **Built** — pure-PyTorch GraphSAGE, multi-task heads, soft-label assembly, motif discovery, GNN/LLM lift, ablation, coupling, runner |
+| `process/config.py` `gnn_layer` + `microskill_*` fields + `sub_config_map`; `setup_wizard` carries both | **Built** (`enabled=False` default) |
+| `analysis/runner.py` guarded hook → `run_gnn_analysis`; `qra analyze --gnn/--no-gnn` | **Built** (only fires when enabled) |
+| Tests | `tests/test_gnn_layer.py` (8) + `tests/test_microskill_classify.py` (5), both green |
 
 Because the runner hook is gated `enabled=False` and wrapped in try/except, **the existing pipeline and all current
-tests are unaffected** until the layer is explicitly turned on.
+tests are unaffected** until the layer is explicitly turned on. The GNN runs at analyze-time and writes only to
+`03_analysis_data/gnn/`, `06_reports/`, and `02_meta/gnn/` — frozen segments and `master_segments` are never mutated.
+
+**Implementation note vs. the original design:** the heterogeneous graph is realized as a *homogeneous projection* —
+all nodes share the Qwen3 embedding space, so one shared SAGE aggregation over the typed-edge union is faithful and
+needs no torch-geometric. Construct-anchor nodes are an optional hook (`graph_builder.build_graph(anchor_features=…)`)
+that the runner leaves off by default; segment + temporal-chain + kNN edges drive Capabilities A/B/C/E.
 
 > Note on environment: `requirements.txt` pins `torch==2.11.0`, `numpy==2.4.4`, `pandas==3.0.2`,
 > `scikit-learn==1.8.0`, `sentence-transformers==5.4.0`, `networkx==3.6.1`. **No new dependency is required** — the
