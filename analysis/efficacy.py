@@ -346,8 +346,11 @@ def _write_efficacy_report(group_prog, group_adapt, slopes, barrier, trend, sign
     else:
         L.append("  Pearson correlation of within-program VAAMR progression vs external change:")
         for _, r in linkage.iterrows():
+            rv = r['pearson_r']
+            stat = (f"r={rv:+.3f}  p={r['p_value']:.3f}" if isinstance(rv, (int, float)) and rv == rv
+                    else "r=n/a (no variance among matched participants)")
             L.append(f"    {r['vaamr_measure']:<10} ↔ {str(r['external_measure'])[:24]:<24} "
-                     f"r={r['pearson_r']:+.3f}  p={r['p_value']:.3f}  (n={r['n']})")
+                     f"{stat}  (n={r['n']})")
         L.append("  Positive r ⇒ participants whose language advances more also improve clinically.")
         L.append("  Directional/associational; small N — treat as hypothesis-strengthening.")
     L.append("")
