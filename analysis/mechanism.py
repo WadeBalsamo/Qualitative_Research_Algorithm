@@ -90,6 +90,7 @@ def _seg_lookup(df_all: pd.DataFrame) -> Dict[str, dict]:
             'mixture_entropy': float(r['mixture_entropy']) if pd.notna(r.get('mixture_entropy')) else None,
             'purer': r.get('purer_primary') if has_purer else None,
             'microskills': micro if isinstance(micro, list) else [],
+            'participant_id': r.get('participant_id'),
         }
     return out
 
@@ -132,8 +133,17 @@ def _enrich_blocks(blocks: List[dict], lookup: Dict[str, dict],
         dom_purer = _purer_label(Counter(purers).most_common(1)[0][0]) if purers else None
         dom_micro = Counter(micros).most_common(1)[0][0] if micros else None
 
+        # Continuous move direction (deadband around 0 = "stabilize/deepen within-stage").
+        if delta > 0.15:
+            ddir = 'progress'
+        elif delta < -0.15:
+            ddir = 'regress'
+        else:
+            ddir = 'stabilize'
+
         enriched.append({
             **b,
+            'participant_id': fl.get('participant_id'),
             'delta_prog': round(float(delta), 4),
             'from_entropy': fl['mixture_entropy'],
             'from_mixture': fl['mixture'],
@@ -141,35 +151,85 @@ def _enrich_blocks(blocks: List[dict], lookup: Dict[str, dict],
             'dominant_microskill': dom_micro,
             'cue_motif': block_motifs.get((b['from_seg_id'], b['to_seg_id'])),
             'n_therapist_segments': len(b['therapist_seg_ids']),
+            'delta_direction': ddir,           # continuous-coordinate movement class
+            # transition_type (hard forward/lateral/backward) already present from block builder
         })
     return enriched
 
 
 def _agg_delta(blocks: List[dict], framework: dict, key_field: str, grouping: str,
                min_n: int = 2) -> List[dict]:
-    """Aggregate mean Δprogression by (from_stage, blocks[key_field])."""
-    rows = []
+    """Aggregate mean Δprogression by (from_stage, behaviour) WITH inference.
+
+    Each (from_stage, behaviour) cell ships with: a participant-cluster bootstrap 95%
+    CI, a within-from-stage permutation p (this behaviour vs the other behaviours at
+    the same starting stage — holding base rates fixed), and a Benjamini–Hochberg FDR
+    flag across the grouping family. This is the conditioned, inferential answer to
+    "which therapist moves move participants, given where they start."
+    """
+    from . import stats as S
+
+    # Index blocks by from_stage for the within-stratum permutation out-group.
+    by_stage: Dict[int, List[dict]] = {}
+    for b in blocks:
+        if b.get(key_field) is not None:
+            by_stage.setdefault(b['from_stage'], []).append(b)
+
     buckets: Dict[tuple, List[dict]] = {}
     for b in blocks:
         kv = b.get(key_field)
         if kv is None:
             continue
         buckets.setdefault((b['from_stage'], kv), []).append(b)
+
+    rows = []
     for (from_stage, kv), bs in buckets.items():
         if len(bs) < min_n:
             continue
         deltas = [x['delta_prog'] for x in bs]
         ents = [x['from_entropy'] for x in bs if x['from_entropy'] is not None]
+        clusters = [x.get('participant_id') for x in bs]
+
+        # Participant-cluster bootstrap CI for the mean Δprogression.
+        ci = S.cluster_bootstrap_ci(deltas, clusters, statistic=np.mean, n_boot=1000)
+
+        # Within-stratum permutation: this behaviour vs other behaviours at same from_stage.
+        stage_blocks = by_stage.get(from_stage, [])
+        perm = {'p_value': float('nan')}
+        if len(stage_blocks) > len(bs):
+            vals = [x['delta_prog'] for x in stage_blocks]
+            mask = [x.get(key_field) == kv for x in stage_blocks]
+            perm = S.permutation_test(vals, mask, strata=None, n_perm=1000)
+
+        n_prog = sum(1 for x in bs if x.get('delta_direction') == 'progress')
+        n_reg = sum(1 for x in bs if x.get('delta_direction') == 'regress')
+        n_stab = sum(1 for x in bs if x.get('delta_direction') == 'stabilize')
+
         rows.append({
             'grouping': grouping,
             'from_stage': from_stage,
             'from_stage_name': framework.get(from_stage, {}).get('short_name', str(from_stage)),
             'behavior': kv,
             'n': len(bs),
+            'n_participants': ci.get('n_clusters', 0),
             'mean_delta_prog': round(float(np.mean(deltas)), 4),
             'sd_delta_prog': round(float(np.std(deltas)), 4),
+            'ci_lo': round(ci['lo'], 4) if ci['lo'] == ci['lo'] else None,
+            'ci_hi': round(ci['hi'], 4) if ci['hi'] == ci['hi'] else None,
+            'perm_p': round(perm['p_value'], 4) if perm['p_value'] == perm['p_value'] else None,
+            'n_progress': n_prog,
+            'n_stabilize': n_stab,
+            'n_regress': n_reg,
             'mean_from_entropy': round(float(np.mean(ents)), 4) if ents else None,
         })
+
+    # Benjamini–Hochberg FDR across this grouping family.
+    pvals = [r['perm_p'] if r['perm_p'] is not None else float('nan') for r in rows]
+    bh = S.benjamini_hochberg(pvals, alpha=0.05)
+    for r, q, rej in zip(rows, bh['qvalues'], bh['reject']):
+        r['fdr_q'] = round(q, 4) if q == q else None
+        r['fdr_significant'] = bool(rej)
+
     rows.sort(key=lambda r: (r['from_stage'], -r['mean_delta_prog']))
     return rows
 
@@ -304,6 +364,43 @@ def _trajectory_typology(df: pd.DataFrame, framework: dict) -> List[dict]:
     return rows
 
 
+def _mixed_effects_delta(enriched: List[dict]) -> List[dict]:
+    """Fit Δprog ~ C(dominant_purer) + (1|participant) → per-move marginal effects.
+
+    A random participant intercept accounts for repeated cue blocks within the same
+    participant — inference the cell-wise bootstrap cannot fully capture. Returns one
+    row per PURER fixed-effect term with estimate + 95% CI + p, or [] if statsmodels
+    is unavailable / the model does not fit (small N).
+    """
+    from . import stats as S
+    rows_in = [{'delta_prog': b['delta_prog'], 'dominant_purer': b.get('dominant_purer'),
+                'participant_id': b.get('participant_id')}
+               for b in enriched if b.get('dominant_purer') and b.get('participant_id') is not None]
+    if len(rows_in) < 6:
+        return []
+    mdf = pd.DataFrame(rows_in)
+    res = S.mixedlm_delta(mdf, outcome='delta_prog', fixed='C(dominant_purer)',
+                          group='participant_id')
+    if res is None:
+        return []
+    out = []
+    try:
+        ci = res.conf_int()
+        for term in res.params.index:
+            if term in ('Group Var',):
+                continue
+            lo, hi = float(ci.loc[term][0]), float(ci.loc[term][1])
+            out.append({
+                'term': str(term),
+                'estimate': round(float(res.params[term]), 4),
+                'ci_lo': round(lo, 4), 'ci_hi': round(hi, 4),
+                'p_value': round(float(res.pvalues[term]), 4) if term in res.pvalues else None,
+            })
+    except Exception:
+        return []
+    return out
+
+
 def _construct_validity(output_dir: str) -> Optional[dict]:
     """Summarize GNN↔LLM lift convergence from gnn_vs_llm_lift.csv (if present)."""
     path = os.path.join(_paths.gnn_data_dir(output_dir), 'gnn_vs_llm_lift.csv')
@@ -335,7 +432,8 @@ def _write_csv(rows: List[dict], path: str) -> Optional[str]:
 
 
 def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
-                            trajectories, construct, framework, path) -> str:
+                            trajectories, construct, framework, path,
+                            mixed_rows=None) -> str:
     L = []
     L.append("=" * 78)
     L.append("MECHANISTIC ANALYSIS — therapist language × continuous Δprogression")
@@ -344,12 +442,19 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
     L.append("DIRECTIONAL / HYPOTHESIS-GENERATING. Δprogression is the change in the")
     L.append("continuous VAAMR progression coordinate (E[stage], 0–4) from the FROM to")
     L.append("the TO participant segment of each therapist cue block. Positive = movement")
-    L.append("toward later stages. These are observational associations, not causal effects.")
+    L.append("toward later stages. These are observational associations, NOT causal effects.")
+    L.append("CONFOUND: therapists choose PURER moves IN RESPONSE TO participant state, so a")
+    L.append("move's association with progression may reflect responsiveness, not impact.")
+    L.append("Inference (CIs, permutation p, FDR) bounds sampling noise, not confounding.")
     L.append("")
 
     L.append("-" * 78)
-    L.append("1. ΔPROGRESSION BY THERAPIST BEHAVIOUR × FROM-STAGE (top movers)")
+    L.append("1. ΔPROGRESSION BY THERAPIST BEHAVIOUR × FROM-STAGE (conditioned, inferential)")
     L.append("-" * 78)
+    L.append("  Δ = mean change in progression coordinate; [lo, hi] = participant-cluster")
+    L.append("  bootstrap 95% CI; p = within-from-stage permutation (this move vs other moves");
+    L.append("  at the same starting stage); * = survives Benjamini–Hochberg FDR (q<.05).")
+    L.append("  prog/stab/reg = blocks that progressed / stabilized within-stage / regressed.")
     if delta_rows:
         for grouping in ('purer', 'microskill', 'motif'):
             grows = [r for r in delta_rows if r['grouping'] == grouping]
@@ -357,8 +462,14 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
                 continue
             L.append(f"\n  [{grouping.upper()}]")
             for r in sorted(grows, key=lambda r: -r['mean_delta_prog'])[:12]:
-                L.append(f"    {r['from_stage_name']:<22} {str(r['behavior'])[:28]:<28} "
-                         f"Δ={r['mean_delta_prog']:+.3f} (±{r['sd_delta_prog']:.2f}, n={r['n']})")
+                star = ' *' if r.get('fdr_significant') else '  '
+                ci = (f"[{r['ci_lo']:+.2f},{r['ci_hi']:+.2f}]"
+                      if r.get('ci_lo') is not None else "[ n/a ]")
+                pv = f"p={r['perm_p']:.3f}" if r.get('perm_p') is not None else "p=n/a"
+                L.append(f"   {star}{r['from_stage_name']:<20} {str(r['behavior'])[:24]:<24} "
+                         f"Δ={r['mean_delta_prog']:+.3f} {ci} {pv} "
+                         f"(n={r['n']}/{r['n_participants']}p; "
+                         f"{r['n_progress']}/{r['n_stabilize']}/{r['n_regress']})")
     else:
         L.append("  No behaviour-labelled cue blocks available.")
 
@@ -409,7 +520,22 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
 
     L.append("")
     L.append("-" * 78)
-    L.append("5. CONSTRUCT VALIDITY — GNN ↔ LLM convergence")
+    L.append("5. MIXED-EFFECTS ΔPROGRESSION MODEL (random participant intercept)")
+    L.append("-" * 78)
+    if mixed_rows:
+        L.append("  Δprog ~ C(dominant_purer) + (1|participant). Estimates are vs the reference")
+        L.append("  PURER move; CI is the model 95% interval. Accounts for repeated blocks per")
+        L.append("  participant. Directional — small N, interpret with the caveats below.")
+        for r in mixed_rows:
+            pv = f"p={r['p_value']:.3f}" if r.get('p_value') is not None else "p=n/a"
+            L.append(f"    {str(r['term'])[:34]:<34} β={r['estimate']:+.3f} "
+                     f"[{r['ci_lo']:+.2f},{r['ci_hi']:+.2f}] {pv}")
+    else:
+        L.append("  Not fit (statsmodels unavailable or too few participants/blocks).")
+
+    L.append("")
+    L.append("-" * 78)
+    L.append("6. CONSTRUCT VALIDITY — GNN ↔ LLM convergence")
     L.append("-" * 78)
     if construct:
         nb = construct.get('n_both_elevated')
@@ -525,7 +651,14 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
     if p:
         files_written.append(p)
 
-    # 5. Construct validity.
+    # 5. Mixed-effects Δprogression model (random participant effect).
+    mixed_rows = _mixed_effects_delta(enriched)
+    if mixed_rows:
+        p = _write_csv(mixed_rows, os.path.join(mech_dir, 'mechanism_purer_mixed_effects.csv'))
+        if p:
+            files_written.append(p)
+
+    # 6. Construct validity (GNN↔LLM convergence triangulation).
     construct = _construct_validity(output_dir)
 
     # Reports.
@@ -534,6 +667,7 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
     files_written.append(_write_mechanism_report(
         delta_rows, liminality, avoidance, cusp_density, trajectories, construct,
         framework, os.path.join(rep_dir, 'report_mechanism.txt'),
+        mixed_rows=mixed_rows,
     ))
     files_written.append(_write_avoidance_report(
         avoidance, cusp_density, framework,
