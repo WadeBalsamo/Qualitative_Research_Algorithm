@@ -1,11 +1,14 @@
 # GNN Representation-and-Discovery Layer for QRA — Design
 
-**Status:** Design proposal (no implementation in this change)
-**Scope:** A new analysis layer for the Qualitative Research Algorithm that reuses *methods* from CFiCS (graph neural
+**Status:** Fully implemented and integrated (see `docs/GNN_IMPLEMENTATION.md` for module-by-module specification)
+**Scope:** An analysis layer for the Qualitative Research Algorithm that reuses *methods* from CFiCS (graph neural
 networks, supervised contrastive learning, inductive node attachment) — and CFiCS's microcounseling-skills label set — to
 close three structural limits of the current LLM-label pipeline. It **augments, never replaces** the existing VAAMR /
 VCE / PURER classifiers.
 **Substrate:** the `Qwen3-Embedding-8B` vectors QRA already computes for segmentation and VCE embedding classification.
+**Activation:** `config.gnn_layer.enabled=True` or `qra analyze --gnn`. Disabled by default; runs at analyze-time only.
+All GNN artifacts go to `03_analysis_data/gnn/`, `06_reports/`, and `02_meta/gnn/model/` — frozen segments and
+`master_segments` are never mutated.
 
 ---
 
@@ -105,51 +108,50 @@ reimplemented fresh and QRA-native; only the **skills label set + its 182 exempl
 
 ---
 
-## 4. Capabilities (all centered; all run now on Cohort 1–2 weak labels, directional until validated)
+## 4. Capabilities (all implemented; all directional until human validation catches up)
 
-### A — Continuous VAAMR positioning (model the superposition)
-Train the soft-VAAMR head against the multi-run ballot distribution already stored per segment, upgraded to human labels
+### A — Continuous VAAMR positioning (Implemented — `gnn_layer/inference.py`)
+The soft-VAAMR head is trained against the multi-run ballot distribution stored per segment, upgraded to human labels
 on the validated 20% sample. Output per participant segment: a **stage-mixture vector** over the 5 stages and a
 **continuous progression coordinate** along the re-habituation arc. A FROM → TO transition becomes a **vector** in
 embedding space (direction + magnitude), not a discrete jump; a segment that is "0.6 Avoidance / 0.4 Attention
-Regulation — on the cusp" becomes a first-class, clinically meaningful object. Feeds the longitudinal trajectories and
-the Avoidance-barrier analysis (§6.3) with partial-progression resolution the argmax cannot express.
+Regulation — on the cusp" becomes a first-class, clinically meaningful object. When enabled, these GNN-derived mixtures
+are the primary source for `analysis/superposition.py`, feeding all downstream mechanism and efficacy inference with
+partial-progression resolution the argmax cannot express. Output: `03_analysis_data/gnn/segment_positions.csv`.
 
-### B — Cue granularization + emergent-motif discovery (flagship)
-Embed each therapist **cue block** (reuse the cue-block construction in `compute_cue_block_purer_profiles:131`). Then:
+### B — Cue granularization + emergent-motif discovery / flagship (Implemented — `gnn_layer/motifs.py`)
+Each therapist **cue block** is mean-pooled from its constituent GNN segment embeddings. Then:
 1. **Cluster** cue embeddings → emergent therapist-language **motifs**, finer than (and orthogonal to) the 5 PURER moves.
-2. **Regress the transition outcome on the cue embedding** — model P(forward transition | cue embedding, from_stage),
-   conditioned on `from_stage` to preserve the §7.6 stage-moderation hypothesis — to **score each motif's influence**.
-3. **Flag high-influence / low-PURER-purity / low-skill-purity motifs** — therapist language that reliably precedes
-   participant progression but maps to *no* existing label. These are surfaced with exemplar cues as candidate new
-   constructs for human review.
+2. **Regress the transition outcome on the cue embedding** — `P(forward | cue embedding, from_stage)` (from-stage-conditioned
+   logistic regression preserving the §7.6 stage-moderation hypothesis) — to **score each motif's influence**.
+3. **Flag high-influence / low-PURER-purity / low-microskill-purity motifs** — therapist language that reliably precedes
+   participant progression but maps to *no* existing label. Surfaced with exemplar cues as candidate new constructs for human review.
 
-Output: per-cue-block embedding + motif id + influence score; a ranked "emergent influential motifs" report; exemplar
-cues per (from → to) transition drawn by **geometry** rather than LLM averaging. This turns the cue-response analysis
-from *descriptive* to *predictive/mechanistic* — the deepest realization of the FROM:CUE:TO mission, and the most
-directly actionable input to the §6.3 curriculum-modification format (observation → mechanism → change → assessment).
+The per-block motif assignment sidecar (`cue_block_assignments.csv`) feeds the `analysis/mechanism.py` Δprogression
+aggregation by emergent motif. Outputs: `cue_motifs.csv`, `report_gnn_emergent_motifs.txt`.
 
-### C — Independent (non-LLM) measurement substrate
-Train on Qwen3 **geometry** + human-validated labels, **and** a **self-supervised variant** using only the temporal-chain
-link-prediction objective (no LLM labels). Recompute the (VAAMR stage × VCE code), (PURER × VAAMR transition), and
-**(PURER × microskill)** lift from GNN-derived assignments, and present them beside the LLM-derived tables.
+### C — Independent (non-LLM) measurement substrate (Implemented — `gnn_layer/gnn_lift.py`, `gnn_layer/triangulation.py`)
+GNN-derived VAAMR stage assignments are compared against LLM-ensemble and human-coded labels via Cohen's κ
+(`report_gnn_triangulation.txt`). (VAAMR stage × VCE code), (PURER × VAAMR transition), and **(PURER × microskill)**
+lift tables are recomputed from GNN geometry and placed beside the LLM-derived tables.
 **GNN ↔ LLM convergence is stronger evidence than LLM ↔ LLM**, directly complementing the planned shuffled-stage
-permutation control (§8.2). For the independence claim to be clean, the human-only and self-supervised variants are
-reported separately so convergence is not circular.
+permutation control. For the independence claim, the `human` and `self_supervised` `label_mode` variants are reported
+separately. Outputs: `gnn_vs_llm_lift.csv`, `purer_microskill_lift.csv`, `gnn_head_predictions.csv`.
 
-### D — Principled ablation & sub-typing (byproducts, not extra build)
-The single graph makes prose-level design questions empirically testable:
-- Ablate VCE nodes/edges → **is VCE superfluous?** (does superposition / transition-prediction degrade without it?)
-- Ablate PURER-move distinctions or skills → do they carry signal beyond the emergent motifs?
-- Cluster within each VAAMR stage and within each PURER move → **emergent sub-types**. Skills give PURER a ready
-  behavioral sub-axis (e.g., Reframing-via-Reflective-Listening vs Reframing-via-Education).
+### D — Principled ablation (Implemented — `gnn_layer/ablation.py`, opt-in via `run_gnn_ablation=True`)
+The single graph makes prose-level design questions empirically testable by removing construct heads and measuring loss
+delta:
+- Ablate VCE head → **is VCE superfluous?** (does progression prediction degrade without it?)
+- Ablate PURER head or microskill head → do they carry signal beyond the emergent motifs?
 
-### E — Inductive participant↔therapist coupling (CF/IC discovered, not imposed)
-Learn the relationship between therapist-language representation (PURER + skills + chain position) and **subsequent
-participant VAAMR movement** — the §7.6 context-dependent-therapist-effects / Varela mutual-constraints core. Test
-whether **latent alliance-like factors emerge** (e.g., therapist Validation + Genuineness co-moving with participant
-forward transitions). If they do, interpret them *post hoc against* the CFiCS CF/IC lexicon — rediscovering common
-factors inductively rather than imposing them. This is the principled home for the dropped CF/IC constructs.
+Output: `gnn_construct_signal.csv`, `report_gnn_construct_signal.txt`.
+
+### E — Inductive participant↔therapist coupling (Implemented — `gnn_layer/coupling.py`)
+NMF/PCA extracts latent factors of therapist cue language and their correlation with subsequent participant VAAMR forward
+movement. Factors are named post-hoc against an inline CF/IC alliance-concept reference lexicon — rediscovering common
+factors inductively rather than imposing them. The coupling-factor runner now passes exemplar therapist texts to
+`interpret_factors()` so naming is grounded in actual session language. Outputs: `coupling_factors.csv`,
+`report_gnn_coupling.txt`.
 
 ---
 
@@ -170,27 +172,24 @@ factors inductively rather than imposing them. This is the principled home for t
 
 ---
 
-## 6. Concrete QRA touchpoints (specification, not built here)
+## 6. Concrete QRA touchpoints (implemented)
 
-- **New analysis package** `analysis/gnn_layer/` — graph build, train/infer, motif discovery, GNN-lift, coupling —
-  invoked from `analysis/runner.py` exactly as `purer_analysis.run_purer_analysis` is. It reads `master_segments` and
-  writes to `03_analysis_data/` and `06_reports/`. Pure read of frozen segments + new output files preserves the
-  frozen-segment / overlay invariants.
-- **New `master_segments` fields** (additive, `getattr`-guarded in `process/assembly/master_dataset.py`, provenance
-  `source='gnn_layer'`): `vaamr_mixture` (5-vector), `progression_coord` (float), `microskill_labels` (multi-label,
-  therapist), `cue_motif_id`, `cue_influence_score`, `gnn_embedding_ref`.
-- **New reports/CSVs** beside the PURER outputs (reuse the `export_purer_csvs` / `generate_purer_report` patterns):
-  emergent-motif report, GNN-vs-LLM lift comparison, PURER × skills and VAAMR × VCE GNN-lift tables, continuous-trajectory
-  exports, and the coupling / latent-factor report.
-- **Microskills as a hot-reloadable framework** `MICROCOUNSELING_FRAMEWORK.md`, mirroring `VAAMR_FRAMEWORK.md` /
-  `PURER_FRAMEWORK.md` and parsed by `theme_framework/markdown_loader.py`, seeded from the CFiCS skill definitions and
-  exemplars; feeds the content-validity test sets like the other frameworks.
-- **Dependency:** add `torch-geometric` to `requirements.txt` (or a minimal pure-PyTorch message-passing implementation
-  to avoid the `torch-scatter`/`torch-sparse` compile fragility against torch 2.11). torch / transformers /
-  sentence-transformers are already present.
-- **Config:** a `GnnLayerConfig` and a `MicroskillClassifierConfig` nested dataclass in `process/config.py`, plus a
-  `run_gnn_layer` flag. Exposed under the Stage 8 `analyze` command (`analyze --gnn`) — it is an analysis layer, not a
-  Stage-3 classifier.
+- **`gnn_layer/` package** (14 modules) — invoked from `analysis/runner.py` after PURER analysis, gated by
+  `config.gnn_layer.enabled`. Reads `master_segments` DataFrame and writes to `03_analysis_data/gnn/`, `06_reports/`,
+  and `02_meta/gnn/`. Frozen segments and `master_segments` are never mutated.
+- **GNN artifacts** (no new `master_segments` fields — GNN outputs live in separate CSV files keyed by `segment_id`):
+  `segment_positions.csv`, `cue_motifs.csv`, `cue_block_assignments.csv`, `gnn_head_predictions.csv`,
+  `gnn_vs_llm_lift.csv`, `purer_microskill_lift.csv`, `coupling_factors.csv`, `gnn_construct_signal.csv` under
+  `03_analysis_data/gnn/`; `report_gnn_emergent_motifs.txt`, `report_gnn_triangulation.txt`,
+  `report_gnn_coupling.txt`, `report_gnn_construct_signal.txt` under `06_reports/`.
+- **`MICROCOUNSELING_CODEBOOK.md`** — hot-reloadable 8-code microcounseling codebook, parsed by
+  `codebook/microcounseling_codebook.py` (mirror of `phenomenology_codebook.py`). Seeds the microskill head via
+  Qwen3-re-embedded exemplars.
+- **No extra dependency** — GraphSAGE implemented in pure PyTorch (`gnn_layer/model.py`). torch-geometric is
+  explicitly not required (avoids torch-scatter/torch-sparse compile fragility on torch 2.11).
+- **Config:** `GnnLayerConfig` and `SuperpositionConfig` nested dataclasses in `process/config.py`, registered in
+  `from_json.sub_config_map` and `setup_wizard.build_config_from_wizard_data`. `analyze --gnn` flag in `qra.py`
+  overrides `config.gnn_layer.enabled` without modifying the config file.
 
 ---
 

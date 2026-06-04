@@ -19,10 +19,16 @@ unit tests; the 16 GB embedding model is the only piece exercised lazily/at runt
 | `MICROCOUNSELING_CODEBOOK.md` (8 codes, VCE format) | **Built** — parses via `codebook/markdown_loader.load_codebook_md` |
 | `codebook/microcounseling_codebook.py` (`get_microcounseling_codebook()`) | **Built** — mirror of `phenomenology_codebook.py` |
 | Microcounseling **classifier stage** (Segment fields, `microskill` overlay, orchestrator `stage_classify_microskill` + `_microskill_classify`, master row, `classify --what microskill`, gating) | **Built** (Part I) |
-| `gnn_layer/` package (14 modules) | **Built** — pure-PyTorch GraphSAGE, multi-task heads, soft-label assembly, motif discovery, GNN/LLM lift, ablation, coupling, runner |
-| `process/config.py` `gnn_layer` + `microskill_*` fields + `sub_config_map`; `setup_wizard` carries both | **Built** (`enabled=False` default) |
-| `analysis/runner.py` guarded hook → `run_gnn_analysis`; `qra analyze --gnn/--no-gnn` | **Built** (only fires when enabled) |
-| Tests | `tests/test_gnn_layer.py` (8) + `tests/test_microskill_classify.py` (5), both green |
+| `gnn_layer/` package (15 modules) | **Built** — pure-PyTorch GraphSAGE, multi-task heads, soft-label assembly, motif discovery, GNN/LLM lift, ablation, coupling, triangulation, runner |
+| `gnn_layer/triangulation.py` | **Built** — GNN↔LLM↔human κ, report_gnn_triangulation.txt |
+| `process/config.py` `gnn_layer` + `SuperpositionConfig` + `EfficacyConfig` fields + `sub_config_map` | **Built** (`enabled=False` default) |
+| `analysis/superposition.py` | **Built** — GNN→LLM ballots→secondary_stage priority; entropy, co-occurrence |
+| `analysis/mechanism.py` | **Built** — full CI/permutation p/FDR mechanism dossier |
+| `analysis/stats.py` | **Built** — cluster-bootstrap CI, permutation test, BH-FDR, mixed-effects, effect sizes |
+| `analysis/efficacy.py` | **Built** — internal + external outcome linkage dossier |
+| `analysis/reports/language_atlas.py` | **Built** — ranked FROM→CUE→TO exemplar atlas |
+| `analysis/runner.py` guarded hook → `run_gnn_analysis`; superposition + mechanism + efficacy + language atlas steps | **Built** (only fires when enabled) |
+| Tests | `tests/test_gnn_layer.py` (8) + `tests/test_microskill_classify.py` (5) + `tests/test_stats.py` (17) + `tests/test_superposition.py` (13) + `tests/test_mechanism.py` (7+), all green |
 
 Because the runner hook is gated `enabled=False` and wrapped in try/except, **the existing pipeline and all current
 tests are unaffected** until the layer is explicitly turned on. The GNN runs at analyze-time and writes only to
@@ -214,9 +220,13 @@ rebuilds for inductive reuse.
 
 ### 3.7 `gnn_layer/inference.py` — per-segment outputs
 `infer_segment_positions(model, graph, config)` → per segment: `vaamr_mixture` (softmax of soft_vaamr),
-`progression_coord` (E[stage]), `gnn_embedding`, therapist `microskill_logits`. `cue_block_embeddings(df_all,
-segment_gnn_embeddings)` mean-pools therapist-segment embeddings per cue block (cue blocks via
+`progression_coord` (E[stage]), `gnn_embedding`, therapist `microskill_logits`.
+`infer_head_predictions(model, graph, config)` → per-segment argmax/probabilities for trained `purer`, `vce_multilabel`,
+and `microskill_multilabel` heads — these are written to `gnn_head_predictions.csv` and fed to `triangulation.py` for
+Cohen's κ comparison against LLM-ensemble and human-coded labels (Capability C).
+`cue_block_embeddings(df_all, segment_gnn_embeddings)` mean-pools therapist-segment embeddings per cue block (cue blocks via
 `compute_cue_block_purer_profiles`).
+`build_cue_blocks_with_segments(df_all)` builds cue-block dicts including `therapist_seg_ids` for purity annotation.
 
 ### 3.8 `gnn_layer/motifs.py` — Capability B (flagship)
 The current pipeline collapses each cue block to `dominant_purer` (1 of 5) **before** measuring influence
@@ -260,15 +270,17 @@ logs and returns `status='scaffold'` so enabling the layer never breaks a run.
 
 | File | Change | State |
 |---|---|---|
-| `process/config.py` | `gnn_layer` field + `sub_config_map`; (Part I) `microskill_*` + `run_microskill_classifier` | gnn: **built**; microskill: to do |
-| `process/setup_wizard.py:1417` | carry `gnn_layer` (built); carry microskill configs (to do) | gnn: **built** |
-| `analysis/runner.py` (after PURER block) | guarded `run_gnn_analysis` hook | **built** |
-| `process/output_paths.py` | add `gnn_data_dir`→`03_analysis_data/gnn`, `gnn_model_dir`→`02_meta/gnn`; microskill overlay filename (`:212`) | to do |
+| `process/config.py` | `gnn_layer` + `SuperpositionConfig` + `EfficacyConfig` fields; `sub_config_map` registration | **built** |
+| `process/setup_wizard.py` | carry `gnn_layer` + `SuperpositionConfig`; (Part I) microskill configs | gnn/superposition: **built**; microskill: to do |
+| `analysis/runner.py` | guarded `run_gnn_analysis` hook (after PURER block); superposition attachment; mechanism + efficacy steps | **built** |
+| `process/output_paths.py` | `gnn_data_dir`→`03_analysis_data/gnn`, `gnn_model_dir`→`02_meta/gnn`, `mechanism_dir`, `efficacy_dir` | **built** |
+| `gnn_layer/runner.py` | `write_cue_block_assignments` after motif discovery; exemplar-text passing to `coupling.interpret_factors` | **built** |
+| `gnn_layer/triangulation.py` | new triangulation module (GNN↔LLM↔human κ, report) | **built** |
 | `process/classifications_io.py` | `microskill` overlay registration | to do (Part I) |
 | `classification_tools/data_structures.py:76` | `microskill_*` fields | to do (Part I) |
 | `process/orchestrator.py` | `stage_classify_microskill`+`_microskill_classify`+gating+manifest | to do (Part I) |
 | `process/assembly/master_dataset.py:96` | microskill row fields | to do (Part I) |
-| `qra.py` | `classify --what microskill`; optional `analyze --gnn` override threaded to `run_analysis(force_gnn=)` | to do |
+| `qra.py` | `classify --what microskill`; `analyze --gnn` override | `--gnn` to do; microskill to do |
 
 `analyze --gnn`: add the arg at `qra.py:2112`, thread `force_gnn` through `cmd_analyze` (`:1078`) → `run_analysis`
 (`analysis/runner.py:15`) to override `config.gnn_layer.enabled`.
