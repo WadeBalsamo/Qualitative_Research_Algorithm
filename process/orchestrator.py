@@ -176,6 +176,7 @@ def _build_classifier_manifest_entry(config, classifier_key: str, framework=None
             'theme': 'theme_classification',
             'purer': 'purer_classification',
             'codebook': 'codebook_llm',
+            'microskill': 'microskill_llm',
         }.get(classifier_key)
         if sub_attr is not None:
             sub = getattr(config, sub_attr, None)
@@ -197,7 +198,7 @@ def _build_classifier_manifest_entry(config, classifier_key: str, framework=None
             'name': framework.name,
             'version': getattr(framework, 'version', '?'),
         }
-    if codebook is not None and classifier_key in ('codebook', 'cv'):
+    if codebook is not None and classifier_key in ('codebook', 'cv', 'microskill'):
         entry['codebook'] = {
             'name': codebook.name,
             'version': getattr(codebook, 'version', '?'),
@@ -349,6 +350,56 @@ def stage_classify_codebook(
         entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         entry['n_new_segments'] = len(subset)
     _cio.update_classification_manifest(_od, key='codebook', entry=entry)
+
+    return segments
+
+
+def stage_classify_microskill(
+    config,
+    codebook,
+    *,
+    segments: Optional[List[Segment]] = None,
+    output_dir: Optional[str] = None,
+    observer: Optional[PipelineObserver] = None,
+    only_session_ids: Optional[set] = None,
+) -> List[Segment]:
+    """
+    Microcounseling-skill classification stage (therapist-side; mirrors codebook).
+
+    Writes microskill_labels.jsonl from current in-memory microskill fields.
+    Runs embedding + LLM classification on therapist segments only when config and
+    codebook are provided.
+
+    only_session_ids:  When set, classify only segments whose session_id is in this set
+                       and merge results into the existing overlay (instead of full rewrite).
+    """
+    _od = _resolve_output_dir(output_dir, config)
+    os.makedirs(_od, exist_ok=True)
+
+    if segments is None:
+        segments = segments_io.load_segments_for_stage(
+            _od, apply=('theme', 'purer', 'codebook', 'cv'),
+        )
+
+    if only_session_ids is not None:
+        subset = [s for s in segments if s.session_id in only_session_ids]
+    else:
+        subset = segments
+
+    if config is not None and codebook is not None:
+        _microskill_classify(config, codebook, subset, _od, observer)
+
+    if only_session_ids is not None:
+        _cio.merge_microskill_overlay(_od, subset)
+    else:
+        _cio.write_microskill_overlay(_od, segments)
+    entry = _build_classifier_manifest_entry(
+        config, 'microskill', codebook=codebook, n_segments=len(segments),
+    )
+    if only_session_ids is not None:
+        entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        entry['n_new_segments'] = len(subset)
+    _cio.update_classification_manifest(_od, key='microskill', entry=entry)
 
     return segments
 
@@ -758,6 +809,66 @@ def _codebook_classify(config, codebook, segments, output_dir, observer):
             seg.codebook_labels_ensemble = ens.final_codes
             seg.codebook_disagreements = [d['code_id'] for d in ens.disagreement_details]
             seg.codebook_confidence = {a.code_id: a.confidence for a in ens.final_assignments}
+
+    plog.close_llm_log()
+
+
+def _microskill_classify(config, codebook, segments, output_dir, observer):
+    """Run embedding + LLM microcounseling-skill classification in-place on therapist segments."""
+    _llm_log_path = _paths.llm_prompts_path(output_dir)
+    plog = ProcessLogger(None, llm_log_path=_llm_log_path)
+
+    micro_output_dir = os.path.join(_paths.meta_dir(output_dir), 'microskill_raw')
+    os.makedirs(micro_output_dir, exist_ok=True)
+    config.microskill_embedding.exemplar_export_path = os.path.join(
+        micro_output_dir, 'found_exemplar_utterances.json'
+    )
+
+    # Microcounseling skills are therapist behaviours — classify therapist segments only.
+    ms_segments = [s for s in segments if s.speaker == 'therapist']
+    if not ms_segments:
+        plog.close_llm_log()
+        return
+
+    embedding_classifier = EmbeddingCodebookClassifier(config.microskill_embedding)
+    embedding_results = embedding_classifier.classify_segments(ms_segments, codebook)
+
+    tc = config.theme_classification
+    llm_cfg = LLMClientConfig(
+        backend=tc.backend,
+        api_key=tc.api_key,
+        model=tc.model,
+        temperature=tc.temperature,
+        lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+        ollama_host=getattr(tc, 'ollama_host', '0.0.0.0'),
+        ollama_port=getattr(tc, 'ollama_port', 11434),
+        process_logger=plog,
+    )
+    llm_client = LLMClient(llm_cfg)
+    config.microskill_llm.output_dir = micro_output_dir
+    llm_classifier = LLMCodebookClassifier(llm_client, config.microskill_llm)
+    try:
+        llm_results = llm_classifier.classify_segments(
+            ms_segments, codebook, output_dir=micro_output_dir,
+        )
+    except Exception:
+        llm_results = {}
+
+    ensemble = CodebookEnsemble(config.microskill_ensemble)
+    ensemble_results = ensemble.reconcile(embedding_results, llm_results)
+
+    for seg in segments:
+        if seg.segment_id in ensemble_results:
+            ens = ensemble_results[seg.segment_id]
+            seg.microskill_labels_embedding = sorted(
+                a.code_id for a in embedding_results.get(seg.segment_id, [])
+            )
+            seg.microskill_labels_llm = sorted(
+                a.code_id for a in llm_results.get(seg.segment_id, [])
+            )
+            seg.microskill_labels_ensemble = ens.final_codes
+            seg.microskill_disagreements = [d['code_id'] for d in ens.disagreement_details]
+            seg.microskill_confidence = {a.code_id: a.confidence for a in ens.final_assignments}
 
     plog.close_llm_log()
 
@@ -1486,6 +1597,39 @@ def run_full_pipeline(
                 json.dump(_cb_defs, _f, indent=2)
         all_segments = stage_classify_codebook(
             config, codebook,
+            segments=all_segments, output_dir=output_dir, observer=observer,
+        )
+
+    # ------------------------------------------------------------------
+    # Stage 3d: Microcounseling-skill Classification (optional; therapist sub-layer)
+    # ------------------------------------------------------------------
+    if getattr(config, 'run_microskill_classifier', False):
+        from codebook.microcounseling_codebook import get_microcounseling_codebook
+        micro_cb = get_microcounseling_codebook()
+        # Persist microcounseling definitions for downstream `qra analyze`.
+        _ms_def_path = os.path.join(_paths.meta_dir(output_dir), 'microcounseling_definitions.json')
+        if not os.path.exists(_ms_def_path):
+            _ms_defs = {
+                'name': micro_cb.name,
+                'version': micro_cb.version,
+                'description': micro_cb.description,
+                'codes': [
+                    {
+                        'code_id': c.code_id,
+                        'category': c.category,
+                        'domain': c.domain,
+                        'description': c.description,
+                        'inclusive_criteria': c.inclusive_criteria,
+                        'exclusive_criteria': c.exclusive_criteria,
+                        'exemplar_utterances': c.exemplar_utterances,
+                    }
+                    for c in micro_cb.codes
+                ],
+            }
+            with open(_ms_def_path, 'w') as _f:
+                json.dump(_ms_defs, _f, indent=2)
+        all_segments = stage_classify_microskill(
+            config, micro_cb,
             segments=all_segments, output_dir=output_dir, observer=observer,
         )
 
