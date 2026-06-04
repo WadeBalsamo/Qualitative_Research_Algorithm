@@ -229,6 +229,7 @@ class SetupWizard:
             self._step_5_framework()
             self._step_6_exemplars()
             self._step_7_codebook()
+            self._step_7b_microskill()
             self._step_8_classification()
             self._step_9_confidence()
         else:
@@ -240,6 +241,9 @@ class SetupWizard:
         self._step_11_analysis()
         self._step_11b_therapist_cues()
         self._step_11c_report_summaries()
+        self._step_11d_superposition()
+        self._step_11e_efficacy()
+        self._step_11f_gnn()
         config_path = self._step_12_save()
 
         return {
@@ -1358,6 +1362,303 @@ class SetupWizard:
             }
         else:
             self.config_data['participant_summaries'] = {'enabled': False}
+        print()
+
+    # -----------------------------------------------------------------
+    # Step 7b: Microcounseling skills classifier (custom mode)
+    # -----------------------------------------------------------------
+
+    def _step_7b_microskill(self):
+        print("--- Step 7b/17: Microcounseling Skills Classifier ---")
+        has_purer = self.config_data.get('run_purer_labeler', False)
+        if not has_purer:
+            print("  (greyed out — enable PURER classification in Step 2 to unlock)")
+            print("  The microcounseling classifier labels therapist segments with")
+            print("  observable behavioral microskills (Reflective Listening, Validation,")
+            print("  Affirmation, Open-ended Questions, etc.) that subtype PURER moves.")
+            print()
+            self.config_data['pipeline']['run_microskill_classifier'] = False
+            return
+
+        print()
+        print("    MICROCOUNSELING SKILLS CLASSIFIER (therapist twin of VCE codebook)")
+        print("    Applies the 8-code Microcounseling Skills codebook to therapist segments,")
+        print("    using the same embedding + LLM ensemble machinery as VCE classification.")
+        print("    The 8 codes label observable therapist behaviors:")
+        print("      RL  — Reflective Listening   (reflects participant's words back)")
+        print("      V   — Validation             (validates participant's experience)")
+        print("      A   — Affirmation            (affirms participant's strengths)")
+        print("      G   — Genuineness            (expresses therapist's own response)")
+        print("      RA  — Respect for Autonomy   (supports participant's right to choose)")
+        print("      AP  — Asking Permission      (checks consent before proceeding)")
+        print("      OQ  — Open-ended Question    (invites elaboration)")
+        print("      N   — Neutral                (administrative / logistical content)")
+        print()
+        print("    Enables PURER × Microskill cross-validation (therapist twin of VAAMR × VCE),")
+        print("    and seeds the GNN microskill head when the GNN layer is enabled.")
+        print()
+        enable = _prompt_yes_no("Enable microcounseling skills classifier?", False)
+        self.config_data['pipeline']['run_microskill_classifier'] = enable
+
+        if enable:
+            print()
+            print("    The microskill classifier uses the same embedding model as your")
+            print("    codebook configuration. No additional model download is needed.")
+            print()
+            from_codebook = self.config_data.get('codebook_embedding', {}).get(
+                'embedding_model', 'Qwen/Qwen3-Embedding-8B'
+            )
+            print(f"    Embedding model: {from_codebook}  (inherited from codebook config)")
+            self.config_data['microskill_embedding'] = {
+                'embedding_model': from_codebook,
+                'two_pass': True,
+            }
+            print("    Two-pass embedding: enabled (mirrors codebook default)")
+        print()
+
+    # -----------------------------------------------------------------
+    # Step 11d: Superposition & mechanism analysis
+    # -----------------------------------------------------------------
+
+    def _step_11d_superposition(self):
+        print("--- Step 11d/17: Stage Superposition & Mechanism Analysis ---")
+        print()
+        print("    STAGE SUPERPOSITION")
+        print("    Each participant segment is enriched with a continuous VAAMR stage-mixture")
+        print("    vector rather than a single hard label. This enables:")
+        print("      - Continuous progression coordinate (E[stage] = Σk·p_k ∈ [0,4])")
+        print("      - Mixture entropy as a liminality indicator (cusp states)")
+        print("      - Δprogression: continuous change in progression_coord FROM→TO")
+        print("    Superposition is always-on and non-destructive — hard labels are unchanged.")
+        print()
+        print("    MIXTURE SOURCE PRIORITY (auto-selected unless overridden):")
+        print("      auto          — GNN geometry → LLM ballot distributions → secondary_stage")
+        print("      gnn_only      — Use GNN segment positions only (requires GNN enabled)")
+        print("      ballots_only  — Reconstruct from multi-run LLM ballots")
+        print("      secondary     — Two-point mixture from primary + secondary stage labels")
+        print()
+        source = _prompt_choice(
+            "Mixture source",
+            ['auto', 'gnn_only', 'ballots_only', 'secondary'],
+            'auto',
+        )
+        self.config_data.setdefault('superposition', {})['mixture_source'] = source
+
+        print()
+        print("    LIMINALITY THRESHOLDS")
+        print("    A segment is flagged as 'liminal' (on a stage cusp) when:")
+        print("      - mixture entropy ≥ liminal_entropy_threshold  (default 0.6)")
+        print("      - OR top1−top2 mixture gap < liminal_gap_threshold  (default 0.25)")
+        print("    Liminal segments are clinically significant — they represent the boundary")
+        print("    moments where intervention may have the most leverage.")
+        print()
+        if _prompt_yes_no("Customize liminality thresholds?", False):
+            ent = _prompt_float("Liminal entropy threshold (0.0–1.0)", 0.6)
+            gap = _prompt_float("Liminal gap threshold (top1−top2, 0.0–1.0)", 0.25)
+            self.config_data['superposition']['liminal_entropy_threshold'] = ent
+            self.config_data['superposition']['liminal_gap_threshold'] = gap
+        print()
+
+        print("    PURER → VAAMR MECHANISM DOSSIER")
+        print("    Computes Δprogression (continuous change in progression_coord) for every")
+        print("    FROM→CUE→TO cue block, grouped by PURER move × from_stage. Each estimate")
+        print("    ships with:")
+        print("      - Cluster-bootstrap 95% CI (resampling whole participants)")
+        print("      - Within-stratum permutation p-value (PURER shuffled within from_stage)")
+        print("      - Cramér's V effect size")
+        print("      - Benjamini-Hochberg FDR flag across the PURER×VAAMR family")
+        print("    Outputs: report_mechanism.txt, mechanism_delta_progression.csv (with CI/p/FDR)")
+        print()
+        run_mech = _prompt_yes_no("Run PURER→VAAMR mechanism dossier?", True)
+        self.config_data['superposition']['run_mechanism_analysis'] = run_mech
+        if run_mech:
+            print("    Mechanism analysis will run after superposition enrichment.")
+        print()
+
+    # -----------------------------------------------------------------
+    # Step 11e: Program efficacy dossier
+    # -----------------------------------------------------------------
+
+    def _step_11e_efficacy(self):
+        print("--- Step 11e/17: Program Efficacy Dossier ---")
+        print()
+        print("    PROGRAM EFFICACY DOSSIER")
+        print("    Answers 'does the program work?' with uncertainty quantification.")
+        print("    Computes internal VAAMR progression outcomes per participant/session:")
+        print("      - Continuous progression coordinate trajectory")
+        print("      - Adaptive-stage occupancy (stages 2–4) vs maladaptive (stages 0–1)")
+        print("      - Avoidance→Attention Regulation barrier crossing (first-passage session)")
+        print("      - Group trajectory with cluster-bootstrap CI band + slope test")
+        print("      - Per-participant OLS slopes with sign test against chance")
+        print("    Optionally links within-program progression to external clinical outcomes")
+        print("    (pain, disability, MAIA-2, etc.) via mixed-effects/correlation + bootstrap CI.")
+        print("    Outputs: report_program_efficacy.txt, program_efficacy.png,")
+        print("             03_analysis_data/efficacy/*.csv")
+        print()
+        enable = _prompt_yes_no("Enable efficacy dossier?", True)
+        self.config_data.setdefault('efficacy', {})['enabled'] = enable
+        if not enable:
+            print()
+            return
+
+        print()
+        print("    EXTERNAL OUTCOMES (optional)")
+        print("    A participant-keyed CSV with pre/post clinical outcome measures can be")
+        print("    linked to VAAMR progression to answer: does linguistic progression track")
+        print("    real-world improvement?")
+        print("    Supported formats:")
+        print("      Wide pre/post: columns <measure>_pre and <measure>_post per participant")
+        print("      Long per-session: columns participant_id, session_id, <measure(s)>")
+        print("    Leave blank to skip external outcomes (internal progression only).")
+        print()
+        outcomes_path = _prompt("Path to outcomes CSV (blank to skip)", '')
+        if outcomes_path.strip():
+            self.config_data['efficacy']['outcomes_path'] = outcomes_path.strip()
+            print(f"    External outcomes will be loaded from: {outcomes_path.strip()}")
+        else:
+            print("    No external outcomes — efficacy dossier will use internal progression only.")
+
+        print()
+        if _prompt_yes_no("Customize adaptive/maladaptive stage definitions?", False):
+            print("    VAAMR stages: 0=Vigilance, 1=Avoidance, 2=AttnReg, 3=Metacognition, 4=Reappraisal")
+            adap_raw = _prompt("Adaptive stages (comma-separated indices)", '2,3,4')
+            maladap_raw = _prompt("Maladaptive stages (comma-separated indices)", '0,1')
+            try:
+                self.config_data['efficacy']['adaptive_stages'] = [
+                    int(s.strip()) for s in adap_raw.split(',') if s.strip().isdigit()
+                ]
+                self.config_data['efficacy']['maladaptive_stages'] = [
+                    int(s.strip()) for s in maladap_raw.split(',') if s.strip().isdigit()
+                ]
+            except ValueError:
+                print("    Invalid input — using defaults: adaptive=[2,3,4], maladaptive=[0,1]")
+        print()
+
+    # -----------------------------------------------------------------
+    # Step 11f: GNN analysis layer
+    # -----------------------------------------------------------------
+
+    def _step_11f_gnn(self):
+        print("--- Step 11f/17: GNN Representation & Discovery Layer ---")
+        print()
+        print("    GNN ANALYSIS LAYER (optional, runs at analyze-time)")
+        print("    A pure-PyTorch GraphSAGE network over Qwen3 segment embeddings.")
+        print("    Augments — never replaces — the LLM classifiers.")
+        print("    The same embedding model used for segmentation and VCE is reused;")
+        print("    no additional model download is required.")
+        print()
+        print("    Five capabilities:")
+        print("      A — Continuous VAAMR stage-mixture vectors from graph geometry")
+        print("          (primary superposition source when enabled)")
+        print("      B — Cue motif discovery: emergent therapist-language clusters that")
+        print("          cut across PURER categories, scored by influence on stage transitions")
+        print("      C — GNN↔LLM↔human triangulation: independent lift tables and Cohen's κ")
+        print("          (stronger construct-validity evidence than LLM↔LLM)")
+        print("      D — Construct signal ablation: does VCE/microskill carry independent")
+        print("          signal? (optional; adds extra training time)")
+        print("      E — Participant↔therapist coupling factors: latent NMF/PCA patterns")
+        print("          of therapist language correlated with participant forward movement")
+        print()
+        print("    NOTE: All GNN outputs are directional / hypothesis-generating until human")
+        print("    validation catches up. They never override labels-of-record.")
+        print()
+        enable = _prompt_yes_no("Enable GNN analysis layer?", False)
+        self.config_data.setdefault('gnn_layer', {})['enabled'] = enable
+        if not enable:
+            print("    GNN layer disabled. Run 'qra analyze --gnn' later to enable it ad-hoc.")
+            print()
+            return
+
+        print()
+        print("    LABEL MODE — determines which labels train the GNN heads")
+        print("      weak          (default) — train on LLM multi-run ballot distributions")
+        print("                    All sessions, directional; fastest to run.")
+        print("      human         — train only on human-validated 20% subset")
+        print("                    Stronger independence claim; less training data.")
+        print("      self_supervised — link-prediction only, no LLM labels at all")
+        print("                    Cleanest independence control for Capability C.")
+        print()
+        label_mode = _prompt_choice(
+            "Label mode",
+            ['weak', 'human', 'self_supervised'],
+            'weak',
+        )
+        self.config_data['gnn_layer']['label_mode'] = label_mode
+
+        print()
+        print("    CAPABILITIES TO INCLUDE")
+        print("    Capabilities B (motif discovery) and C (triangulation) are always enabled.")
+
+        # Capability D: ablation — adds significant training cost
+        print()
+        print("    Capability D — Construct signal ablation")
+        print("    Removes each construct head (VCE, PURER, microskill) and retrains.")
+        print("    Answers: is VCE superfluous? Do microskill labels add signal beyond PURER?")
+        print("    Each ablation run doubles training time.")
+        run_ablation = _prompt_yes_no("    Enable construct signal ablation (Capability D)?", False)
+        self.config_data['gnn_layer']['run_gnn_ablation'] = run_ablation
+
+        print()
+        print("    MOTIF DISCOVERY (Capability B)")
+        n_motifs = _prompt_int("    Number of cue motif clusters to discover", 12)
+        self.config_data['gnn_layer']['n_motif_clusters'] = n_motifs
+
+        print()
+        print("    COUPLING FACTORS (Capability E)")
+        n_factors = _prompt_int("    Number of latent coupling factors (NMF/PCA)", 5)
+        self.config_data['gnn_layer']['n_latent_factors'] = n_factors
+
+        print()
+        if _prompt_yes_no("Configure advanced GNN training settings?", False):
+            self._step_11f_gnn_advanced()
+
+        print()
+        print("    GNN layer configured.")
+        if label_mode == 'weak':
+            print("    All five capabilities will run on LLM ballot-derived soft labels.")
+        elif label_mode == 'human':
+            print("    Capabilities run on human-validated subset — smaller but cleaner signal.")
+        else:
+            print("    Self-supervised mode — only link-prediction objective, no LLM labels.")
+        print("    GNN artifacts → 03_analysis_data/gnn/, 06_reports/, 02_meta/gnn/model/")
+        print()
+
+    def _step_11f_gnn_advanced(self):
+        """Advanced GNN training hyperparameters."""
+        gnn = self.config_data.setdefault('gnn_layer', {})
+
+        print()
+        print("    GRAPH CONSTRUCTION")
+        knn_k = _prompt_int("    kNN similarity edges per node", 8)
+        gnn['knn_k'] = knn_k
+
+        print()
+        print("    MODEL ARCHITECTURE")
+        hidden_dim = _prompt_int("    GraphSAGE hidden dimension", 128)
+        n_layers = _prompt_int("    Number of SAGE aggregation layers", 2)
+        gnn['hidden_dim'] = hidden_dim
+        gnn['n_layers'] = n_layers
+
+        print()
+        print("    TRAINING")
+        epochs = _prompt_int("    Maximum training epochs", 300)
+        lr = _prompt_float("    Learning rate", 0.001)
+        gnn['epochs'] = epochs
+        gnn['lr'] = lr
+
+        print()
+        print("    OBJECTIVES (space-separated subset of: soft_vaamr progression")
+        print("    vce_multilabel purer microskill_multilabel contrastive link_prediction)")
+        default_obj = 'soft_vaamr progression contrastive link_prediction'
+        obj_raw = _prompt("    Objectives", default_obj)
+        valid = {'soft_vaamr', 'progression', 'vce_multilabel', 'purer',
+                 'microskill_multilabel', 'contrastive', 'link_prediction'}
+        objectives = [o for o in obj_raw.split() if o in valid]
+        if not objectives:
+            objectives = ['soft_vaamr', 'progression', 'contrastive', 'link_prediction']
+            print(f"    Invalid input — using defaults: {objectives}")
+        gnn['objectives'] = objectives
+        print(f"    Objectives: {objectives}")
         print()
 
     # -----------------------------------------------------------------
