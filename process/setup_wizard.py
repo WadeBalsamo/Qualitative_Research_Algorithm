@@ -34,6 +34,7 @@ from .config import (
     SessionSummariesConfig,
     ParticipantSummariesConfig,
     SuperpositionConfig,
+    EfficacyConfig,
 )
 from gnn_layer.config import GnnLayerConfig
 from .transcript_ingestion import scan_speakers
@@ -1550,6 +1551,10 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         superposition=SuperpositionConfig(
             **{k: v for k, v in data.get('superposition', {}).items()
                if k in SuperpositionConfig.__dataclass_fields__}
+        ),
+        efficacy=EfficacyConfig(
+            **{k: v for k, v in data.get('efficacy', {}).items()
+               if k in EfficacyConfig.__dataclass_fields__}
         ),
     )
 
