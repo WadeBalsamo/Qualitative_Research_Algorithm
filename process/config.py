@@ -200,6 +200,24 @@ class ParticipantSummariesConfig:
 
 
 @dataclass
+class SuperpositionConfig:
+    """Surface VAAMR stage-mixture (superposition) in analysis reports.
+
+    Always-on at analysis time and source-agnostic: mixtures come from the GNN
+    when it has run, else are reconstructed from LLM ballots, else from
+    secondary_stage. Drives the liminality (entropy) reporting and the
+    mechanistic Δprogression analysis. Additive — never alters hard labels.
+    """
+    enabled: bool = True
+    # 'auto' = GNN → ballots → secondary priority; or force one of gnn|ballots|secondary.
+    mixture_source: str = 'auto'
+    liminal_entropy_threshold: float = 0.6   # normalized entropy ≥ this ⇒ liminal
+    liminal_gap_threshold: float = 0.25      # top1−top2 mixture gap < this ⇒ liminal
+    active_stage_threshold: float = 0.15     # stage counts as "active" at ≥ this probability
+    run_mechanism_analysis: bool = True      # FROM→CUE→TO continuous Δprogression analysis
+
+
+@dataclass
 class PipelineConfig:
     """Top-level pipeline configuration."""
     # Input
@@ -243,6 +261,8 @@ class PipelineConfig:
     participant_summaries: ParticipantSummariesConfig = field(default_factory=ParticipantSummariesConfig)
     # GNN representation-and-discovery layer (analysis-time; OFF by default)
     gnn_layer: GnnLayerConfig = field(default_factory=GnnLayerConfig)
+    # Superposition surfacing + mechanistic analysis (analysis-time; ON by default)
+    superposition: SuperpositionConfig = field(default_factory=SuperpositionConfig)
 
     # Resume from checkpoint
     resume_from: Optional[str] = None
@@ -312,6 +332,7 @@ class PipelineConfig:
             'session_summaries': SessionSummariesConfig,
             'participant_summaries': ParticipantSummariesConfig,
             'gnn_layer': GnnLayerConfig,
+            'superposition': SuperpositionConfig,
         }
 
         kwargs = {}

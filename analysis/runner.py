@@ -148,6 +148,23 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
 
     log(f"    {n_segments} segments | {n_participants} participants | {n_sessions} sessions")
 
+    # Attach VAAMR stage-mixture (superposition) columns so every downstream
+    # report can surface the blend instead of a hard argmax. Additive + graceful
+    # (GNN positions → LLM ballots → secondary_stage); never mutates final_label.
+    _superpos_cfg = getattr(_pipeline_config, 'superposition', None) if _pipeline_config is not None else None
+    if _superpos_cfg is None or getattr(_superpos_cfg, 'enabled', True):
+        try:
+            from .superposition import attach_superposition
+            _nstg = len(framework) if framework else 5
+            attach_superposition(df, output_dir, config=_superpos_cfg, n_stages=_nstg)
+            if df_all is not None:
+                attach_superposition(df_all, output_dir, config=_superpos_cfg, n_stages=_nstg)
+            log(f"    Superposition attached (source: {df['mixture_source'].mode().iloc[0] if len(df) else 'n/a'}).")
+        except Exception as e:
+            print(f"  Warning: superposition attach failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
     if n_segments == 0:
         print("  No labeled segments found — nothing to analyze.")
         return {'output_dir': output_dir, 'n_segments': 0,
@@ -453,6 +470,62 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             print(f"  Warning: GNN layer failed: {e}")
             if verbose:
                 traceback.print_exc()
+
+    # ----------------------------------------------------------------
+    # 12. Superposition surfacing + mechanistic analysis (additive)
+    # ----------------------------------------------------------------
+    _run_mech = getattr(_superpos_cfg, 'run_mechanism_analysis', True) if _superpos_cfg is not None else True
+    if 'mixture' in df.columns:
+        # Soft (expected-count) VAAMR × codebook lift — boundary-expressed codes.
+        try:
+            from process.cross_validation import (
+                compute_soft_theme_codebook_cooccurrence,
+                export_soft_cross_validation_results,
+            )
+            log("[12/8] Computing soft (mixture-weighted) cross-validation lift...")
+            soft_cooc = compute_soft_theme_codebook_cooccurrence(df, framework)
+            if soft_cooc:
+                soft_path = export_soft_cross_validation_results(soft_cooc, output_dir)
+                if soft_path:
+                    files_generated.append(soft_path)
+        except Exception as e:
+            print(f"  Warning: soft cross-validation failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+        # Superposition human-readable report + figures.
+        try:
+            from .reports.superposition_report import generate_superposition_report
+            sp_path = generate_superposition_report(df, framework, output_dir)
+            if sp_path:
+                files_generated.append(sp_path)
+                log("    Superposition report: 06_reports/report_superposition.txt")
+        except Exception as e:
+            print(f"  Warning: superposition report failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+        try:
+            from .figures import generate_superposition_figures
+            sp_figs = generate_superposition_figures(df, framework, output_dir)
+            files_generated.extend(sp_figs)
+        except Exception as e:
+            print(f"  Warning: superposition figures failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+        # Mechanistic FROM→CUE→TO analysis (continuous Δprogression).
+        if _run_mech and df_all is not None and 'mixture' in df_all.columns:
+            try:
+                from .mechanism import run_mechanism_analysis
+                log("    Running mechanistic Δprogression analysis...")
+                mech_result = run_mechanism_analysis(df, df_all, output_dir, framework)
+                files_generated.extend(mech_result.get('files_written', []))
+                log(f"    Mechanism: {mech_result.get('n_blocks', 0)} cue blocks analyzed.")
+            except Exception as e:
+                print(f"  Warning: mechanism analysis failed: {e}")
+                if verbose:
+                    traceback.print_exc()
 
     try:
         from process.output_index import write_index
