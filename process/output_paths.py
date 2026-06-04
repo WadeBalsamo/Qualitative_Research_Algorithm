@@ -71,6 +71,11 @@ def mechanism_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '03_analysis_data', 'mechanism')
 
 
+def efficacy_dir(run_dir: str) -> str:
+    """Machine-readable program-efficacy artifacts (trajectories, slopes, barrier crossing, linkage)."""
+    return os.path.join(run_dir, '03_analysis_data', 'efficacy')
+
+
 # ── Transcripts ───────────────────────────────────────────────────────────
 
 def transcripts_diarized_dir(run_dir: str) -> str:

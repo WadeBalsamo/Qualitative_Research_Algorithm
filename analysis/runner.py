@@ -514,6 +514,20 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             if verbose:
                 traceback.print_exc()
 
+        # Program-efficacy dossier (does it work; links to external outcomes).
+        _eff_cfg = getattr(_pipeline_config, 'efficacy', None) if _pipeline_config is not None else None
+        if _eff_cfg is None or getattr(_eff_cfg, 'enabled', True):
+            try:
+                from .efficacy import run_efficacy_analysis
+                log("    Running program-efficacy analysis...")
+                eff_result = run_efficacy_analysis(df, framework, output_dir, config=_eff_cfg)
+                files_generated.extend(eff_result.get('files_written', []))
+                log("    Efficacy report: 06_reports/report_program_efficacy.txt")
+            except Exception as e:
+                print(f"  Warning: efficacy analysis failed: {e}")
+                if verbose:
+                    traceback.print_exc()
+
         # Mechanistic FROM→CUE→TO analysis (continuous Δprogression).
         if _run_mech and df_all is not None and 'mixture' in df_all.columns:
             try:

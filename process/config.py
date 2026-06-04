@@ -218,6 +218,22 @@ class SuperpositionConfig:
 
 
 @dataclass
+class EfficacyConfig:
+    """Program-efficacy dossier settings.
+
+    Anchors the 'does it work' analysis on internal VAAMR progression and, when an
+    external clinical-outcomes CSV is provided, correlates progression against it.
+    """
+    enabled: bool = True
+    # Participant-keyed CSV; absolute, or relative to the output dir. Default 02_meta/outcomes.csv.
+    outcomes_path: Optional[str] = None
+    adaptive_stages: List[int] = field(default_factory=lambda: [2, 3, 4])
+    maladaptive_stages: List[int] = field(default_factory=lambda: [0, 1])
+    barrier_from: int = 1       # Avoidance
+    barrier_to: int = 2         # Attention-Regulation
+
+
+@dataclass
 class PipelineConfig:
     """Top-level pipeline configuration."""
     # Input
@@ -263,6 +279,8 @@ class PipelineConfig:
     gnn_layer: GnnLayerConfig = field(default_factory=GnnLayerConfig)
     # Superposition surfacing + mechanistic analysis (analysis-time; ON by default)
     superposition: SuperpositionConfig = field(default_factory=SuperpositionConfig)
+    # Program-efficacy dossier (analysis-time; ON by default)
+    efficacy: EfficacyConfig = field(default_factory=EfficacyConfig)
 
     # Resume from checkpoint
     resume_from: Optional[str] = None
@@ -333,6 +351,7 @@ class PipelineConfig:
             'participant_summaries': ParticipantSummariesConfig,
             'gnn_layer': GnnLayerConfig,
             'superposition': SuperpositionConfig,
+            'efficacy': EfficacyConfig,
         }
 
         kwargs = {}
