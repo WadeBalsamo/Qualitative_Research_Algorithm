@@ -287,6 +287,51 @@ def export_combined_cohort_group_trajectories(
     return agg
 
 
+def export_segment_superposition(
+    df: pd.DataFrame,
+    framework: dict,
+    output_dir: str,
+) -> pd.DataFrame:
+    """Export per-segment stage mixture + liminality for downstream plotting.
+
+    Columns: segment_id, participant_id, session_id, session_number, cohort_id,
+             segment_index, mix_0..mix_K, progression_coord, mixture_entropy,
+             max_stage, second_stage, n_active_stages, is_liminal, mixture_source
+    """
+    if 'mixture' not in df.columns:
+        return pd.DataFrame()
+    stage_ids = sorted(framework.keys())
+    n_stages = len(stage_ids)
+    rows = []
+    for _, r in df.iterrows():
+        mix = r.get('mixture')
+        if mix is None or len(mix) != n_stages:
+            continue
+        row = {
+            'segment_id': str(r.get('segment_id', '')),
+            'participant_id': str(r.get('participant_id', '')),
+            'session_id': str(r.get('session_id', '')),
+            'session_number': int(r.get('session_number', 0)),
+            'cohort_id': r.get('cohort_id'),
+            'segment_index': int(r.get('segment_index', 0)),
+            'progression_coord': r.get('progression_coord'),
+            'mixture_entropy': r.get('mixture_entropy'),
+            'max_stage': r.get('max_stage'),
+            'second_stage': r.get('second_stage'),
+            'n_active_stages': r.get('n_active_stages'),
+            'is_liminal': r.get('is_liminal'),
+            'mixture_source': r.get('mixture_source'),
+        }
+        for k in range(n_stages):
+            row[f'mix_{stage_ids[k]}'] = round(float(mix[k]), 4)
+        rows.append(row)
+    out_df = pd.DataFrame(rows)
+    if not out_df.empty:
+        out = _ensure_graphing_dir(output_dir)
+        out_df.to_csv(os.path.join(out, 'segment_superposition.csv'), index=False)
+    return out_df
+
+
 def export_all_graphing_datasets(
     df: pd.DataFrame,
     framework: dict,
@@ -334,5 +379,12 @@ def export_all_graphing_datasets(
         paths.append(os.path.join(out, 'participant_stage_dominant.csv'))
     except Exception as e:
         print(f"  Warning: participant_stage_dominant CSV failed: {e}")
+
+    try:
+        sp_df = export_segment_superposition(df, framework, output_dir)
+        if not sp_df.empty:
+            paths.append(os.path.join(out, 'segment_superposition.csv'))
+    except Exception as e:
+        print(f"  Warning: segment_superposition CSV failed: {e}")
 
     return paths

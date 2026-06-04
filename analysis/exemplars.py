@@ -79,7 +79,7 @@ def format_exemplar(row: pd.Series) -> dict:
         segment_id, participant_id, session_id, session_number,
         text (full), confidence, consistency, justification
     """
-    return {
+    exemplar = {
         'segment_id': str(row.get('segment_id', '')),
         'participant_id': str(row.get('participant_id', '')),
         'session_id': str(row.get('session_id', '')),
@@ -91,3 +91,11 @@ def format_exemplar(row: pd.Series) -> dict:
             if pd.notna(row.get('llm_run_consistency')) else None,
         'justification': str(row.get('llm_justification', '') or ''),
     }
+    # Superposition fields — additive; present only when attach_superposition ran.
+    if 'mixture' in row.index and row.get('mixture') is not None:
+        exemplar['mixture'] = list(row.get('mixture'))
+        exemplar['mixture_entropy'] = round(float(row['mixture_entropy']), 4) \
+            if pd.notna(row.get('mixture_entropy')) else None
+        exemplar['is_liminal'] = bool(row.get('is_liminal')) \
+            if pd.notna(row.get('is_liminal')) else None
+    return exemplar

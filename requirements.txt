@@ -72,6 +72,7 @@ setuptools==81.0.0
 shellingham==1.5.4
 six==1.17.0
 srt==3.5.3
+statsmodels==0.14.6
 sympy==1.14.0
 threadpoolctl==3.6.0
 tokenizers==0.22.2

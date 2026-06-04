@@ -40,6 +40,7 @@ from collections import defaultdict
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 from process import output_paths as _paths
@@ -350,11 +351,27 @@ def compute_purer_transition_influence(
         lift_rows.append(row)
     lift_matrix = pd.DataFrame(lift_rows)
 
+    # ── Omnibus association test (PURER × to_stage over mediated blocks) ────
+    # The marginal lift cells are CONFOUNDED (not conditioned on from_stage); this
+    # contingency test answers the honest prior question — is dominant PURER move
+    # associated with destination stage AT ALL, beyond chance? Cramér's V + χ².
+    association_test = {}
+    try:
+        from . import stats as _S
+        if all_purer_ids and all_to_stages and n_mediated_total >= 5:
+            table = np.array([[purer_to_counts[(dp, ts)] for ts in all_to_stages]
+                              for dp in all_purer_ids], dtype=float)
+            association_test = _S.cramers_v(table)
+            association_test['n_mediated'] = int(n_mediated_total)
+    except Exception:
+        association_test = {}
+
     return {
         'transition_profiles': transition_profiles,
         'lift_matrix': lift_matrix,
         'empty_cue_rates': empty_cue_rates,
         'conditional_table': conditional_table,
+        'association_test': association_test,
         'raw_cue_blocks': cue_blocks,
     }
 
@@ -580,14 +597,25 @@ def generate_purer_report(
 
     # ── Section 3: Marginal lift matrix ───────────────────────────────────
     lines.append(_hr('─'))
-    lines.append('SECTION 3: MARGINAL LIFT MATRIX  (PURER → VAMMR to_stage)')
+    lines.append('SECTION 3: MARGINAL LIFT MATRIX  (PURER → VAMMR to_stage)  [CONFOUNDED — REFERENCE ONLY]')
     lines.append(_hr('─'))
     lines.append(
         'Lift = P(to_stage | dominant_purer) / P(to_stage). '
         'Lift > 1.0 means the VAMMR to_stage appears more often after that '
         'therapist move than its base rate. Only mediated blocks included. '
-        'Does not condition on from_stage — see Section 2 for conditional analysis.'
+        'CONFOUNDED: this does NOT condition on from_stage, so a move’s apparent '
+        'lift partly reflects which stages it is deployed from. Treat the from-stage-'
+        'conditioned Δprogression in report_mechanism.txt as the headline; this is reference.'
     )
+    # Omnibus association test — is PURER associated with destination stage at all?
+    at = influence.get('association_test') or {}
+    if at.get('cramers_v') == at.get('cramers_v') and at.get('cramers_v') is not None:
+        pv = at.get('p_value')
+        pv_s = f"{pv:.4f}" if isinstance(pv, (int, float)) and pv == pv else 'n/a'
+        lines.append(
+            f"Omnibus association (PURER × to_stage, n={at.get('n_mediated', 0)} mediated): "
+            f"Cramér's V = {at['cramers_v']:.3f}, χ² p = {pv_s}."
+        )
     lines.append('')
 
     if not lift_matrix.empty:

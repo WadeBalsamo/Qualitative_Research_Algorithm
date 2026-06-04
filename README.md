@@ -125,7 +125,17 @@ For the complete theoretical neurophenomenological grounding and research method
 
 ## What QRA Discovers: The Analysis Layer
 
-The classification stages are the *labeling mechanism*. The research findings live in the `analysis/` module. None of the following involves LLMs.
+The classification stages are the *labeling mechanism*. The research findings live in the `analysis/` module. None of the following involves LLMs except where explicitly noted (session summaries).
+
+### Stage Superposition and Continuous Progression
+
+`analysis/superposition.py`, `analysis/reports/superposition_report.py`
+
+Each participant segment is assigned not just a single hard-argmax stage label but a full **stage-mixture vector** — a probability distribution over all five VAAMR stages — and a **continuous progression coordinate** (E[stage] = Σk·p_k). This superposition representation is the keystone of all downstream mechanism and efficacy analysis.
+
+Mixture sources are used in priority order: GNN geometry (when the GNN layer is enabled) → LLM multi-run ballot distributions → secondary_stage two-point mixture. The **mixture entropy** (normalized Shannon H ∈ [0,1]) captures liminality: segments near a stage boundary express high entropy and are clinically significant as cusp states. A co-occurrence matrix of stage pairs by segment counts boundary-expressed segments across the corpus.
+
+Outputs include `report_superposition.txt` (corpus-level mixture summary, cusp density by session, most-liminal exemplars) and the `segment_superposition.csv` machine-readable export.
 
 ### Therapeutic Breakthrough Moments: FROM → CUE → TO Extraction
 
@@ -133,25 +143,55 @@ The classification stages are the *labeling mechanism*. The research findings li
 
 Every participant utterance in the corpus is indexed by its chronological position in the session. For every within-session VAAMR stage transition — segment at stage X immediately followed by segment at stage Y — the pipeline extracts the tripartite structure:
 
-- **FROM** — the participant utterance at stage X, with text, confidence, and timestamp
+- **FROM** — the participant utterance at stage X, with text, confidence, mixture, and timestamp
 - **CUE** — all therapist segments whose `segment_index` falls strictly between FROM and TO in the same session, with their PURER move labels
-- **TO** — the participant utterance at stage Y, with text, confidence, and timestamp
+- **TO** — the participant utterance at stage Y, with text, confidence, mixture, and timestamp
 
 The result is a searchable corpus of every observed instance of every transition type (e.g., all Avoidance → Attention Regulation crossings across both cohorts), with actual participant language on both sides and the therapist's contribution in between. Researchers read what the breakthrough moment looks like in the patient's own words and see what the therapist said to get there. One example per (cohort, session) pair is extracted and sorted; the full collection is aggregated into LLM-synthesized portraits of what each transition type characteristically looks like across the corpus.
 
 The **Avoidance → Attention Regulation** crossing is the clinically critical case. It marks where emerging attentional skill stops being deployed for pain suppression and is redirected toward open, investigative presence — the central developmental barrier identified in Wexler, Balsamo et al. (2026). Every instance of this crossing is extracted with the full FROM/CUE/TO triple; the PURER move distribution in those cue blocks is the primary evidence for curriculum recommendations.
 
+### PURER → VAAMR Mechanism Dossier
+
+`analysis/mechanism.py`, `analysis/purer_analysis.py`
+
+The mechanism dossier answers *how* PURER therapist moves drive VAAMR stage progression with statistical inference — not bare counts.
+
+**Conditional lift with inference:** For each (from\_stage, to\_stage) transition type, PURER move lift is computed with cluster-bootstrap confidence intervals (resampling whole participants to respect nesting), within-stratum permutation p-values (shuffling PURER labels within `from_stage` to hold base rates), Cramér's V effect sizes, and Benjamini-Hochberg FDR correction across the 25-cell PURER×VAAMR family. The marginal lift table is explicitly labeled "confounded" (therapists deploy moves *in response to* participant state); the from-stage-conditioned view is the headline.
+
+**Δprogression analysis:** Each cue block is enriched with Δprogression (continuous change in `progression_coord` from FROM to TO), classified as forward (Δ > +0.15), stabilize (|Δ| ≤ 0.15), or regress (Δ < −0.15). Every Δprogression estimate carries a cluster-bootstrap CI, within-stratum permutation p, effect size, and FDR flag. A mixed-effects model (`Δprog ~ C(purer) + (1|participant)`) estimates per-move marginal effects with participant-level random intercepts.
+
+**Avoidance barrier analysis:** Dedicated ranking of which therapist moves precede the Avoidance → Attention Regulation crossing, the clinically critical threshold.
+
+**Liminality leverage:** High-entropy (liminal) segments are tested for elevated Δprogression — the hypothesis that cusp states are the mechanistically pivotal moments for intervention.
+
+**GNN motif integration:** When the GNN layer is enabled, emergent cue motifs (clusters in therapist-language embedding space that cut across PURER categories) are included with their own Δprogression estimates and FDR flags, extending the dossier with data-driven constructs not pre-specified in PURER.
+
+Outputs: `report_mechanism.txt`, `report_avoidance_barrier.txt`, and CSVs including `mechanism_delta_progression.csv` (with CI/p/effect/FDR columns), `mechanism_liminality.csv`, `mechanism_avoidance_barrier.csv`, `participant_trajectory_types.csv`, `mechanism_purer_mixed_effects.csv`.
+
 ### Therapist Move × Stage Transition: Conditional Lift
 
 `analysis/purer_analysis.py`
 
-The `CueBlock` data structure (`analysis/purer_analysis.py:CueBlock`) pairs every therapist response with its surrounding FROM and TO participant stages. For each (from\_stage, to\_stage) transition type, the analysis computes the distribution of PURER moves across all cue blocks of that type, then computes lift against the corpus-wide base rate:
+The `CueBlock` data structure pairs every therapist response with its surrounding FROM and TO participant stages. For each (from\_stage, to\_stage) transition type, the analysis computes the distribution of PURER moves across all cue blocks of that type, then computes lift against the corpus-wide base rate, with an omnibus Cramér's V and chi-square association test per transition type.
 
-> Lift(PURER move | transition type) = P(move | from\_stage, to\_stage) / P(move)
+The clinically actionable question this answers: *is Reframing overrepresented before Reappraisal transitions? Is Phenomenology inquiry the dominant cue for Avoidance → Attention Regulation crossings, or does Reframing do more work there?* The marginal lift (collapsed across from\_stage) is explicitly labelled confounded; the from-stage-conditioned mechanism dossier is the defensible headline.
 
-This generates a conditional probability table: *given that a participant just crossed the Avoidance barrier, which therapist inquiry moves were overrepresented in the preceding cue block?* The outputs are `purer_transition_profiles.csv`, `purer_vaamr_lift.csv`, and `purer_empty_cue_rates.csv` (transitions where no therapist speech occurred between participant segments — spontaneous, unmediated progressions tracked separately).
+Outputs: `purer_transition_profiles.csv`, `purer_vaamr_lift.csv` (with CI/p/effect columns), `purer_empty_cue_rates.csv`.
 
-The clinically actionable question this answers: *is Reframing overrepresented before Reappraisal transitions? Is Phenomenology inquiry the dominant cue for Avoidance → Attention Regulation crossings, or does Reframing do more work there?* That distinction directly informs therapist training and session structure.
+### Program Efficacy Dossier
+
+`analysis/efficacy.py`
+
+The efficacy dossier answers "does the program work?" with statistical inference and, optionally, external clinical outcome linkage.
+
+**Internal outcomes:** Per (participant, session) — continuous progression coordinate trajectory, adaptive-stage occupancy (stages 2–4) vs maladaptive (stages 0–1), Avoidance→Attention Regulation barrier crossing (first-passage session), dwell time, progression volatility.
+
+**Group trajectory inference:** Cluster-bootstrap CI band on the group mean progression curve + `mixedlm_trend` slope test (random participant intercept). Per-participant OLS slopes with sign test against chance.
+
+**External outcome linkage:** Optional CSV at `02_meta/outcomes.csv` (auto-detects wide pre/post or long per-session format), linked to within-program VAAMR progression via mixed-effects / Pearson correlation with bootstrap CI — *does linguistic phenomenological progression track real-world pain and disability improvement?*
+
+Outputs: `report_program_efficacy.txt` (5-section text dossier), `03_analysis_data/efficacy/*.csv`, `05_figures/program_efficacy.png` (multipanel: group progression with CI band, adaptive occupancy, barrier crossing, VAAMR-vs-outcome scatter).
 
 ### State Transition Matrices
 
@@ -159,7 +199,7 @@ The clinically actionable question this answers: *is Reframing overrepresented b
 
 Two levels of transition analysis, answering different questions:
 
-**Within-session:** For each (participant, session), the segment sequence is sorted by `segment_index` and adjacent stage pairs are tabulated — forward, backward, and lateral transition counts. Within-session transition matrices aggregate across all participants. This answers: *how fluid is stage movement within a session? What is the ratio of forward to backward transitions in Session 5 vs Session 2? Does Session 3 (Mindful Reappraisal content) actually produce more Reappraisal-stage segments than Session 1?*
+**Within-session:** For each (participant, session), the segment sequence is sorted by `segment_index` and adjacent stage pairs are tabulated — forward, backward, and lateral transition counts, with mean continuous Δprogression per transition type. Within-session transition matrices aggregate across all participants. This answers: *how fluid is stage movement within a session? What is the ratio of forward to backward transitions in Session 5 vs Session 2? Does Session 3 (Mindful Reappraisal content) actually produce more Reappraisal-stage segments than Session 1?*
 
 **Between-session:** The modal VAAMR stage per (participant, session) represents that participant's dominant stage for the session. Between-session transition matrices compare dominant stages across consecutive session numbers. This answers: *are participants consolidating gains between sessions or reverting? At what session number does the group's modal stage shift forward?* A participant who briefly reaches Reappraisal in Session 2 but then shows it as their dominant stage by Session 5 has demonstrated the consolidation VAAMR predicts.
 
@@ -167,7 +207,33 @@ Two levels of transition analysis, answering different questions:
 
 `analysis/longitudinal.py`, `analysis/participant.py`
 
-Per-participant reports track the dominant stage across all attended sessions — the developmental arc each participant traces. Group-level summaries compute mean stage proportion by session number across the cohort. A non-decreasing mean stage progression is the basic validity check for the VAAMR model; sessions where the mean stage dips despite content explicitly designed to produce advancement are primary curriculum modification targets.
+Per-participant reports track the dominant stage, continuous progression coordinate, and progression volatility across all attended sessions. Participant-level output now includes `continuous_progression_by_session`, `continuous_progression_trend` (OLS slope), `mean_superposition_entropy_by_session`, and longitudinal trajectory typology (stable-advancer, late-mover, oscillator, non-responder). Group-level summaries compute mean stage proportion and mean progression coordinate with CI bands by session number.
+
+### Therapeutic Language Atlas
+
+`analysis/reports/language_atlas.py`
+
+The language atlas produces a curriculum-actionable guide to *what therapists actually say* when participants advance through VAAMR stages. For each top-ranked (FDR-significant) PURER move, microskill, emergent motif, and named coupling factor, the atlas renders FROM → CUE → TO exemplar blocks with mixture annotations and stage contexts. Emergent motifs — high-influence, low-PURER-purity language patterns that predict progression but map to no existing PURER category — are highlighted as candidates for new therapeutic constructs.
+
+Output: `06_reports/report_language_atlas.txt`.
+
+### GNN Representation and Discovery Layer
+
+`gnn_layer/`
+
+The GNN layer provides three capabilities that the LLM-label pipeline alone cannot deliver:
+
+**1. Continuous superposition (Capability A):** A pure-PyTorch GraphSAGE network trained on Qwen3 segment embeddings with soft VAAMR targets (the multi-run ballot distribution), PURER, VCE, and microcounseling heads. Outputs per-segment VAAMR stage-mixture vectors, continuous progression coordinates, and GNN embeddings in a unified embedding space. These are the primary mixture source when the GNN is enabled (`SuperpositionConfig.mixture_source = 'gnn'`). Output: `03_analysis_data/gnn/segment_positions.csv`.
+
+**2. Cue motif discovery (Capability B):** Cue blocks (therapist language between participant turns) are represented as mean-pooled GNN embeddings and clustered into emergent *motifs* — patterns in therapist language that cut across the five PURER categories. Each motif is scored for influence on forward VAAMR transitions (from-stage-conditioned logistic regression), labeled for PURER and microskill purity, and flagged if it is influential but poorly explained by existing labels (a candidate new therapeutic construct). Exemplar cues are selected by geometry rather than LLM averaging. Outputs: `cue_motifs.csv`, `cue_block_assignments.csv`, `report_gnn_emergent_motifs.txt`.
+
+**3. GNN↔LLM triangulation (Capability C):** GNN-derived VAAMR stage assignments are compared against LLM-ensemble labels and human-coded labels (where available) via Cohen's κ. GNN-lift tables for VAAMR×VCE, PURER×transition, and PURER×microskill are computed from GNN geometry and placed beside LLM-derived tables — **GNN↔LLM convergence is stronger construct-validity evidence than LLM↔LLM**, directly complementing the planned shuffled-stage permutation control. Output: `report_gnn_triangulation.txt`, `gnn_vs_llm_lift.csv`, `purer_microskill_lift.csv`.
+
+**4. Construct signal ablation (Capability D, optional):** Each construct head (VCE, PURER, microskill) is removed and the model retrained; the loss increase when a head is removed quantifies how much independent signal that construct family carries. Answers: *is VCE superfluous?* Output: `report_gnn_construct_signal.txt`, `gnn_construct_signal.csv`.
+
+**5. Participant↔therapist coupling (Capability E):** Latent NMF/PCA factors of therapist cue language and their correlation with subsequent participant VAAMR forward movement. Factors are interpreted post-hoc against an inline CF/IC alliance-concept reference lexicon — alliance-like structure is *discovered*, not imposed. Exemplar quotes per factor and forward-correlation values are included. Outputs: `coupling_factors.csv`, `report_gnn_coupling.txt`.
+
+The GNN is an **analysis-time layer only** — frozen segments and `master_segments` are never mutated. It runs when `config.gnn_layer.enabled=True` or via `qra analyze --gnn`, and wraps every capability in a separate try/except so one failure never aborts the others. All GNN artifacts go to `03_analysis_data/gnn/`, `06_reports/`, and `02_meta/gnn/model/`.
 
 ---
 
@@ -270,8 +336,14 @@ output_dir/
 │   ├── auditable_logs/           # LLM prompts/responses/checkpoints
 │   ├── codebook_raw/             # Embedding checkpoints
 │   ├── training_data/            # master_segments.jsonl/.csv, BERT training data
+│   ├── gnn/                      # GNN model checkpoint + segment embedding cache
+│   │   ├── model/                # weights.pt + manifest.json
+│   │   └── segment_embeddings.npz
 │   └── speaker_anonymization_key.json
-├── 03_analysis_data/             # Session stats, graphing CSVs
+├── 03_analysis_data/             # Session stats, graphing CSVs, mechanism/efficacy/GNN outputs
+│   ├── mechanism/                # Δprogression CSVs with CI/p/FDR columns
+│   ├── efficacy/                 # Efficacy outcome CSVs
+│   └── gnn/                      # GNN artifacts: segment_positions.csv, cue_motifs.csv, etc.
 ├── 04_validation/
 │   ├── flagged_for_review.txt
 │   ├── human_coding_evaluation_set.csv
@@ -329,10 +401,39 @@ output_dir/
 | `classification_tools/classification_loop.py` | Multi-run consensus voting with checkpointing |
 | `classification_tools/majority_vote.py` | Ballot aggregation (unanimous/majority/split/none) |
 | `classification_tools/data_structures.py` | `Segment` dataclass |
-| `analysis/runner.py` | Post-hoc analysis entry point |
+| `analysis/runner.py` | Post-hoc analysis orchestrator — sequences all analysis steps |
+| `analysis/superposition.py` | Stage-mixture provider: GNN geometry → LLM ballots → secondary_stage fallback; mixture entropy, co-occurrence matrix |
+| `analysis/mechanism.py` | PURER→VAAMR mechanism dossier with full statistical inference (CI, permutation p, FDR) |
+| `analysis/stats.py` | Reusable inference toolkit: Wilson CI, cluster-bootstrap CI, permutation test, effect sizes, BH-FDR, mixed-effects |
+| `analysis/efficacy.py` | Program efficacy dossier: internal progression outcomes + optional external outcome linkage |
 | `analysis/purer_analysis.py` | PURER × VAAMR conditional lift table, cue-response synthesis |
-| `analysis/purer_figures.py` | PURER × VAAMR heatmap and figures |
-| `analysis/reports/` | Text report generators: session, stage, transition, cue-response, longitudinal, summaries |
+| `analysis/purer_figures.py` | PURER × VAAMR lift heatmap and figures |
+| `analysis/longitudinal.py` | Longitudinal summary generation |
+| `analysis/stage_progression.py` | Session-level stage progression computation |
+| `analysis/participant.py` | Per-participant report generation |
+| `analysis/session.py` | Per-session analysis |
+| `analysis/theme.py` | Per-theme (VAAMR stage + code) analyses |
+| `analysis/figure_data.py` | Export graph-ready CSV datasets |
+| `analysis/figures.py` | Matplotlib visualization figures (including superposition and mechanism figures) |
+| `analysis/exemplars.py` | Exemplar utterance extraction per stage |
+| `analysis/reports/superposition_report.py` | Superposition text report: corpus mixture, cusp matrix, liminal exemplars |
+| `analysis/reports/language_atlas.py` | Therapeutic language atlas: ranked exemplar FROM→CUE→TO blocks by PURER/motif/factor |
+| `analysis/reports/transition_report.py` | Transition explanation and therapist cue reports |
+| `analysis/reports/` | Full suite of text report generators: session, stage, transition, cue-response, longitudinal, summaries |
+| `gnn_layer/runner.py` | GNN layer entry point — orchestrates all five GNN capabilities |
+| `gnn_layer/embeddings.py` | Qwen3 segment embedding reuse with NPZ cache |
+| `gnn_layer/graph_builder.py` | Heterogeneous graph construction: temporal chain, anchor/label, kNN, cross-framework edges |
+| `gnn_layer/model.py` | Pure-PyTorch GraphSAGE with multi-task heads (soft_vaamr, progression, vce, purer, microskill) |
+| `gnn_layer/train.py` | Full-batch training, early stopping, checkpoint export |
+| `gnn_layer/inference.py` | Per-segment position inference, cue-block embedding assembly |
+| `gnn_layer/motifs.py` | Cue motif clustering, influence scoring, purity annotation, emergent-motif flagging |
+| `gnn_layer/gnn_lift.py` | GNN-derived lift tables (VAAMR×VCE, PURER×transition, PURER×microskill) vs LLM baseline |
+| `gnn_layer/triangulation.py` | GNN↔LLM↔human agreement (Cohen's κ), triangulation report |
+| `gnn_layer/ablation.py` | Construct-head ablation: which families carry independent signal? |
+| `gnn_layer/coupling.py` | Latent participant↔therapist coupling factors, CF/IC alliance naming |
+| `gnn_layer/soft_labels.py` | Ballot-to-mixture conversion, progression coordinate, soft target assembly |
+| `gnn_layer/reports.py` | GNN artifact writers: segment_positions.csv, cue_motifs.csv, gnn_vs_llm_lift.csv, coupling reports |
+| `gnn_layer/config.py` | `GnnLayerConfig` dataclass (enabled=False default) |
 
 ---
 
