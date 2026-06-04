@@ -138,6 +138,9 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
             exem = _mot.select_motif_exemplars(motif_ids, cue_X, rows)
             flagged = _mot.flag_emergent_motifs(stats, purity, config)
             files.append(_rep.write_cue_motifs(stats, purity, exem, output_dir))
+            # Per-block motif assignment so the mechanistic Δprogression analysis
+            # can group cue blocks by emergent motif (additive sidecar).
+            files.append(_rep.write_cue_block_assignments(rows, motif_ids, output_dir))
             files.append(_rep.write_emergent_motifs_report(flagged, stats, purity, exem, output_dir))
             _log(verbose, f"discovered {len(stats)} cue motifs ({len(flagged)} flagged emergent)")
     except Exception as e:

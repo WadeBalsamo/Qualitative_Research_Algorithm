@@ -66,6 +66,11 @@ def gnn_data_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '03_analysis_data', 'gnn')
 
 
+def mechanism_dir(run_dir: str) -> str:
+    """Machine-readable mechanistic-analysis artifacts (Δprogression, liminality, trajectory types)."""
+    return os.path.join(run_dir, '03_analysis_data', 'mechanism')
+
+
 # ── Transcripts ───────────────────────────────────────────────────────────
 
 def transcripts_diarized_dir(run_dir: str) -> str:
