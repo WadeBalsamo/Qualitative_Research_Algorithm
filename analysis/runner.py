@@ -12,7 +12,8 @@ import os
 import traceback
 
 
-def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None) -> dict:
+def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None,
+                 force_gnn: bool = None) -> dict:
     """Execute the full results analysis on an existing pipeline output directory.
 
     Reads master_segment_dataset.csv and theme_definitions.json from output_dir.
@@ -146,6 +147,23 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
     n_sessions = df['session_id'].nunique()
 
     log(f"    {n_segments} segments | {n_participants} participants | {n_sessions} sessions")
+
+    # Attach VAAMR stage-mixture (superposition) columns so every downstream
+    # report can surface the blend instead of a hard argmax. Additive + graceful
+    # (GNN positions → LLM ballots → secondary_stage); never mutates final_label.
+    _superpos_cfg = getattr(_pipeline_config, 'superposition', None) if _pipeline_config is not None else None
+    if _superpos_cfg is None or getattr(_superpos_cfg, 'enabled', True):
+        try:
+            from .superposition import attach_superposition
+            _nstg = len(framework) if framework else 5
+            attach_superposition(df, output_dir, config=_superpos_cfg, n_stages=_nstg)
+            if df_all is not None:
+                attach_superposition(df_all, output_dir, config=_superpos_cfg, n_stages=_nstg)
+            log(f"    Superposition attached (source: {df['mixture_source'].mode().iloc[0] if len(df) else 'n/a'}).")
+        except Exception as e:
+            print(f"  Warning: superposition attach failed: {e}")
+            if verbose:
+                traceback.print_exc()
 
     if n_segments == 0:
         print("  No labeled segments found — nothing to analyze.")
@@ -427,6 +445,113 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             print(f"  Warning: PURER analysis failed: {e}")
             if verbose:
                 traceback.print_exc()
+
+    # ----------------------------------------------------------------
+    # 11. GNN representation-and-discovery layer (optional; OFF by default)
+    # ----------------------------------------------------------------
+    _gnn_cfg = getattr(_pipeline_config, 'gnn_layer', None) if _pipeline_config is not None else None
+    _gnn_enabled = getattr(_gnn_cfg, 'enabled', False) if _gnn_cfg is not None else False
+    if force_gnn is not None:
+        _gnn_enabled = force_gnn
+        # If config never loaded but the user forced --gnn, fall back to defaults.
+        if _gnn_cfg is None and force_gnn:
+            from gnn_layer.config import GnnLayerConfig
+            _gnn_cfg = GnnLayerConfig(enabled=True)
+    if df_all is not None and _gnn_cfg is not None and _gnn_enabled:
+        try:
+            from gnn_layer.runner import run_gnn_analysis
+            log("[11/8] Running GNN representation-and-discovery layer...")
+            gnn_result = run_gnn_analysis(
+                df_all, output_dir, framework=framework, config=_gnn_cfg, llm_client=llm_client,
+            )
+            files_generated.extend(gnn_result.get('files_written', []))
+            log(f"    GNN layer status: {gnn_result.get('status', 'ok')}")
+        except Exception as e:
+            print(f"  Warning: GNN layer failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+    # ----------------------------------------------------------------
+    # 12. Superposition surfacing + mechanistic analysis (additive)
+    # ----------------------------------------------------------------
+    _run_mech = getattr(_superpos_cfg, 'run_mechanism_analysis', True) if _superpos_cfg is not None else True
+    if 'mixture' in df.columns:
+        # Soft (expected-count) VAAMR × codebook lift — boundary-expressed codes.
+        try:
+            from process.cross_validation import (
+                compute_soft_theme_codebook_cooccurrence,
+                export_soft_cross_validation_results,
+            )
+            log("[12/8] Computing soft (mixture-weighted) cross-validation lift...")
+            soft_cooc = compute_soft_theme_codebook_cooccurrence(df, framework)
+            if soft_cooc:
+                soft_path = export_soft_cross_validation_results(soft_cooc, output_dir)
+                if soft_path:
+                    files_generated.append(soft_path)
+        except Exception as e:
+            print(f"  Warning: soft cross-validation failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+        # Superposition human-readable report + figures.
+        try:
+            from .reports.superposition_report import generate_superposition_report
+            sp_path = generate_superposition_report(df, framework, output_dir)
+            if sp_path:
+                files_generated.append(sp_path)
+                log("    Superposition report: 06_reports/report_superposition.txt")
+        except Exception as e:
+            print(f"  Warning: superposition report failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+        try:
+            from .figures import generate_superposition_figures
+            sp_figs = generate_superposition_figures(df, framework, output_dir)
+            files_generated.extend(sp_figs)
+        except Exception as e:
+            print(f"  Warning: superposition figures failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+        # Program-efficacy dossier (does it work; links to external outcomes).
+        _eff_cfg = getattr(_pipeline_config, 'efficacy', None) if _pipeline_config is not None else None
+        if _eff_cfg is None or getattr(_eff_cfg, 'enabled', True):
+            try:
+                from .efficacy import run_efficacy_analysis
+                log("    Running program-efficacy analysis...")
+                eff_result = run_efficacy_analysis(df, framework, output_dir, config=_eff_cfg)
+                files_generated.extend(eff_result.get('files_written', []))
+                log("    Efficacy report: 06_reports/report_program_efficacy.txt")
+            except Exception as e:
+                print(f"  Warning: efficacy analysis failed: {e}")
+                if verbose:
+                    traceback.print_exc()
+
+        # Mechanistic FROM→CUE→TO analysis (continuous Δprogression).
+        if _run_mech and df_all is not None and 'mixture' in df_all.columns:
+            try:
+                from .mechanism import run_mechanism_analysis
+                log("    Running mechanistic Δprogression analysis...")
+                mech_result = run_mechanism_analysis(df, df_all, output_dir, framework)
+                files_generated.extend(mech_result.get('files_written', []))
+                log(f"    Mechanism: {mech_result.get('n_blocks', 0)} cue blocks analyzed.")
+            except Exception as e:
+                print(f"  Warning: mechanism analysis failed: {e}")
+                if verbose:
+                    traceback.print_exc()
+
+            # Therapeutic language atlas (readable patterns behind the statistics).
+            try:
+                from .reports.language_atlas import generate_language_atlas
+                atlas_path = generate_language_atlas(df, df_all, framework, output_dir)
+                if atlas_path:
+                    files_generated.append(atlas_path)
+                    log("    Language atlas: 06_reports/report_language_atlas.txt")
+            except Exception as e:
+                print(f"  Warning: language atlas failed: {e}")
+                if verbose:
+                    traceback.print_exc()
 
     try:
         from process.output_index import write_index

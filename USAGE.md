@@ -47,7 +47,8 @@ python qra.py run \
 | `python qra.py run --config config.json --auto-analyze` | Run pipeline with automatic analysis reports |
 | `python qra.py ingest -o ./output/` | Segment and freeze transcripts only |
 | `python qra.py classify -o ./output/ --what theme` | Run VAAMR classification only |
-| `python qra.py analyze -o ./output/` | Generate analysis reports on existing output |
+| `python qra.py analyze -o ./output/` | Generate analysis reports (superposition, mechanism, efficacy, language atlas) |
+| `python qra.py analyze -o ./output/ --gnn` | Analysis + GNN layer (segment positioning, cue motifs, triangulation, coupling) |
 
 ## Workflow for Existing Projects
 
@@ -249,12 +250,23 @@ python qra.py analyze --output-dir ./data/output/
 ```
 
 Generates comprehensive analysis including:
-- Per-participant longitudinal reports
-- Per-session summaries with prototypical exemplars
+- Stage superposition (mixture vectors, entropy, cusp density report)
+- Per-participant longitudinal reports with continuous progression + volatility
+- Per-session summaries with prototypical exemplars and superposition annotations
 - Per-theme (stage + codebook) analyses
+- PURER→VAAMR mechanism dossier with full statistical inference (CI/p/FDR)
+- Program efficacy dossier with group trajectory and outcome linkage
+- Therapeutic language atlas (ranked exemplar FROM→CUE→TO blocks)
 - Therapist cue response analysis
 - Session and participant LLM summaries
-- Graph-ready CSVs and visualization figures
+- Graph-ready CSVs and visualization figures (superposition, mechanism, efficacy)
+
+Optional GNN analysis (add `--gnn` flag):
+- Per-segment stage-mixture vectors from graph geometry (Capability A)
+- Cue motif discovery: emergent therapist-language clusters + influence scoring (Capability B)
+- GNN↔LLM↔human triangulation + lift comparison (Capability C)
+- Construct signal ablation: which label families carry independent signal (Capability D, `run_gnn_ablation=true`)
+- Latent participant↔therapist coupling factors with alliance naming (Capability E)
 
 ## Test Set Management
 
@@ -308,6 +320,12 @@ python qra.py run --run-codebook-classifier
 
 # Disable specific features
 python qra.py run --no-codebook-classifier
+
+# Enable GNN analysis layer at analyze-time
+python qra.py analyze -o ./output/ --gnn
+
+# GNN with ablation (Capability D) — adds extra training time
+# Set run_gnn_ablation: true in qra_config.json gnn_layer section
 ```
 
 ### Classification Parameters
@@ -454,13 +472,29 @@ QRA is designed for qualitative research in psychotherapy and mindfulness-based 
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
 │  Stage 8: Results Analysis (optional, --auto-analyze)       │
-│  - Per-participant longitudinal reports                     │
+│  - Stage superposition: mixture vectors, entropy, cusp      │
+│    density (analysis/superposition.py)                      │
+│  - Per-participant longitudinal reports with continuous      │
+│    progression coordinate + volatility                      │
 │  - Per-session and per-theme analyses                       │
 │  - Graph-ready CSVs                                         │
 │  - Stage progression + transition explanation               │
+│  - PURER→VAAMR mechanism dossier with CI/p/FDR             │
+│    (analysis/mechanism.py + analysis/stats.py)              │
+│  - Program efficacy dossier + optional external outcome      │
+│    linkage (analysis/efficacy.py)                           │
 │  - Therapist cue response analysis                          │
+│  - Therapeutic language atlas (analysis/reports/           │
+│    language_atlas.py)                                       │
 │  - Session + participant LLM summaries                      │
-│  - Visualization figures                                    │
+│  - Visualization figures (superposition, mechanism,         │
+│    efficacy, PURER heatmaps)                                │
+│  - GNN analysis (optional, --gnn flag):                     │
+│    Capability A: segment positioning + superposition        │
+│    Capability B: cue motif discovery + influence            │
+│    Capability C: GNN↔LLM triangulation + lift tables        │
+│    Capability D: construct signal ablation (opt-in)         │
+│    Capability E: participant↔therapist coupling factors     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -628,6 +662,45 @@ Each test set spec (`TestSetSpec`) accepts:
 | `max_length_per_cue` | int | 250 | Max words per cue before LLM summarization |
 | `max_length_of_average_cue_responses` | int | 500 | Cap per averaged block in cue response analysis |
 
+#### Sub-config: `superposition`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | true | Enable stage-superposition enrichment |
+| `mixture_source` | string | `auto` | Mixture source: `gnn`, `llm_ballots`, `secondary_stage`, or `auto` (priority order) |
+| `liminal_entropy_threshold` | float | 0.6 | Normalized entropy threshold for liminal classification |
+| `liminal_gap_threshold` | float | 0.25 | Max gap between top-two mixture components for liminality |
+| `active_stage_threshold` | float | 0.15 | Minimum mixture component to count as "active" |
+| `run_mechanism_analysis` | bool | true | Run mechanism dossier after superposition enrichment |
+
+#### Sub-config: `efficacy`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | true | Enable efficacy dossier |
+| `outcomes_path` | string | `02_meta/outcomes.csv` | Path to external outcomes CSV (graceful if absent) |
+| `adaptive_stages` | int[] | `[2,3,4]` | Stages counted as adaptive occupancy |
+| `maladaptive_stages` | int[] | `[0,1]` | Stages counted as maladaptive occupancy |
+| `barrier_from` | int | 1 | Avoidance-barrier FROM stage index |
+| `barrier_to` | int | 2 | Avoidance-barrier TO stage index |
+
+#### Sub-config: `gnn_layer`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | false | Enable GNN analysis layer |
+| `embedding_model` | string | `Qwen/Qwen3-Embedding-8B` | Segment embedding model (reused from segmentation) |
+| `hidden_dim` | int | 128 | GraphSAGE hidden dimension |
+| `n_layers` | int | 2 | Number of SAGE aggregation layers |
+| `knn_k` | int | 5 | kNN edges per node for inductive similarity graph |
+| `objectives` | string[] | `[soft_vaamr, progression, purer, contrastive, link_prediction]` | Training objectives |
+| `label_mode` | string | `weak` | Label source: `weak` (LLM ballots), `human`, `self_supervised` |
+| `epochs` | int | 100 | Maximum training epochs |
+| `n_motif_clusters` | int | 12 | Number of cue motif clusters (Capability B) |
+| `min_motif_influence` | float | 0.1 | Minimum influence score to report a motif |
+| `n_latent_factors` | int | 5 | Latent coupling factors (Capability E) |
+| `run_gnn_ablation` | bool | false | Enable construct-head ablation (Capability D, adds training time) |
+
 #### Sub-config: `session_summaries` / `participant_summaries`
 
 | Key | Type | Default | Description |
@@ -693,15 +766,42 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 |----------------|-------------|
 | `03_analysis_data/session_stats/stats_<session>.json` | Per-session classification statistics |
 | `03_analysis_data/session_stats/stats_cumulative.json` | Cumulative statistics across all sessions |
-| `03_analysis_data/per_session/<session>.json` | Full per-session analysis |
-| `03_analysis_data/per_participant/<participant>.json` | Per-participant longitudinal analysis |
+| `03_analysis_data/per_session/<session>.json` | Full per-session analysis (includes superposition summary) |
+| `03_analysis_data/per_participant/<participant>.json` | Per-participant longitudinal analysis (includes continuous progression, volatility, entropy) |
 | `03_analysis_data/per_theme/<stage>.json` | Per-theme (VAAMR stage) analysis |
 | `03_analysis_data/per_theme/<code>.json` | Per-code (VCE) analysis |
 | `03_analysis_data/cumulative_report.json` | Aggregated cumulative report |
 | `03_analysis_data/longitudinal_summary.json` | Longitudinal trajectory summary |
 | `03_analysis_data/session_stage_progression.csv` | Stage progression per session (graph-ready) |
 | `03_analysis_data/graphing/*.csv` | Graph-ready datasets |
+| `03_analysis_data/graphing/segment_superposition.csv` | Per-segment mixture vector + entropy export |
 | `03_analysis_data/session_summaries.json` | LLM-generated session summaries |
+| `03_analysis_data/mechanism/mechanism_delta_progression.csv` | Δprogression by PURER/from-stage with CI/p/effect/FDR columns |
+| `03_analysis_data/mechanism/mechanism_liminality.csv` | Liminality leverage analysis |
+| `03_analysis_data/mechanism/mechanism_avoidance_barrier.csv` | Avoidance-barrier crossing analysis |
+| `03_analysis_data/mechanism/participant_trajectory_types.csv` | Trajectory typology per participant |
+| `03_analysis_data/mechanism/mechanism_purer_mixed_effects.csv` | Mixed-effects Δprog ~ PURER model output |
+| `03_analysis_data/efficacy/participant_session_outcomes.csv` | Per-(participant, session) progression + occupancy |
+| `03_analysis_data/efficacy/barrier_crossing.csv` | Avoidance→AttnReg first-passage per participant |
+| `03_analysis_data/efficacy/group_trajectory.csv` | Group mean progression with bootstrap CI |
+| `03_analysis_data/efficacy/participant_slopes.csv` | Per-participant OLS progression slopes |
+| `03_analysis_data/gnn/segment_positions.csv` | Per-segment GNN mixture, progression_coord, node_type (Capability A) |
+| `03_analysis_data/gnn/cue_motifs.csv` | Motif stats: influence, purity, n_exemplars (Capability B) |
+| `03_analysis_data/gnn/cue_block_assignments.csv` | Per-cue-block motif assignment sidecar (Capability B) |
+| `03_analysis_data/gnn/gnn_head_predictions.csv` | Per-segment GNN head predictions for purer/vce/microskill (Capability C) |
+| `03_analysis_data/gnn/gnn_vs_llm_lift.csv` | GNN-vs-LLM lift comparison (Capability C) |
+| `03_analysis_data/gnn/purer_microskill_lift.csv` | PURER × microskill lift table (Capability C) |
+| `03_analysis_data/gnn/coupling_factors.csv` | Latent coupling factors with forward correlation (Capability E) |
+| `03_analysis_data/gnn/gnn_construct_signal.csv` | Ablation loss deltas per construct head (Capability D) |
+| `06_reports/report_superposition.txt` | Corpus superposition summary, cusp density, liminal exemplars |
+| `06_reports/report_mechanism.txt` | PURER→VAAMR mechanism dossier with CI/p/FDR |
+| `06_reports/report_avoidance_barrier.txt` | Avoidance-barrier transition ranking |
+| `06_reports/report_program_efficacy.txt` | Program efficacy dossier (5 sections) |
+| `06_reports/report_language_atlas.txt` | Therapeutic language atlas |
+| `06_reports/report_gnn_emergent_motifs.txt` | Emergent cue motifs flagged for human review (Capability B) |
+| `06_reports/report_gnn_triangulation.txt` | GNN↔LLM↔human agreement and lift comparison (Capability C) |
+| `06_reports/report_gnn_construct_signal.txt` | Construct signal ablation ranking (Capability D) |
+| `06_reports/report_gnn_coupling.txt` | Latent coupling factors and alliance naming (Capability E) |
 
 ### Validation Output Files
 
@@ -784,20 +884,46 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 
 | File | Description |
 |------|-------------|
-| `runner.py` | Post-hoc analysis orchestrator |
+| `runner.py` | Post-hoc analysis orchestrator — sequences all analysis steps |
+| `superposition.py` | Stage-mixture provider: GNN → LLM ballots → secondary_stage fallback; entropy, co-occurrence |
+| `mechanism.py` | PURER→VAAMR mechanism dossier with full statistical inference (CI, permutation p, FDR) |
+| `stats.py` | Inference toolkit: Wilson CI, cluster-bootstrap CI, permutation test, effect sizes, BH-FDR, mixed-effects |
+| `efficacy.py` | Program efficacy: internal progression outcomes + external outcome linkage |
 | `loader.py` | Load master JSONL and framework from output directory |
-| `participant.py` | Per-participant report generation |
-| `session.py` | Per-session analysis |
+| `participant.py` | Per-participant report generation (includes continuous progression, volatility) |
+| `session.py` | Per-session analysis (includes superposition summary) |
 | `theme.py` | Per-theme (VAAMR stage + code) analyses |
 | `stage_progression.py` | Session-level stage progression computation |
 | `longitudinal.py` | Longitudinal summary generation |
-| `figure_data.py` | Export graph-ready CSV datasets |
-| `figures.py` | Matplotlib visualization figures |
-| `exemplars.py` | Exemplar utterance extraction per stage |
+| `figure_data.py` | Export graph-ready CSV datasets (includes segment_superposition.csv) |
+| `figures.py` | Matplotlib figures: superposition timeline/entropy/co-occurrence, mechanism heatmap, GNN convergence, efficacy multipanel |
+| `exemplars.py` | Exemplar utterance extraction per stage (includes mixture + entropy annotations) |
 | `text_reports.py` | Human-readable text report utilities |
-| `purer_analysis.py` | PURER × VAAMR influence analysis |
+| `purer_analysis.py` | PURER × VAAMR conditional lift table, cue-response synthesis, Cramér's V association test |
 | `purer_figures.py` | PURER × VAAMR lift heatmap and figures |
-| `reports/` | Detail report generators (session, stage, transition, cue response, longitudinal, summaries) |
+| `reports/superposition_report.py` | Superposition text report: corpus mixture, cusp matrix, liminal exemplars |
+| `reports/language_atlas.py` | Therapeutic language atlas: ranked FROM→CUE→TO exemplars by PURER/motif/factor |
+| `reports/transition_report.py` | Transition explanation + therapist cue reports (includes Δprogression by type) |
+| `reports/` | Full suite: session, stage, transition, cue response, longitudinal, summaries |
+
+### GNN Layer (`gnn_layer/`)
+
+| File | Description |
+|------|-------------|
+| `runner.py` | GNN analysis entry point — orchestrates all five capabilities |
+| `config.py` | `GnnLayerConfig` dataclass (enabled=False default) |
+| `embeddings.py` | Qwen3 segment embedding reuse with NPZ cache |
+| `graph_builder.py` | Heterogeneous graph: temporal chain, anchor/label, kNN, cross-framework edges |
+| `model.py` | Pure-PyTorch GraphSAGE with multi-task heads (no torch-geometric needed) |
+| `soft_labels.py` | Ballot-to-mixture conversion, progression coordinate, soft target assembly |
+| `train.py` | Full-batch training, early stopping, checkpoint export |
+| `inference.py` | Per-segment position inference, cue-block embedding assembly |
+| `motifs.py` | Cue motif clustering, influence scoring, purity annotation, emergent-motif flagging |
+| `gnn_lift.py` | GNN-derived lift tables vs LLM baseline (Capability C) |
+| `triangulation.py` | GNN↔LLM↔human agreement (Cohen's κ), triangulation report |
+| `ablation.py` | Construct-head ablation: which label families carry independent signal? (Capability D) |
+| `coupling.py` | Latent participant↔therapist coupling factors, CF/IC alliance naming (Capability E) |
+| `reports.py` | GNN artifact writers: CSVs and human-readable reports |
 
 ### Theme Framework (Markdown Source)
 
