@@ -96,6 +96,22 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     except Exception as e:
         _log(verbose, f"positions failed: {e}")
 
+    # ---- Capability C(i): extract trained head predictions + triangulate ----
+    try:
+        from . import reports as _rep
+        from . import triangulation as _tri
+        head_preds = _inf.infer_head_predictions(model, graph, config)
+        if any(k.startswith('gnn_') for k in head_preds):
+            files.append(_rep.write_gnn_head_predictions(head_preds, output_dir))
+            tri = _tri.compute_triangulation(head_preds, df_all)
+            if tri:
+                files.append(_tri.write_triangulation_report(tri, output_dir))
+                _log(verbose, "wrote GNN↔LLM↔human triangulation")
+    except Exception as e:
+        _log(verbose, f"head-prediction triangulation failed: {e}")
+        if verbose:
+            traceback.print_exc()
+
     # segment_id -> gnn embedding row (for cue pooling); -> gnn stage (argmax mixture)
     seg_gnn_emb: Dict[str, "object"] = {}
     gnn_stage_by_id: Dict[str, int] = {}
@@ -172,11 +188,46 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
             forward = [1 if r['to_stage'] > r['from_stage'] else 0 for r in rows]
             factors = _cp.extract_latent_factors(cue_X, forward, config)
             exem = _cp.factor_exemplars(factors.get('block_scores'), rows)
-            interp = _cp.interpret_factors(factors, None, config)
+            # Build each factor's exemplar THERAPIST TEXT so the CF/IC alliance naming
+            # can actually run (previously None was passed → interpretation was a no-op).
+            ther_text = {str(r.get('segment_id')): str(r.get('text', ''))
+                         for _, r in df_all.iterrows()
+                         if str(r.get('speaker', '')) == 'therapist'}
+            scores = factors.get('block_scores')
+            exemplar_texts_by_factor = {}
+            if scores is not None:
+                import numpy as np
+                for f in range(scores.shape[1]):
+                    top = np.argsort(scores[:, f])[::-1][:3]
+                    texts = []
+                    for i in top:
+                        texts.append(' '.join(ther_text.get(s, '') for s in rows[i].get('therapist_seg_ids', [])).strip())
+                    exemplar_texts_by_factor[int(f)] = [t for t in texts if t]
+            interp = _cp.interpret_factors(factors, exemplar_texts_by_factor, config)
             files.append(_rep.write_coupling_factors(factors, exem, interp, output_dir))
             files.append(_rep.write_coupling_report(factors, exem, interp, output_dir))
     except Exception as e:
         _log(verbose, f"coupling failed: {e}")
+
+    # ---- Capability D: ablation — which construct heads carry signal? ----
+    if getattr(config, 'run_gnn_ablation', False):
+        try:
+            from . import ablation as _abl
+            from . import reports as _rep
+            abl_rows = []
+            for head in ('vce', 'purer', 'microskill'):
+                obj = {'vce': 'vce_multilabel', 'purer': 'purer',
+                       'microskill': 'microskill_multilabel'}[head]
+                if obj not in config.objectives:
+                    continue
+                abl_rows.append(_abl.run_ablation(
+                    graph, targets, config, ablate=head,
+                    n_vce=len(vce_codes), n_microskill=len(micro_codes) or 8))
+            if abl_rows:
+                files.append(_rep.write_gnn_construct_signal(abl_rows, output_dir))
+                _log(verbose, f"ablation: ranked {len(abl_rows)} construct heads by signal")
+        except Exception as e:
+            _log(verbose, f"ablation failed: {e}")
 
     return {'files_written': files, 'status': 'ok', 'n_segments': len(df_all),
             'n_files': len(files)}
