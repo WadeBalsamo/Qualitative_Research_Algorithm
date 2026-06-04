@@ -892,10 +892,14 @@ def plot_delta_progression_heatmap(output_dir, framework):
     behaviors = sorted(g['behavior'].astype(str).unique().tolist())
     from_stages = sorted(g['from_stage'].unique().tolist())
     mat = np.full((len(behaviors), len(from_stages)), np.nan)
+    sig = np.zeros((len(behaviors), len(from_stages)), dtype=bool)
+    has_fdr = 'fdr_significant' in g.columns
     for _, r in g.iterrows():
         i = behaviors.index(str(r['behavior']))
         j = from_stages.index(r['from_stage'])
         mat[i, j] = r['mean_delta_prog']
+        if has_fdr and bool(r['fdr_significant']):
+            sig[i, j] = True
     fig, ax = plt.subplots(figsize=(max(4, len(from_stages) * 1.2), max(3, len(behaviors) * 0.4)))
     vmax = np.nanmax(np.abs(mat)) if np.isfinite(mat).any() else 1.0
     im = ax.imshow(mat, cmap='RdBu_r', vmin=-vmax, vmax=vmax, aspect='auto')
@@ -904,7 +908,15 @@ def plot_delta_progression_heatmap(output_dir, framework):
                        rotation=45, ha='right', fontsize=8)
     ax.set_yticks(range(len(behaviors)))
     ax.set_yticklabels([b[:22] for b in behaviors], fontsize=7)
-    ax.set_title(f'Mean Δprogression by {grouping} × FROM-stage')
+    # Star FDR-significant cells (q<.05) so only defensible effects pop visually.
+    for i in range(len(behaviors)):
+        for j in range(len(from_stages)):
+            if sig[i, j]:
+                ax.text(j, i, '*', ha='center', va='center', color='black', fontsize=12, fontweight='bold')
+    ttl = f'Mean Δprogression by {grouping} × FROM-stage'
+    if has_fdr:
+        ttl += '  (* = FDR q<.05)'
+    ax.set_title(ttl)
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.tight_layout()
     out = _ensure_figures_dir(output_dir)
