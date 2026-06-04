@@ -98,6 +98,139 @@ def compute_theme_codebook_cooccurrence(
     return cooccurrence
 
 
+def compute_soft_theme_codebook_cooccurrence(
+    segments_df: pd.DataFrame,
+    framework: dict,
+    mixture_column: str = 'mixture',
+    codebook_label_column: str = 'codebook_labels_ensemble',
+    n_stages: int = 5,
+    min_soft_lift: float = 1.5,
+    max_hard_lift_for_boundary: float = 1.2,
+) -> Dict:
+    """Mixture-weighted (expected-count) VAAMR×codebook lift.
+
+    Unlike the hard version, each segment contributes its *mixture weight* to every
+    stage instead of a single argmax stage, so codes expressed at stage boundaries
+    (cusp segments) get fractional credit. For stage k and code c:
+
+        soft_rate(k, c) = [Σ_seg p_k(seg)·1[c∈seg]] / [Σ_seg p_k(seg)]
+        soft_lift(k, c) = soft_rate(k, c) / base_rate(c)
+
+    A code is flagged ``boundary_expressed`` when it is elevated under the soft
+    weighting (soft_lift ≥ ``min_soft_lift``) but not under hard argmax assignment
+    (hard_lift < ``max_hard_lift_for_boundary``) — i.e. it lives between stages.
+
+    ``framework`` is the analysis dict {int stage_id → {key, short_name, ...}}.
+    Returns {stage_key: {code_id: {...stats..., boundary_expressed}}}.
+    """
+    import numpy as np
+
+    if mixture_column not in segments_df.columns:
+        return {}
+    labeled = segments_df[segments_df[codebook_label_column].notna()].copy()
+    if len(labeled) == 0:
+        return {}
+
+    n_total = len(labeled)
+    stage_ids = sorted(int(k) for k in framework.keys())
+
+    # Base rate per code + hard counts per (stage, code) via argmax.
+    base_counts: Dict[str, int] = {}
+    hard_stage_total = {k: 0 for k in stage_ids}
+    hard_code_counts = {k: {} for k in stage_ids}
+    # Expected (soft) accumulators.
+    soft_mass = {k: 0.0 for k in stage_ids}
+    soft_code_counts = {k: {} for k in stage_ids}
+
+    for _, row in labeled.iterrows():
+        codes = row[codebook_label_column]
+        codes = [c for c in codes if c] if isinstance(codes, list) else []
+        vec = np.asarray(row[mixture_column], dtype=np.float64)
+        if vec.shape[0] != n_stages:
+            continue
+        s = vec.sum()
+        if s > 0:
+            vec = vec / s
+        hard_k = int(np.argmax(vec))
+        for c in codes:
+            base_counts[c] = base_counts.get(c, 0) + 1
+        if hard_k in hard_stage_total:
+            hard_stage_total[hard_k] += 1
+            for c in codes:
+                hard_code_counts[hard_k][c] = hard_code_counts[hard_k].get(c, 0) + 1
+        for k in stage_ids:
+            pk = float(vec[k]) if k < vec.shape[0] else 0.0
+            soft_mass[k] += pk
+            for c in codes:
+                soft_code_counts[k][c] = soft_code_counts[k].get(c, 0.0) + pk
+
+    base_rates = {c: cnt / n_total for c, cnt in base_counts.items()}
+
+    result: Dict[str, Dict] = {}
+    for k in stage_ids:
+        key = framework.get(k, {}).get('key', str(k))
+        mass = soft_mass[k]
+        code_stats = {}
+        for c, exp in sorted(soft_code_counts[k].items(), key=lambda x: -x[1]):
+            base = base_rates.get(c, 0.0)
+            soft_rate = (exp / mass) if mass > 0 else 0.0
+            soft_lift = (soft_rate / base) if base > 0 else float('inf')
+            # Hard lift for the same (stage, code) for boundary comparison.
+            hk_total = hard_stage_total[k]
+            hard_rate = (hard_code_counts[k].get(c, 0) / hk_total) if hk_total > 0 else 0.0
+            hard_lift = (hard_rate / base) if base > 0 else float('inf')
+            boundary = bool(
+                soft_lift >= min_soft_lift
+                and hard_lift < max_hard_lift_for_boundary
+                and exp >= 1.0
+            )
+            code_stats[c] = {
+                'expected_count': round(exp, 3),
+                'soft_rate': round(soft_rate, 4),
+                'base_rate': round(base, 4),
+                'soft_lift': round(soft_lift, 2) if soft_lift != float('inf') else None,
+                'hard_lift': round(hard_lift, 2) if hard_lift != float('inf') else None,
+                'boundary_expressed': boundary,
+            }
+        result[key] = {
+            'stage_mass': round(mass, 3),
+            'codes': code_stats,
+        }
+    return result
+
+
+def export_soft_cross_validation_results(soft_cooccurrence: dict, run_dir: str) -> str:
+    """Write soft (mixture-weighted) CV results JSON to 04_validation/cross_validation/.
+
+    Returns the output path.
+    """
+    from . import output_paths as _paths
+
+    cv_dir = _paths.cross_validation_dir(run_dir)
+    os.makedirs(cv_dir, exist_ok=True)
+    out_path = os.path.join(cv_dir, 'soft_cross_validation_results.json')
+
+    # Collect a flat list of boundary-expressed codes for quick downstream surfacing.
+    boundary = []
+    for stage_key, payload in soft_cooccurrence.items():
+        for code_id, stats in payload.get('codes', {}).items():
+            if stats.get('boundary_expressed'):
+                boundary.append({'stage': stage_key, 'code': code_id, **stats})
+    boundary.sort(key=lambda x: -(x.get('soft_lift') or 0))
+
+    with open(out_path, 'w', encoding='utf-8') as f:
+        json.dump(
+            {
+                'method': 'mixture_weighted_expected_count',
+                'soft_cooccurrence': soft_cooccurrence,
+                'boundary_expressed_codes': boundary,
+            },
+            f,
+            indent=2,
+        )
+    return out_path
+
+
 def summarize_theme_code_associations(
     cooccurrence: Dict,
     min_lift: float = 1.5,

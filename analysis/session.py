@@ -191,6 +191,32 @@ def generate_session_analysis(
     # Dual-coded statistics
     n_dual_coded = int(sdf['secondary_stage'].notna().sum()) if 'secondary_stage' in sdf.columns else 0
 
+    # Superposition (mixture) surfacing — additive; parallels the hard proportions.
+    superposition = None
+    if 'mixture' in sdf.columns:
+        try:
+            import numpy as _np
+            from .superposition import stage_cooccurrence_matrix, dominant_source
+            mix_mat = _np.array([_np.asarray(m, dtype=float) for m in sdf['mixture']
+                                 if m is not None and len(m) == n_stages])
+            expected_props = {}
+            if len(mix_mat):
+                col_mean = mix_mat.mean(axis=0)
+                expected_props = {str(stage_ids[k]): round(float(col_mean[k]), 4)
+                                  for k in range(n_stages)}
+            superposition = {
+                'expected_stage_proportions': expected_props,
+                'mean_superposition_entropy': round(float(sdf['mixture_entropy'].mean()), 4)
+                    if sdf['mixture_entropy'].notna().any() else None,
+                'liminal_segment_count': int(sdf['is_liminal'].sum()) if 'is_liminal' in sdf.columns else 0,
+                'liminal_segment_pct': round(float(sdf['is_liminal'].mean()), 4)
+                    if 'is_liminal' in sdf.columns and len(sdf) else 0.0,
+                'stage_cooccurrence_matrix': stage_cooccurrence_matrix(sdf, n_stages),
+                'mixture_source': dominant_source(sdf),
+            }
+        except Exception:
+            superposition = None
+
     report = {
         'session_id': session_id,
         'session_number': session_number,
@@ -208,6 +234,7 @@ def generate_session_analysis(
         'top_codebook_codes': top_codes,
         'stage_exemplars': stage_exemplars,
         'secondary_stage_exemplars': secondary_stage_exemplars,
+        'superposition': superposition,
         'narrative_summary': narrative,
     }
 

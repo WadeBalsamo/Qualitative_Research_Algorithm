@@ -7,8 +7,12 @@ from .longitudinal_report import generate_longitudinal_text_report
 from .session_txt_report import generate_all_session_txt_reports
 from .participant_txt_report import generate_all_participant_txt_reports
 from .session_summaries import generate_session_summaries
+from .superposition_report import generate_superposition_report
+from .language_atlas import generate_language_atlas
 
 __all__ = [
+    'generate_superposition_report',
+    'generate_language_atlas',
     'generate_comprehensive_session_report',
     'generate_stage_text_report',
     'generate_all_stage_text_reports',
