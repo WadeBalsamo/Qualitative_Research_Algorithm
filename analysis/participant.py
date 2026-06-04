@@ -136,6 +136,11 @@ def generate_participant_report(
     longitudinal_trajectory = {}
     progression_score_by_session = {}
     dominant_stages_by_session = {}
+    # Continuous (mixture-based) progression — additive, parallels the hard score.
+    has_mixture = 'progression_coord' in pdf.columns
+    continuous_progression_by_session = {}
+    progression_volatility_by_session = {}
+    mean_entropy_by_session = {}
 
     for sid in session_ids:
         sdf = pdf[pdf['session_id'] == sid]
@@ -167,6 +172,16 @@ def generate_participant_report(
             else:
                 exemplars_by_stage[str(st)] = None
 
+        # Continuous progression (mean coordinate) + within-session volatility.
+        cont_prog = cont_vol = mean_ent = None
+        if has_mixture and n_seg > 0:
+            coords = sdf['progression_coord'].dropna()
+            if len(coords):
+                cont_prog = round(float(coords.mean()), 4)
+                cont_vol = round(float(coords.std(ddof=0)), 4)
+            if 'mixture_entropy' in sdf.columns and sdf['mixture_entropy'].notna().any():
+                mean_ent = round(float(sdf['mixture_entropy'].mean()), 4)
+
         sessions_detail[sid] = {
             'session_id': sid,
             'session_number': snum,
@@ -176,19 +191,37 @@ def generate_participant_report(
             'dominant_stage_name': dominant_name,
             'mean_confidence': mean_conf,
             'progression_score': prog_score,
+            'continuous_progression': cont_prog,
+            'progression_volatility': cont_vol,
+            'mean_superposition_entropy': mean_ent,
             'exemplars_by_stage': exemplars_by_stage,
         }
 
         longitudinal_trajectory[str(snum)] = stage_props
         progression_score_by_session[str(snum)] = prog_score
+        if cont_prog is not None:
+            continuous_progression_by_session[str(snum)] = cont_prog
+        if cont_vol is not None:
+            progression_volatility_by_session[str(snum)] = cont_vol
+        if mean_ent is not None:
+            mean_entropy_by_session[str(snum)] = mean_ent
         if dominant_stage is not None:
             dominant_stages_by_session[sid] = dominant_stage
 
     # Overall trend
+    _session_number_order = [str(sessions_detail[s]['session_number']) for s in session_ids]
     progression_trend = _compute_progression_trend(
         progression_score_by_session,
-        [str(sessions_detail[s]['session_number']) for s in session_ids],
+        _session_number_order,
     )
+    # Continuous-coordinate trend (mixture-based) — complements the hard trend.
+    continuous_progression_trend = _compute_progression_trend(
+        continuous_progression_by_session,
+        _session_number_order,
+    ) if continuous_progression_by_session else None
+    overall_volatility = round(
+        sum(progression_volatility_by_session.values()) / len(progression_volatility_by_session), 4
+    ) if progression_volatility_by_session else None
 
     if progression_trend > 0.1:
         trend_interp = "advancing — progression scores increase across sessions"
@@ -243,6 +276,11 @@ def generate_participant_report(
         ) if progression_score_by_session else None,
         'progression_trend': progression_trend,
         'progression_trend_interpretation': trend_interp,
+        'continuous_progression_by_session': continuous_progression_by_session or None,
+        'continuous_progression_trend': continuous_progression_trend,
+        'progression_volatility_by_session': progression_volatility_by_session or None,
+        'progression_volatility_overall': overall_volatility,
+        'mean_entropy_by_session': mean_entropy_by_session or None,
         'stage_exemplars_overall': stage_exemplars_overall,
         'human_coding_agreement': human_agreement,
         'narrative_summary': narrative,

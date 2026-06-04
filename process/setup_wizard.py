@@ -18,7 +18,7 @@ from typing import Optional, List
 from theme_framework.theme_schema import ThemeFramework
 from theme_framework.registry import load as _registry_load_fw
 from theme_framework.config import ThemeClassificationConfig
-from codebook.config import EmbeddingClassifierConfig
+from codebook.config import EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
 from .config import (
     PipelineConfig,
     SegmentationConfig,
@@ -33,7 +33,10 @@ from .config import (
     PurerCueConfig,
     SessionSummariesConfig,
     ParticipantSummariesConfig,
+    SuperpositionConfig,
+    EfficacyConfig,
 )
+from gnn_layer.config import GnnLayerConfig
 from .transcript_ingestion import scan_speakers
 
 
@@ -1437,6 +1440,7 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         output_dir=pipeline.get('output_dir', './data/output/'),
         run_theme_labeler=pipeline.get('run_theme_labeler', True),
         run_codebook_classifier=pipeline.get('run_codebook_classifier', False),
+        run_microskill_classifier=pipeline.get('run_microskill_classifier', False),
         speaker_anonymization_key_path=pipeline.get('speaker_anonymization_key_path'),
         anonymize_transcript_text=pipeline.get('anonymize_transcript_text', True),
         anonymize_text_model=pipeline.get('anonymize_text_model', 'obi/deid_roberta_i2b2'),
@@ -1504,6 +1508,18 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             embedding_model=cb_emb.get('embedding_model', 'Qwen/Qwen3-Embedding-8B'),
             exemplar_import_path=cb_emb.get('exemplar_import_path'),
         ),
+        microskill_embedding=EmbeddingClassifierConfig(
+            **{k: v for k, v in data.get('microskill_embedding', {}).items()
+               if k in EmbeddingClassifierConfig.__dataclass_fields__}
+        ),
+        microskill_llm=LLMCodebookConfig(
+            **{k: v for k, v in data.get('microskill_llm', {}).items()
+               if k in LLMCodebookConfig.__dataclass_fields__}
+        ),
+        microskill_ensemble=EnsembleConfig(
+            **{k: v for k, v in data.get('microskill_ensemble', {}).items()
+               if k in EnsembleConfig.__dataclass_fields__}
+        ),
         validation=ValidationConfig(),
         test_sets=_build_test_sets_config(data.get('test_sets', {})),
         content_validity=_build_content_validity_config(data.get('content_validity', {})),
@@ -1527,6 +1543,18 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         participant_summaries=ParticipantSummariesConfig(
             **{k: v for k, v in data.get('participant_summaries', {}).items()
                if k in ('enabled', 'max_words_per_session')}
+        ),
+        gnn_layer=GnnLayerConfig(
+            **{k: v for k, v in data.get('gnn_layer', {}).items()
+               if k in GnnLayerConfig.__dataclass_fields__}
+        ),
+        superposition=SuperpositionConfig(
+            **{k: v for k, v in data.get('superposition', {}).items()
+               if k in SuperpositionConfig.__dataclass_fields__}
+        ),
+        efficacy=EfficacyConfig(
+            **{k: v for k, v in data.get('efficacy', {}).items()
+               if k in EfficacyConfig.__dataclass_fields__}
         ),
     )
 

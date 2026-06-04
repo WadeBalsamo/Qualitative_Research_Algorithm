@@ -400,6 +400,32 @@ def generate_codebook_text_report(
         )
         fh.write("=" * 78 + "\n\n")
 
+        # Boundary-expressed codes — soft (mixture-weighted) VAAMR × code lift.
+        # Codes elevated under cusp weighting but not hard argmax live between stages.
+        if 'mixture' in df.columns:
+            try:
+                from process.cross_validation import compute_soft_theme_codebook_cooccurrence
+                soft = compute_soft_theme_codebook_cooccurrence(df, framework)
+                boundary = []
+                for stage_key, payload in soft.items():
+                    for cid, st in payload.get('codes', {}).items():
+                        if st.get('boundary_expressed'):
+                            boundary.append((stage_key, cid, st))
+                boundary.sort(key=lambda x: -(x[2].get('soft_lift') or 0))
+                if boundary:
+                    fh.write("BOUNDARY-EXPRESSED CODES (soft mixture-weighted lift)\n")
+                    fh.write("-" * 78 + "\n")
+                    fh.write("Codes elevated when segments are weighted by their stage MIXTURE but not\n")
+                    fh.write("under hard argmax assignment — i.e. phenomenology that lives at stage cusps.\n")
+                    fh.write("Directional; see 04_validation/cross_validation/soft_cross_validation_results.json.\n\n")
+                    for stage_key, cid, st in boundary[:15]:
+                        fh.write(f"  {stage_key:<18} {cid:<24} "
+                                 f"soft_lift={st.get('soft_lift')}  hard_lift={st.get('hard_lift')}  "
+                                 f"(E[n]={st.get('expected_count')})\n")
+                    fh.write("\n" + "=" * 78 + "\n\n")
+            except Exception:
+                pass
+
         for domain in domains_ordered:
             code_ids = domain_to_codes.get(domain, [])
             if not code_ids:

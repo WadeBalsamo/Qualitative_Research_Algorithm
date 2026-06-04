@@ -710,6 +710,264 @@ def plot_program_longitudinal_progression(
 # Orchestrator
 # -----------------------------------------------------------------------
 
+# -----------------------------------------------------------------------
+# Superposition figures (mixture timelines, continuous trajectories, cusps)
+# -----------------------------------------------------------------------
+
+def plot_session_mixture_timeline(df, session_id, framework, output_dir):
+    """Stacked-area of per-segment VAAMR mixture across one session."""
+    if 'mixture' not in df.columns:
+        return None
+    sdf = df[df['session_id'] == session_id].sort_values('segment_index')
+    if sdf.empty:
+        return None
+    stage_ids = sorted(framework.keys())
+    n_stages = len(stage_ids)
+    mat = np.array([np.asarray(m, dtype=float) for m in sdf['mixture']
+                    if m is not None and len(m) == n_stages])
+    if mat.size == 0:
+        return None
+    colors = _stage_colors(framework)
+    x = np.arange(mat.shape[0])
+    fig, ax = plt.subplots(figsize=(max(6, mat.shape[0] * 0.25), 4))
+    ax.stackplot(x, *[mat[:, k] for k in range(n_stages)],
+                 colors=[colors[stage_ids[k]] for k in range(n_stages)],
+                 labels=[framework[stage_ids[k]].get('short_name', str(stage_ids[k])) for k in range(n_stages)])
+    ax.set_xlim(0, max(1, mat.shape[0] - 1))
+    ax.set_ylim(0, 1)
+    ax.set_xlabel('Segment (in order)')
+    ax.set_ylabel('Stage mixture')
+    ax.set_title(f'Session {session_id} — VAAMR stage superposition')
+    ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1), fontsize=7, frameon=True)
+    fig.tight_layout()
+    out = _ensure_figures_dir(output_dir)
+    path = os.path.join(out, f'session_{session_id}_mixture_timeline.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+def plot_participant_progression_trajectory(df, participant_id, framework, output_dir):
+    """Continuous progression coordinate over sessions with an entropy band."""
+    if 'progression_coord' not in df.columns:
+        return None
+    pdf = df[df['participant_id'] == participant_id]
+    if pdf.empty:
+        return None
+    sids = sort_session_ids(pdf['session_id'].unique().tolist())
+    means, ents, labels = [], [], []
+    for sid in sids:
+        vals = pdf[pdf['session_id'] == sid]['progression_coord'].dropna()
+        if len(vals) == 0:
+            continue
+        means.append(float(vals.mean()))
+        e = pdf[pdf['session_id'] == sid]['mixture_entropy'].dropna()
+        ents.append(float(e.mean()) if len(e) else 0.0)
+        labels.append(sid)
+    if not means:
+        return None
+    x = np.arange(len(means))
+    means = np.array(means)
+    ents = np.array(ents)
+    fig, ax = plt.subplots(figsize=(max(5, len(means) * 0.7), 4))
+    ax.fill_between(x, means - ents, means + ents, color='#648FFF', alpha=0.18,
+                    label='±mean entropy (liminality)')
+    ax.plot(x, means, '-o', color='#648FFF', lw=2)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+    ax.set_ylim(-0.2, len(framework) - 0.8)
+    ax.set_ylabel('Progression coordinate (E[stage])')
+    ax.set_title(f'{participant_id} — continuous VAAMR progression')
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    out = _ensure_figures_dir(output_dir)
+    path = os.path.join(out, f'participant_{participant_id}_progression_trajectory.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+def plot_superposition_entropy_by_session(df, framework, output_dir):
+    """Group mean liminality (mixture entropy) across sessions, longitudinal order."""
+    if 'mixture_entropy' not in df.columns:
+        return None
+    sids = sort_session_ids(df['session_id'].unique().tolist())
+    means, labels = [], []
+    for sid in sids:
+        e = df[df['session_id'] == sid]['mixture_entropy'].dropna()
+        if len(e):
+            means.append(float(e.mean()))
+            labels.append(sid)
+    if not means:
+        return None
+    x = np.arange(len(means))
+    fig, ax = plt.subplots(figsize=(max(5, len(means) * 0.5), 4))
+    ax.plot(x, means, '-o', color='#FE6100', lw=2)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel('Mean mixture entropy (liminality)')
+    ax.set_title('Liminality across the program')
+    fig.tight_layout()
+    out = _ensure_figures_dir(output_dir)
+    path = os.path.join(out, 'superposition_entropy_by_session.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+def plot_stage_cooccurrence_matrix(df, framework, output_dir):
+    """Heatmap of which VAAMR stage pairs co-express (the cusp matrix)."""
+    if 'mixture' not in df.columns:
+        return None
+    from .superposition import stage_cooccurrence_matrix
+    stage_ids = sorted(framework.keys())
+    n_stages = len(stage_ids)
+    mat = np.array(stage_cooccurrence_matrix(df, n_stages))
+    if mat.size == 0:
+        return None
+    names = [framework[s].get('short_name', str(s)) for s in stage_ids]
+    fig, ax = plt.subplots(figsize=(5.5, 5))
+    im = ax.imshow(mat, cmap='magma')
+    ax.set_xticks(range(n_stages)); ax.set_yticks(range(n_stages))
+    ax.set_xticklabels(names, rotation=45, ha='right', fontsize=8)
+    ax.set_yticklabels(names, fontsize=8)
+    for i in range(n_stages):
+        for j in range(n_stages):
+            ax.text(j, i, f'{mat[i, j]:.2f}', ha='center', va='center',
+                    color='white' if mat[i, j] < mat.max() * 0.6 else 'black', fontsize=7)
+    ax.set_title('Stage co-occurrence (cusp matrix)')
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    out = _ensure_figures_dir(output_dir)
+    path = os.path.join(out, 'stage_cooccurrence_matrix.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+def generate_superposition_figures(df, framework, output_dir):
+    """Generate all superposition figures. Returns list of PNG paths."""
+    paths = []
+    for name, gen in (
+        ('entropy by session', lambda: plot_superposition_entropy_by_session(df, framework, output_dir)),
+        ('stage cooccurrence', lambda: plot_stage_cooccurrence_matrix(df, framework, output_dir)),
+    ):
+        try:
+            r = gen()
+            if r:
+                paths.append(r)
+        except Exception as e:
+            print(f"  Warning: {name} figure failed: {e}")
+    # Per-session mixture timelines.
+    for sid in sort_session_ids(df['session_id'].unique().tolist()):
+        try:
+            r = plot_session_mixture_timeline(df, sid, framework, output_dir)
+            if r:
+                paths.append(r)
+        except Exception as e:
+            print(f"  Warning: mixture timeline for {sid} failed: {e}")
+    # Per-participant continuous trajectories.
+    for pid in sorted(df['participant_id'].unique().tolist()):
+        try:
+            r = plot_participant_progression_trajectory(df, pid, framework, output_dir)
+            if r:
+                paths.append(r)
+        except Exception as e:
+            print(f"  Warning: progression trajectory for {pid} failed: {e}")
+    return paths
+
+
+def plot_delta_progression_heatmap(output_dir, framework):
+    """Behaviour × FROM-stage heatmap of mean Δprogression (reads mechanism CSV)."""
+    csv = os.path.join(_paths.mechanism_dir(output_dir), 'mechanism_delta_progression.csv')
+    if not os.path.isfile(csv):
+        return None
+    mdf = pd.read_csv(csv)
+    # Prefer motif grouping if present, else PURER.
+    grouping = 'motif' if (mdf['grouping'] == 'motif').any() else 'purer'
+    g = mdf[mdf['grouping'] == grouping]
+    if g.empty:
+        return None
+    behaviors = sorted(g['behavior'].astype(str).unique().tolist())
+    from_stages = sorted(g['from_stage'].unique().tolist())
+    mat = np.full((len(behaviors), len(from_stages)), np.nan)
+    sig = np.zeros((len(behaviors), len(from_stages)), dtype=bool)
+    has_fdr = 'fdr_significant' in g.columns
+    for _, r in g.iterrows():
+        i = behaviors.index(str(r['behavior']))
+        j = from_stages.index(r['from_stage'])
+        mat[i, j] = r['mean_delta_prog']
+        if has_fdr and bool(r['fdr_significant']):
+            sig[i, j] = True
+    fig, ax = plt.subplots(figsize=(max(4, len(from_stages) * 1.2), max(3, len(behaviors) * 0.4)))
+    vmax = np.nanmax(np.abs(mat)) if np.isfinite(mat).any() else 1.0
+    im = ax.imshow(mat, cmap='RdBu_r', vmin=-vmax, vmax=vmax, aspect='auto')
+    ax.set_xticks(range(len(from_stages)))
+    ax.set_xticklabels([framework.get(s, {}).get('short_name', str(s)) for s in from_stages],
+                       rotation=45, ha='right', fontsize=8)
+    ax.set_yticks(range(len(behaviors)))
+    ax.set_yticklabels([b[:22] for b in behaviors], fontsize=7)
+    # Star FDR-significant cells (q<.05) so only defensible effects pop visually.
+    for i in range(len(behaviors)):
+        for j in range(len(from_stages)):
+            if sig[i, j]:
+                ax.text(j, i, '*', ha='center', va='center', color='black', fontsize=12, fontweight='bold')
+    ttl = f'Mean Δprogression by {grouping} × FROM-stage'
+    if has_fdr:
+        ttl += '  (* = FDR q<.05)'
+    ax.set_title(ttl)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    out = _ensure_figures_dir(output_dir)
+    path = os.path.join(out, 'cue_motif_delta_progression.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+def plot_gnn_vs_llm_convergence(output_dir):
+    """Scatter of GNN lift vs LLM lift from gnn_vs_llm_lift.csv (construct validity)."""
+    csv = os.path.join(_paths.gnn_data_dir(output_dir), 'gnn_vs_llm_lift.csv')
+    if not os.path.isfile(csv):
+        return None
+    cdf = pd.read_csv(csv)
+    cols = set(cdf.columns)
+    xcol = 'lift_llm' if 'lift_llm' in cols else None
+    ycol = 'lift_gnn' if 'lift_gnn' in cols else None
+    if not xcol or not ycol:
+        return None
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.scatter(cdf[xcol], cdf[ycol], alpha=0.5, color='#785EF0', s=18)
+    lim = max(float(cdf[xcol].max()), float(cdf[ycol].max()), 2.0)
+    ax.plot([0, lim], [0, lim], '--', color='gray', lw=1)
+    ax.axhline(1.5, color='#FE6100', lw=0.8, ls=':'); ax.axvline(1.5, color='#FE6100', lw=0.8, ls=':')
+    ax.set_xlabel('LLM lift'); ax.set_ylabel('GNN lift')
+    ax.set_title('GNN ↔ LLM lift convergence')
+    fig.tight_layout()
+    out = _ensure_figures_dir(output_dir)
+    path = os.path.join(out, 'gnn_vs_llm_lift_convergence.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+def generate_mechanism_figures(output_dir, framework):
+    """Figures that depend on mechanism CSVs. Returns list of PNG paths."""
+    paths = []
+    for name, gen in (
+        ('delta progression heatmap', lambda: plot_delta_progression_heatmap(output_dir, framework)),
+        ('gnn vs llm convergence', lambda: plot_gnn_vs_llm_convergence(output_dir)),
+    ):
+        try:
+            r = gen()
+            if r:
+                paths.append(r)
+        except Exception as e:
+            print(f"  Warning: {name} figure failed: {e}")
+    return paths
+
+
 def generate_all_figures(
     df: pd.DataFrame,
     framework: dict,

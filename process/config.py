@@ -16,6 +16,7 @@ from codebook.config import (
     LLMCodebookConfig,
     EnsembleConfig,
 )
+from gnn_layer.config import GnnLayerConfig
 
 # Keys that hold secrets and must never be written to config JSON
 _SECRET_KEYS = frozenset({'api_key'})
@@ -199,6 +200,40 @@ class ParticipantSummariesConfig:
 
 
 @dataclass
+class SuperpositionConfig:
+    """Surface VAAMR stage-mixture (superposition) in analysis reports.
+
+    Always-on at analysis time and source-agnostic: mixtures come from the GNN
+    when it has run, else are reconstructed from LLM ballots, else from
+    secondary_stage. Drives the liminality (entropy) reporting and the
+    mechanistic Δprogression analysis. Additive — never alters hard labels.
+    """
+    enabled: bool = True
+    # 'auto' = GNN → ballots → secondary priority; or force one of gnn|ballots|secondary.
+    mixture_source: str = 'auto'
+    liminal_entropy_threshold: float = 0.6   # normalized entropy ≥ this ⇒ liminal
+    liminal_gap_threshold: float = 0.25      # top1−top2 mixture gap < this ⇒ liminal
+    active_stage_threshold: float = 0.15     # stage counts as "active" at ≥ this probability
+    run_mechanism_analysis: bool = True      # FROM→CUE→TO continuous Δprogression analysis
+
+
+@dataclass
+class EfficacyConfig:
+    """Program-efficacy dossier settings.
+
+    Anchors the 'does it work' analysis on internal VAAMR progression and, when an
+    external clinical-outcomes CSV is provided, correlates progression against it.
+    """
+    enabled: bool = True
+    # Participant-keyed CSV; absolute, or relative to the output dir. Default 02_meta/outcomes.csv.
+    outcomes_path: Optional[str] = None
+    adaptive_stages: List[int] = field(default_factory=lambda: [2, 3, 4])
+    maladaptive_stages: List[int] = field(default_factory=lambda: [0, 1])
+    barrier_from: int = 1       # Avoidance
+    barrier_to: int = 2         # Attention-Regulation
+
+
+@dataclass
 class PipelineConfig:
     """Top-level pipeline configuration."""
     # Input
@@ -216,6 +251,7 @@ class PipelineConfig:
     run_theme_labeler: bool = True
     run_codebook_classifier: bool = False
     run_purer_labeler: bool = True
+    run_microskill_classifier: bool = False
 
     # Sub-configs
     segmentation: SegmentationConfig = field(default_factory=SegmentationConfig)
@@ -227,6 +263,10 @@ class PipelineConfig:
     codebook_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
     codebook_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
     codebook_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
+    # Therapist microcounseling-skill codebook (sub-layer of PURER; mirrors VCE codebook config)
+    microskill_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
+    microskill_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
+    microskill_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     test_sets: TestSetsConfig = field(default_factory=TestSetsConfig)
     content_validity: ContentValidityConfig = field(default_factory=ContentValidityConfig)
@@ -235,6 +275,12 @@ class PipelineConfig:
     purer_cue: PurerCueConfig = field(default_factory=PurerCueConfig)
     session_summaries: SessionSummariesConfig = field(default_factory=SessionSummariesConfig)
     participant_summaries: ParticipantSummariesConfig = field(default_factory=ParticipantSummariesConfig)
+    # GNN representation-and-discovery layer (analysis-time; OFF by default)
+    gnn_layer: GnnLayerConfig = field(default_factory=GnnLayerConfig)
+    # Superposition surfacing + mechanistic analysis (analysis-time; ON by default)
+    superposition: SuperpositionConfig = field(default_factory=SuperpositionConfig)
+    # Program-efficacy dossier (analysis-time; ON by default)
+    efficacy: EfficacyConfig = field(default_factory=EfficacyConfig)
 
     # Resume from checkpoint
     resume_from: Optional[str] = None
@@ -294,12 +340,18 @@ class PipelineConfig:
             'codebook_embedding': EmbeddingClassifierConfig,
             'codebook_llm': LLMCodebookConfig,
             'codebook_ensemble': EnsembleConfig,
+            'microskill_embedding': EmbeddingClassifierConfig,
+            'microskill_llm': LLMCodebookConfig,
+            'microskill_ensemble': EnsembleConfig,
             'validation': ValidationConfig,
             'confidence_tiers': ConfidenceTierConfig,
             'therapist_cues': TherapistCueConfig,
             'purer_cue': PurerCueConfig,
             'session_summaries': SessionSummariesConfig,
             'participant_summaries': ParticipantSummariesConfig,
+            'gnn_layer': GnnLayerConfig,
+            'superposition': SuperpositionConfig,
+            'efficacy': EfficacyConfig,
         }
 
         kwargs = {}

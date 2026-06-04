@@ -59,12 +59,18 @@ CROSS_VALIDATION_OVERLAY_FIELDS: Tuple[str, ...] = (
     'cv_disagreement_score', 'cv_adjudication_method',
 )
 
-OVERLAY_KEYS = ('theme', 'purer', 'codebook', 'cv')
+MICROSKILL_OVERLAY_FIELDS: Tuple[str, ...] = (
+    'microskill_labels_embedding', 'microskill_labels_llm', 'microskill_labels_ensemble',
+    'microskill_disagreements', 'microskill_confidence',
+)
+
+OVERLAY_KEYS = ('theme', 'purer', 'codebook', 'microskill', 'cv')
 
 OVERLAY_FILENAMES = {
     'theme': 'theme_labels.jsonl',
     'purer': 'purer_labels.jsonl',
     'codebook': 'codebook_labels.jsonl',
+    'microskill': 'microskill_labels.jsonl',
     'cv': 'cross_validation_labels.jsonl',
 }
 
@@ -72,6 +78,7 @@ _OVERLAY_FIELDS_MAP = {
     'theme': THEME_OVERLAY_FIELDS,
     'purer': PURER_OVERLAY_FIELDS,
     'codebook': CODEBOOK_OVERLAY_FIELDS,
+    'microskill': MICROSKILL_OVERLAY_FIELDS,
     'cv': CROSS_VALIDATION_OVERLAY_FIELDS,
 }
 
@@ -129,6 +136,11 @@ def write_purer_overlay(run_dir: str, segments: List[Segment]) -> str:
 def write_codebook_overlay(run_dir: str, segments: List[Segment]) -> str:
     """Write (overwrite) the codebook classifier overlay. Returns path."""
     return _write_overlay(run_dir, 'codebook', segments)
+
+
+def write_microskill_overlay(run_dir: str, segments: List[Segment]) -> str:
+    """Write (overwrite) the microskill classifier overlay. Returns path."""
+    return _write_overlay(run_dir, 'microskill', segments)
 
 
 def write_cross_validation_overlay(run_dir: str, segments: List[Segment]) -> str:
@@ -193,6 +205,11 @@ def merge_codebook_overlay(run_dir: str, segments: List[Segment]) -> str:
     return merge_overlay(run_dir, 'codebook', segments)
 
 
+def merge_microskill_overlay(run_dir: str, segments: List[Segment]) -> str:
+    """Merge segments into the microskill overlay (upsert by segment_id). Returns path."""
+    return merge_overlay(run_dir, 'microskill', segments)
+
+
 def merge_cross_validation_overlay(run_dir: str, segments: List[Segment]) -> str:
     """Merge segments into the cross-validation overlay (upsert by segment_id). Returns path."""
     return merge_overlay(run_dir, 'cv', segments)
@@ -249,6 +266,11 @@ def apply_codebook_overlay(run_dir: str, segments_by_id: Dict[str, Segment]) -> 
     return _apply_overlay(run_dir, 'codebook', segments_by_id)
 
 
+def apply_microskill_overlay(run_dir: str, segments_by_id: Dict[str, Segment]) -> int:
+    """Apply microskill overlay to in-memory segments. Returns update count."""
+    return _apply_overlay(run_dir, 'microskill', segments_by_id)
+
+
 def apply_cross_validation_overlay(run_dir: str, segments_by_id: Dict[str, Segment]) -> int:
     """Apply cross-validation overlay to in-memory segments. Returns update count.
 
@@ -261,6 +283,7 @@ _APPLY_FUNCS = {
     'theme': apply_theme_overlay,
     'purer': apply_purer_overlay,
     'codebook': apply_codebook_overlay,
+    'microskill': apply_microskill_overlay,
     'cv': apply_cross_validation_overlay,
 }
 
