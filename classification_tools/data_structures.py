@@ -80,6 +80,15 @@ class Segment:
     codebook_disagreements: Optional[List[str]] = None
     codebook_confidence: Optional[Dict[str, float]] = None
 
+    # Microcounseling-skill label fields (therapist sub-layer codebook; populated by
+    # the microskill classifier — the therapist-side twin of the VCE codebook).
+    # Only set when speaker == 'therapist'.
+    microskill_labels_embedding: Optional[List[str]] = None
+    microskill_labels_llm: Optional[List[str]] = None
+    microskill_labels_ensemble: Optional[List[str]] = None
+    microskill_disagreements: Optional[List[str]] = None
+    microskill_confidence: Optional[Dict[str, float]] = None
+
     # PURER label fields (populated by Stage 3c; only set when speaker == 'therapist')
     purer_primary: Optional[int] = None
     purer_secondary: Optional[int] = None
