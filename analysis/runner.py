@@ -12,7 +12,8 @@ import os
 import traceback
 
 
-def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None) -> dict:
+def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None,
+                 force_gnn: bool = None) -> dict:
     """Execute the full results analysis on an existing pipeline output directory.
 
     Reads master_segment_dataset.csv and theme_definitions.json from output_dir.
@@ -432,7 +433,14 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
     # 11. GNN representation-and-discovery layer (optional; OFF by default)
     # ----------------------------------------------------------------
     _gnn_cfg = getattr(_pipeline_config, 'gnn_layer', None) if _pipeline_config is not None else None
-    if df_all is not None and _gnn_cfg is not None and getattr(_gnn_cfg, 'enabled', False):
+    _gnn_enabled = getattr(_gnn_cfg, 'enabled', False) if _gnn_cfg is not None else False
+    if force_gnn is not None:
+        _gnn_enabled = force_gnn
+        # If config never loaded but the user forced --gnn, fall back to defaults.
+        if _gnn_cfg is None and force_gnn:
+            from gnn_layer.config import GnnLayerConfig
+            _gnn_cfg = GnnLayerConfig(enabled=True)
+    if df_all is not None and _gnn_cfg is not None and _gnn_enabled:
         try:
             from gnn_layer.runner import run_gnn_analysis
             log("[11/8] Running GNN representation-and-discovery layer...")

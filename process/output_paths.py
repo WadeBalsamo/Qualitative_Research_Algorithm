@@ -56,6 +56,16 @@ def codebook_raw_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '02_meta', 'codebook_raw')
 
 
+def gnn_model_dir(run_dir: str) -> str:
+    """Trained GNN-layer checkpoint bundle (weights + manifest) and cached embeddings."""
+    return os.path.join(run_dir, '02_meta', 'gnn')
+
+
+def gnn_data_dir(run_dir: str) -> str:
+    """Machine-readable GNN-layer analysis artifacts (segment positions, motifs, lift, coupling)."""
+    return os.path.join(run_dir, '03_analysis_data', 'gnn')
+
+
 # ── Transcripts ───────────────────────────────────────────────────────────
 
 def transcripts_diarized_dir(run_dir: str) -> str:
@@ -213,6 +223,7 @@ def classification_overlay_path(run_dir: str, key: str) -> str:
         'theme': 'theme_labels.jsonl',
         'purer': 'purer_labels.jsonl',
         'codebook': 'codebook_labels.jsonl',
+        'microskill': 'microskill_labels.jsonl',
         'cv': 'cross_validation_labels.jsonl',
     }
     return os.path.join(classifications_dir(run_dir), _filenames[key])

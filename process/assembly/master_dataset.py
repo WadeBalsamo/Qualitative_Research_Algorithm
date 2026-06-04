@@ -98,6 +98,11 @@ def assemble_master_dataset(
             'codebook_labels_llm': seg.codebook_labels_llm,
             'codebook_labels_ensemble': seg.codebook_labels_ensemble,
             'codebook_disagreements': seg.codebook_disagreements,
+            # Microcounseling-skill labels (therapist segments only; None for participants)
+            'microskill_labels_embedding': getattr(seg, 'microskill_labels_embedding', None),
+            'microskill_labels_llm': getattr(seg, 'microskill_labels_llm', None),
+            'microskill_labels_ensemble': getattr(seg, 'microskill_labels_ensemble', None),
+            'microskill_disagreements': getattr(seg, 'microskill_disagreements', None),
             # PURER labels (therapist segments only; None for participant segments)
             'purer_primary': getattr(seg, 'purer_primary', None),
             'purer_secondary': getattr(seg, 'purer_secondary', None),

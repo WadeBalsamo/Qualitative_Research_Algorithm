@@ -217,6 +217,7 @@ class PipelineConfig:
     run_theme_labeler: bool = True
     run_codebook_classifier: bool = False
     run_purer_labeler: bool = True
+    run_microskill_classifier: bool = False
 
     # Sub-configs
     segmentation: SegmentationConfig = field(default_factory=SegmentationConfig)
@@ -228,6 +229,10 @@ class PipelineConfig:
     codebook_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
     codebook_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
     codebook_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
+    # Therapist microcounseling-skill codebook (sub-layer of PURER; mirrors VCE codebook config)
+    microskill_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
+    microskill_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
+    microskill_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     test_sets: TestSetsConfig = field(default_factory=TestSetsConfig)
     content_validity: ContentValidityConfig = field(default_factory=ContentValidityConfig)
@@ -297,6 +302,9 @@ class PipelineConfig:
             'codebook_embedding': EmbeddingClassifierConfig,
             'codebook_llm': LLMCodebookConfig,
             'codebook_ensemble': EnsembleConfig,
+            'microskill_embedding': EmbeddingClassifierConfig,
+            'microskill_llm': LLMCodebookConfig,
+            'microskill_ensemble': EnsembleConfig,
             'validation': ValidationConfig,
             'confidence_tiers': ConfidenceTierConfig,
             'therapist_cues': TherapistCueConfig,
