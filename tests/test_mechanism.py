@@ -123,6 +123,17 @@ class TestRunMechanism(unittest.TestCase):
         av = os.path.join(_paths.human_reports_dir(self.tmp), 'report_avoidance_barrier.txt')
         self.assertTrue(os.path.isfile(av))
 
+    def test_delta_csv_has_inference_columns(self):
+        df_all = _synthetic_all_df()
+        attach_superposition(df_all, self.tmp, config=SuperpositionConfig())
+        df = df_all[df_all['speaker'] == 'participant'].copy()
+        run_mechanism_analysis(df, df_all, self.tmp, _FRAMEWORK)
+        ddf = pd.read_csv(os.path.join(_paths.mechanism_dir(self.tmp),
+                                       'mechanism_delta_progression.csv'))
+        for col in ('ci_lo', 'ci_hi', 'perm_p', 'fdr_significant',
+                    'n_progress', 'n_stabilize', 'n_regress', 'n_participants'):
+            self.assertIn(col, ddf.columns)
+
     def test_avoidance_delta_positive(self):
         df_all = _synthetic_all_df()
         attach_superposition(df_all, self.tmp, config=SuperpositionConfig())
