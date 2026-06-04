@@ -121,7 +121,8 @@ class TestRunnerEndToEnd(unittest.TestCase):
     def test_run_writes_artifacts(self):
         df = _synthetic_df()
         cfg = GnnLayerConfig(enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=20,
-                             n_motif_clusters=3, cache_embeddings=False, seed=1)
+                             n_motif_clusters=3, cache_embeddings=False, seed=1,
+                             interpret_against_cf_ic=False)  # keep test hermetic (no 16GB model)
         out_dir = tempfile.mkdtemp()
         res = runner.run_gnn_analysis(df, out_dir, config=cfg, verbose=False)
         self.assertEqual(res['status'], 'ok')
@@ -136,6 +137,39 @@ class TestRunnerEndToEnd(unittest.TestCase):
         mix_cols = [c for c in sp.columns if c.startswith('vaamr_mix_')]
         self.assertEqual(len(mix_cols), 5)
         self.assertTrue(np.allclose(sp[mix_cols].sum(axis=1), 1.0, atol=1e-3))
+
+    def test_head_predictions_and_triangulation(self):
+        # With the purer head trained, head predictions + triangulation are produced.
+        df = _synthetic_df()
+        cfg = GnnLayerConfig(enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=20,
+                             n_motif_clusters=3, cache_embeddings=False, seed=1,
+                             interpret_against_cf_ic=False,  # keep test hermetic (no 16GB model)
+                             objectives=['soft_vaamr', 'progression', 'purer'])
+        out_dir = tempfile.mkdtemp()
+        res = runner.run_gnn_analysis(df, out_dir, config=cfg, verbose=False)
+        names = {os.path.basename(f) for f in res['files_written']}
+        self.assertIn('gnn_head_predictions.csv', names)
+        self.assertIn('report_gnn_triangulation.txt', names)
+        hp = pd.read_csv(os.path.join(out_dir, '03_analysis_data', 'gnn', 'gnn_head_predictions.csv'))
+        self.assertIn('gnn_vaamr_pred', hp.columns)
+        self.assertIn('gnn_purer_pred', hp.columns)
+
+    def test_triangulation_agreement_keys(self):
+        from gnn_layer import triangulation as tri
+        head_preds = {
+            'segment_id': ['a', 'b', 'c', 'd'],
+            'node_type': ['participant_segment'] * 4,
+            'gnn_vaamr_pred': [0, 1, 2, 3],
+        }
+        dfa = pd.DataFrame({
+            'segment_id': ['a', 'b', 'c', 'd'],
+            'node_type': ['participant_segment'] * 4,
+            'final_label': [0, 1, 2, 2],
+        })
+        out = tri.compute_triangulation(head_preds, dfa)
+        self.assertIn('vaamr_gnn_vs_llm', out)
+        self.assertEqual(out['vaamr_gnn_vs_llm']['n'], 4)
+        self.assertAlmostEqual(out['vaamr_gnn_vs_llm']['percent_agreement'], 0.75, places=3)
 
     def test_disabled_default(self):
         self.assertFalse(GnnLayerConfig().enabled)
