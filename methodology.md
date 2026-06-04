@@ -137,8 +137,18 @@ QRA operates on diarized transcripts of group session recordings produced by aut
 | Within- and between-session VAAMR transition matrices | ✓ | — | — |
 | FROM → CUE → TO cue-response synthesis with PURER move distribution | ✓ (PURER labels implemented) | Human validation of PURER | — |
 | PURER classification of therapist segments | ✓ (early beta) | Validation protocol (§8.1) | — |
-| Avoidance-barrier dedicated automated report | — | ✓ (§8.2) **PRIORITY** | — |
-| Outcome integration (joint displays with pain/disability/MAIA-2/etc.) | — | ✓ (§8.3) | — |
+| Avoidance-barrier dedicated automated report | ✓ (§8.2) | — | — |
+| Stage superposition (mixture vector, progression coordinate, entropy) | ✓ (`analysis/superposition.py`) | — | — |
+| PURER→VAAMR mechanism dossier with CI/permutation p/FDR inference | ✓ (`analysis/mechanism.py`) | — | — |
+| Mixed-effects trajectory model (Δprog ~ PURER + random participant) | ✓ (`analysis/stats.py` + `mechanism.py`) | — | — |
+| Program efficacy dossier (internal + external outcome linkage) | ✓ (`analysis/efficacy.py`) | — | — |
+| Therapeutic language atlas (ranked exemplar FROM→CUE→TO by motif/factor) | ✓ (`analysis/reports/language_atlas.py`) | — | — |
+| GNN continuous segment positioning (Capability A) | ✓ (`gnn_layer/`, disabled by default) | — | — |
+| GNN cue motif discovery + influence scoring (Capability B) | ✓ (`gnn_layer/motifs.py`) | — | — |
+| GNN↔LLM↔human triangulation, lift comparison (Capability C) | ✓ (`gnn_layer/triangulation.py`) | — | — |
+| GNN construct-head ablation: is VCE/microskill superfluous? (Capability D) | ✓ (`gnn_layer/ablation.py`, opt-in) | — | — |
+| GNN latent coupling factors, CF/IC alliance naming (Capability E) | ✓ (`gnn_layer/coupling.py`) | — | — |
+| Outcome integration (joint displays with pain/disability/MAIA-2/etc.) | ✓ (external CSV auto-detection) | — | — |
 | Supervised fine-tuned classifier from validated corpus | — | — | ✓ (§8.4) |
 
 ### 4.1 Stage 1 — Semantic Segmentation and Speaker Separation
@@ -445,11 +455,25 @@ First, migrating the production configuration from single-model stochastic mode 
 
 Second, the Cohort 1–2 validated corpus, formatted as labeled examples for sequence classification, supports fine-tuning a domain-adapted transformer classifier. The advantages over zero-shot LLM classification are reduced inference cost, improved boundary-case accuracy on the corpus's own boundary cases (including human-corrected misclassifications), and deployability for ongoing therapeutic-fidelity monitoring at a scale and cost that zero-shot does not support. The fine-tuning workflow can be orchestrated using an LLM-driven hyperparameter-search controller that repeatedly modifies a training script and scores the result against a fixed held-out validation split. The epistemological requirements for fine-tuned deployment in *new* populations are more demanding than for the current exploratory use within Move-MORE: validation against independent samples — ideally from MORE trials not included in Move-MORE training data — would be required before fine-tuned deployment could be claimed to have the same validity basis as the human-expert-grounded zero-shot approach.
 
-### 8.5 Graph-Neural-Network Extensions: A Critical Note
+### 8.5 Graph-Neural-Network Representation and Discovery Layer: Implemented
 
-The roadmap document includes a Phase 3 extension to a CFiCS-style graph neural network (Schmidt et al., 2025) modeling therapeutic interactions as a heterogeneous graph over PURER moves, VAAMR stages, and skill-level relationships. We include this here only to be honest about its trajectory and its limits. CFiCS demonstrated that graph structure plus contextual embeddings substantially outperforms text embeddings alone on fine-grained psychotherapy skill classification, and the analogous architecture for Move-MORE is a tractable engineering target.
+**Status: Fully implemented and integrated.** The GNN layer (`gnn_layer/`) is a pure-PyTorch GraphSAGE analysis layer that runs at analyze-time (after `master_segments` assembly), gated by `config.gnn_layer.enabled` (default False) or `qra analyze --gnn`. It augments the LLM-label pipeline; it does not replace any classifier. It targets three structural limits the LLM approach cannot close: (a) superposition is discarded at majority vote, (b) therapist cues are collapsed to five labels before influence is measured, and (c) both convergence measures are LLM-on-LLM.
 
-But we do not believe this extension is essential to the methodology's clinical-utility goals. The primary purposes of the pipeline — phenomenologically-grounded curriculum modification at trial speed, dyadic analysis of stage transitions, cross-framework convergent-evidence characterization — are served by the existing classification + lift-table + cue-response architecture. A GNN extension adds inductive generalization to unseen text and a unified embedding space across therapeutic concepts, which are valuable for cross-trial transfer and large-scale therapist-fidelity monitoring but are not the bottleneck for between-cohort curriculum work in a single feasibility trial. We advocate completing PURER classification, validating the dual-framework results, and producing the methodology paper before investing in the GNN extension. If the GNN turns out to be needed, it can be built on the labeled corpus that the trial produces.
+**Architecture.** The layer builds a heterogeneous graph over Qwen3-Embedding-8B vectors (reused from segmentation and VCE, no additional model). Node types: `participant_segment`, `therapist_segment`, and optional construct anchors (VAAMR, PURER, VCE, microskill). Edge families: temporal chain (FROM→CUE→TO structure in graph form), anchor/label edges weighted by classification confidence, kNN similarity edges for inductive attachment of new sessions, and optional cross-framework edges weighted by empirical lift. GraphSAGE message-passing is implemented in pure PyTorch (`gnn_layer/model.py`) — no torch-geometric required. Multi-task heads: soft-VAAMR (KL to ballot mixture), progression-coordinate regression, VCE multi-label BCE, PURER CE, microskill multi-label BCE, supervised-contrastive InfoNCE over the ordered VAAMR arc, and self-supervised link-prediction on the temporal chain.
+
+**Five Capabilities — all directional until human validation catches up.**
+
+*Capability A — Continuous superposition.* Per-segment VAAMR stage-mixture vectors and continuous progression coordinates from GNN geometry. These are the primary mixture source when enabled (`SuperpositionConfig.mixture_source='gnn'`), feeding all downstream mechanism and efficacy inference with partial-progression resolution the argmax cannot express. Output: `03_analysis_data/gnn/segment_positions.csv`.
+
+*Capability B — Cue motif discovery (flagship).* Therapist cue blocks are mean-pooled into GNN embeddings and clustered into emergent motifs — patterns in therapist language that cut across the five PURER categories. Each motif is scored for influence on forward VAAMR transitions (from-stage-conditioned logistic regression, preserving the §7.6 stage-moderation hypothesis), labeled for PURER and microskill purity, and flagged if influential but poorly explained by existing labels. These flagged motifs are *candidate new therapeutic constructs* surfaced with exemplar cues for human review — the deepest realization of the curriculum-modification mission. Outputs: `cue_motifs.csv`, `cue_block_assignments.csv`, `report_gnn_emergent_motifs.txt`.
+
+*Capability C — Independent measurement substrate.* GNN-derived VAAMR stage assignments compared against LLM-ensemble and human-coded labels via Cohen's κ (`report_gnn_triangulation.txt`). GNN-lift tables for VAAMR×VCE, PURER×VAAMR, and PURER×microskill placed beside LLM-derived tables — GNN↔LLM convergence is stronger construct-validity evidence than LLM↔LLM, directly complementing the planned shuffled-stage permutation control (§8.2). Outputs: `gnn_vs_llm_lift.csv`, `purer_microskill_lift.csv`.
+
+*Capability D — Construct signal ablation (optional, `run_gnn_ablation=True`).* Each construct head (VCE, PURER, microskill) is removed and the model retrained; the loss delta quantifies how much independent signal that family carries. Answers: *is VCE superfluous? Do microskill labels add beyond PURER?* Output: `report_gnn_construct_signal.txt`, `gnn_construct_signal.csv`.
+
+*Capability E — Participant↔therapist coupling.* Latent NMF/PCA factors of therapist cue language and their correlation with subsequent participant VAAMR forward movement. Factors are named post-hoc against an inline CF/IC alliance-concept reference lexicon — alliance-like structure is *discovered*, not imposed. Exemplar quotes and forward-correlation values are surfaced for human interpretation. Outputs: `coupling_factors.csv`, `report_gnn_coupling.txt`.
+
+**Epistemological position.** All GNN outputs are directional/hypothesis-generating until human validation catches up (§5.4). The GNN never overrides labels-of-record. Any emergent motif or coupling factor used in curriculum modification must pass human review (the same content-validity / blind-coding discipline as VAAMR and PURER) before it becomes primary evidence (§5, §9.5). The independence claim (Capability C) is most defensible under the `human` or `self_supervised` label mode variants, which report the GNN substrate separately from LLM-trained heads. See `docs/GNN_LAYER_DESIGN.md` and `docs/GNN_IMPLEMENTATION.md` for full technical specification.
 
 ---
 
