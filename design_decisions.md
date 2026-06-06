@@ -159,6 +159,14 @@ model (D-C). Mechanism (M2) graph kept regardless.
   triangulate vs `mechanism.py`; **decouple the counterfactual readout from the hard legacy gate**
   — it runs with the gate κ as *reported trust context*, not as a hard suppressor (the κ≥0.70 gate
   is unreachable in principle, so hard-gating would permanently block the primary deliverable).
+- **2026-06-06 — FDR-null finding (PRIMARY metric adaptation).** The real
+  `mechanism_delta_progression.csv` has **0/20 PURER cells FDR-significant** at n≈32, so the
+  pre-registered "≥70% sign agreement on FDR-significant effects" is vacuous. Adapted the success
+  metric to a Spearman-ρ pattern-convergence test (n≥3-support cells, participant-clustered bootstrap
+  CI) + a "directionally-reliable" (observed-CI-excludes-0) sign-agreement secondary, with an
+  explicit FDR-null caveat (§9A). **Flag to researcher** — this changes their pre-registered metric
+  because the data cannot support the original. The convergence test itself stands; only the
+  significance gate is replaced by a within-method reliability criterion.
 - **2026-06-06 — SA1 done (Qwen embedding client).** Added `embedding_backend='openai'` path
   (`gnn_layer/embeddings_remote.py`) hitting LM Studio `/v1/embeddings`; default `'local'` path
   byte-identical. Live: **4096-d, L2-normalized** vectors (endpoint normalizes; local
@@ -196,3 +204,28 @@ unreachable threshold veto an honest convergence test.
 harness; (ii) refine `influence.triangulate` so sign agreement is computed over the **FDR-significant**
 subset and ρ carries a participant-clustered bootstrap CI; (iii) re-validate `coupling.py` factors on
 Qwen embeddings. Branch: run on the winning classifier branch (needs its model) → `gnn-exp/mechanism`.
+
+### 9A. ⚠ FDR reality check — the pre-registered sign-agreement metric is vacuous as written
+Inspecting the REAL `data/Meta/03_analysis_data/mechanism/mechanism_delta_progression.csv`:
+**ZERO of the 20 PURER cue→transition cells are `fdr_significant`** (all fdr_q ≈ 0.50–0.96; the
+smallest within-stage permutation p is ≈0.065). At n≈32, no individual (from_stage × move) effect
+survives FDR correction — the observed mechanism is inherently a **pattern-level** signal, not an
+effect-level one. Consequence: "**≥70% sign agreement on FDR-significant effects**" is computed over
+an **empty set** → undefined. This is a finding, not a bug: it bounds every mechanism claim to
+hypothesis-generating, never causal — consistent with the n≈32 mandate.
+
+**Adapted success metric (proposed; pending researcher confirmation).** Keep the spirit (convergence
+with the independent observed analysis), make it computable + honest:
+1. **PRIMARY convergence — Spearman ρ** between GNN counterfactual influence and observed
+   `mean_delta_prog` over the per-(from_stage, PURER move) cells **with adequate support (n≥3 blocks)**,
+   with **participant-clustered bootstrap 95% CI**. Success = ρ>0 AND CI excludes 0.
+2. **SECONDARY sign agreement — over the "directionally reliable" subset** = cells whose OBSERVED
+   bootstrap CI (`ci_lo,ci_hi`) excludes 0 (a within-method reliability criterion that survives the
+   FDR-null, e.g. Vigilance+Reframing +[1.11,3.07], Reappraisal+Education −[1.92,0.33]). Report the
+   fraction + n. (The FDR-significant subset is ALSO reported — as "n=0", explicitly.)
+3. **Headline caveat on every artifact:** no cue→transition effect is FDR-significant at n≈32; the
+   triangulation tests whether two INDEPENDENT methods agree on the effect-size *rank pattern* —
+   hypothesis-generating only. If ρ-CI includes 0 → `mechanism.py` leads, GNN exploratory (per goal).
+
+`influence.triangulate` (SA-mech) still computes the FDR-subset version (correct, returns n=0 on real
+data); the architect adds the adapted ρ(n≥3) + CI-reliable-sign-agreement during integration.
