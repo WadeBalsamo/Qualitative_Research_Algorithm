@@ -165,11 +165,13 @@ def _collect_cue_block_purer_profile(
     consistency. Returns a dict mapping purer_construct_id → count of therapist
     segments with that PURER label in the window.
 
-    Primary labels are counted once per constituent therapist segment. When
-    include_secondary is True, the secondary label (if present) is also counted
-    once per cue block — because all constituent segments share the same secondary
-    via uniform propagation, we add exactly one count for the block's secondary
-    construct to avoid inflation.
+    With per-therapist-turn PURER classification, each constituent therapist
+    turn carries its OWN independent primary and secondary label. Both are
+    counted per turn: every turn's primary is counted once, and (when
+    include_secondary is True) every turn's secondary is counted once. This
+    correctly aggregates all PURER-classified turns within the cue. (In the
+    legacy cue-block mode the secondary was propagated identically across the
+    block's turns, so per-turn counting matches the per-turn primary count.)
 
     Parameters
     ----------
@@ -182,8 +184,8 @@ def _collect_cue_block_purer_profile(
     to_start_ms : int
         Start time (ms) of next participant segment.
     include_secondary : bool
-        If True and 'purer_secondary' column exists, also add one count for the
-        block's secondary PURER construct (captures co-occurring moves).
+        If True and 'purer_secondary' column exists, also count each therapist
+        turn's secondary PURER construct (captures co-occurring moves).
 
     Returns
     -------
@@ -217,10 +219,9 @@ def _collect_cue_block_purer_profile(
             pass
 
     if include_secondary and 'purer_secondary' in df.columns:
-        sec_vals = rows['purer_secondary'].dropna()
-        if not sec_vals.empty:
+        for val in rows['purer_secondary'].dropna():
             try:
-                k = int(sec_vals.iloc[0])
+                k = int(val)
                 profile[k] = profile.get(k, 0) + 1
             except (ValueError, TypeError):
                 pass
