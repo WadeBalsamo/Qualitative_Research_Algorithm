@@ -380,7 +380,8 @@ output_dir/
 | `process/orchestrator.py` | Stage sequencing, `run_full_pipeline`, standalone `stage_*` functions |
 | `process/config.py` | `PipelineConfig` dataclass — single source of truth for all settings |
 | `process/segments_io.py` | Frozen per-session segment I/O, `params_hash`, `load_segments_for_stage` |
-| `process/classifications_io.py` | Overlay read/write, provenance manifest |
+| `process/classifications_io.py` | Overlay read/write, provenance manifest, `clear_overlay` |
+| `process/reclassify_ops.py` | From-scratch reset (`--fresh`): clears per-framework checkpoints + overlay; shared by CLI + TUI |
 | `process/_freeze.py` | Freeze enforcement (atomic write, SHA verification) |
 | `process/transcript_ingestion.py` | `ConversationalSegmenter` — embedding-based semantic segmentation |
 | `process/llm_segmentation.py` | LLM-assisted boundary refinement |
@@ -405,6 +406,7 @@ output_dir/
 | `codebook/embedding_classifier.py` | Sentence-transformer embedding-based codebook classification |
 | `codebook/ensemble.py` | Embedding + LLM ensemble reconciliation |
 | `classification_tools/llm_classifier.py` | Zero-shot prompt construction and response parsing |
+| `classification_tools/zeroshot_reporting.py` | `write_zeroshot_report` — graded `--test-zeroshot` content-validity report |
 | `classification_tools/llm_client.py` | Backend abstraction (OpenRouter, Ollama, LM Studio, HuggingFace, Replicate) |
 | `classification_tools/classification_loop.py` | Multi-run consensus voting with checkpointing |
 | `classification_tools/majority_vote.py` | Ballot aggregation (unanimous/majority/split/none) |
@@ -481,14 +483,24 @@ python qra.py analyze -o ./data/output/ --no-gnn           # force-disable the G
 
 # Modular stage execution (Phase 3)
 python qra.py ingest -o ./data/output/                     # segment + freeze only
+python qra.py ingest -o ./data/output/ --fresh             # re-segment every session from scratch
 python qra.py classify -o ./data/output/ --what vaamr      # VAAMR (participant)
 python qra.py classify -o ./data/output/ --what purer      # PURER (therapist)
 python qra.py classify -o ./data/output/ --what codebook   # VCE phenomenology
 python qra.py classify -o ./data/output/ --what cross-validation  # VAAMR × VCE lift overlay
 python qra.py classify -o ./data/output/ --what all        # every configured classifier
-python qra.py classify -o ./data/output/ --backend gnn     # LLM-free graph scale mode
+python qra.py classify -o ./data/output/ --what vaamr --fresh    # re-classify FROM SCRATCH
 python qra.py assemble -o ./data/output/                   # join frozen + overlays
 python qra.py validate -o ./data/output/                   # refresh human/AI validation artifacts
+
+# GNN consensus layer (modular — add the GNN to an LLM-only project, then scale)
+python qra.py gnn train -o ./data/output/                  # train graph + run the reliability gate
+python qra.py gnn status -o ./data/output/                 # κ(graph,LLM); ready for LLM-free scaling?
+python qra.py gnn classify -o ./data/output/               # LLM-free label new/unlabeled segments
+
+# Import a legacy (pre-SQLite, JSONL) project into qra.db
+python qra.py migrate -o ./data/output/                    # preview what would be imported
+python qra.py migrate -o ./data/output/ --run             # perform (originals → _legacy_files/)
 
 # Fix a single classification run without redoing the others
 python qra.py reclassify-run -o ./data/output/ --run 3 --model nvidia/nemotron-3-nano-30b
@@ -512,7 +524,7 @@ python qra.py edit-anonymization -o ./data/output/         # interactive speaker
 python qra.py edit-anonymization -o ./data/output/ --rename therapist_1=therapist_9 --yes
 ```
 
-> **GNN scale mode** (`classify --backend gnn`) and **GNN-authoritative labels** are recommended only after the graph passes its out-of-sample reliability gate (`06_reports/06_gnn/validation.txt`). Until then the default flow remains LLM classification. See the [GNN Representation and Discovery Layer](#gnn-representation-and-discovery-layer) section above and `methodology.md` §8.5.
+> **GNN scale mode** (`gnn classify`) and **GNN-authoritative labels** are recommended only after the graph passes its out-of-sample reliability gate — check it with `qra gnn status` (or `06_reports/06_gnn/validation.txt`). Until then the default flow remains LLM classification. A trustworthy gate needs multi-run LLM ballots (`n_runs >= 3`); `gnn train` warns when they are missing. See the [GNN Representation and Discovery Layer](#gnn-representation-and-discovery-layer) section above and `methodology.md` §8.5.
 
 > **Track B/C/D outputs are config-flag driven** during `analyze` (no separate subcommand): set `gnn_layer.counterfactual=true` for model-counterfactual influence (gated), `gnn_layer.build_mindfulbert_dataset=true` (+`augmentation_enabled`) for the MindfulBERT dataset, and `gnn_layer.subtext_communities=true` for routine discovery. See [Configuration](#configuration) and `docs/GNN_MASTER_PLAN.md` §12.
 
@@ -522,23 +534,63 @@ Running `python qra.py` with **no subcommand** launches a menu-driven TUI that s
 
 **Main menu:** `1` New Project (setup wizard → optional full run) · `2` Open Project · `3` About/Help · `0` Exit.
 
-**Open Project menu** (actions adapt to detected state; ✓ marks completed stages):
+**Open Project menu** (actions adapt to detected state; ✓ marks completed stages; the GNN tag shows the live reliability-gate status). Items are grouped by workflow:
 
-| # | Action |
-|---|--------|
-| 1 | **Ingest & Freeze Segments** — segment transcripts, write the frozen `segments` table in `qra.db` (migrates legacy layouts) |
-| 2 | **Classify — VAAMR** (participant stages; optional zero-shot mode) |
-| 3 | **Classify — PURER** (therapist cue-blocks; sub-menu: re-run all / change model / add a run / redo one run) |
-| 4 | **Assemble master dataset** — join overlays → `master_segments` + coded transcripts + validation artifacts |
-| 5 | **Analysis & Reports** — longitudinal/session/theme analyses, mechanism + efficacy dossiers, the GNN layer, figures, LLM summaries |
-| 6 | **Testset Management** — create / list / refresh AI keys for frozen VAAMR/PURER/codebook testsets |
-| 7 | **Content-Validity Testsets** — create / refresh / list (exemplar/subtle/adversarial items) |
-| 8 | **Refresh Validation Artifacts** — re-emit human forms, coded transcripts, AI keys without re-classifying |
-| 9 | **Edit Configuration** — models, LM Studio URL, `n_runs`; toggle codebook / PURER / **GNN layer** / **GNN-authoritative**; open `qra_config.json` in `$EDITOR` |
-| 10 | **Edit Speaker Anonymization Key** — rename/merge/relabel speakers and cascade across segments, overlays, checkpoints, validation, analysis |
-| 11 | **Classify — Graph consensus (LLM-free)** — label new data with the trained graph; recommended once `06_gnn/validation.txt` reports the graph is ready (warns/asks otherwise) |
+| Group | Actions |
+|-------|---------|
+| **Build** | *Ingest & freeze segments* (offers re-segment from scratch) · *Add new transcripts (incremental)* |
+| **Classify** | *VAAMR* (zero-shot + re-run-from-scratch) · *PURER* (reclassify sub-menu) · *VCE codebook* · *Cross-validation* (VAAMR × VCE lift) |
+| **GNN** | *Train / update GNN consensus layer* (also adds the GNN to an LLM-only project; warns on missing multi-run ballots) · *Classify — Graph consensus (LLM-free)* · *View GNN reliability / κ status* |
+| **Assemble / Analyze** | *Assemble master dataset* → `master_segments.csv` + coded transcripts + validation artifacts · *Analysis & reports* (prompts to force the GNN on/off) |
+| **Validation** | *Testset management* · *Content-validity testsets* · *Refresh validation artifacts* |
+| **Maintenance** | *Edit configuration* · *Edit speaker anonymization key* · *Migrate legacy JSONL → qra.db* (shown only when a legacy project is detected) |
 
 The **New Project** wizard offers three modes — *Small/Test*, *Production*, *Custom* — and walks through paths, speaker keys, PHI anonymization, segmentation, LLM backend + per-run checker models, frameworks, the VCE codebook, classification/confidence parameters, validation + content-validity testsets, summaries, and the **GNN layer** (label mode, reliability-gate target, authoritative toggle, ablation, motif/factor counts).
+
+---
+
+## Operating an Ongoing Project
+
+QRA is built for longitudinal studies that accrue sessions over months. Every stage
+is modular and runs from both the CLI and the TUI, so you can grow and re-derive a
+project without ever re-segmenting frozen data by accident.
+
+**Add a new batch of transcripts**
+```bash
+python qra.py add-data --config ./data/output/02_meta/qra_config.json
+```
+Segments + classifies only the *new* sessions (using the manifest-pinned config),
+re-assembles, and re-analyzes. Frozen segments, frozen validation testsets, and
+content-validity worksheets are never disturbed; newly-discovered speakers are
+walked through interactively to extend the anonymization key.
+
+**Re-derive a framework from scratch** (e.g. after changing models or `n_runs`)
+```bash
+python qra.py classify -o ./data/output/ --what vaamr --fresh   # clears VAAMR ckpts + overlay, then re-runs
+python qra.py ingest   -o ./data/output/ --fresh                # rebuild frozen segmentation itself
+```
+Without `--fresh`, `classify` resumes from existing run checkpoints — fast for
+finishing an interrupted run, but `--fresh` is the switch for a clean restart.
+
+**Add the GNN to a project that has only run LLM consensus, then scale**
+```bash
+python qra.py gnn train  -o ./data/output/    # train the graph + run the out-of-sample reliability gate
+python qra.py gnn status -o ./data/output/    # κ(graph,LLM) vs target — has it reached LLM-consensus IRR?
+python qra.py gnn classify -o ./data/output/  # once READY: LLM-free label new/unlabeled segments
+```
+`gnn train` works even if the GNN was never enabled (it force-enables it for the run)
+and warns if the project lacks the multi-run LLM ballots the consensus signal needs.
+The gate verdict (`qra gnn status`) tells you when the graph agrees with the
+LLM/human consensus closely enough to scale without LLM calls. The TUI surfaces the
+same status inline and offers a "View GNN reliability / κ status" action.
+
+**Upgrade a pre-SQLite project**
+```bash
+python qra.py migrate -o ./data/output/         # preview the import
+python qra.py migrate -o ./data/output/ --run   # fold legacy JSONL into qra.db (originals → _legacy_files/)
+```
+This also happens automatically on the next `ingest`/`run`; `migrate` just makes it
+explicit and previewable.
 
 ---
 
