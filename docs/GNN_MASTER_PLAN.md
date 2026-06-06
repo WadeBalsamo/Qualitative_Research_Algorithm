@@ -434,7 +434,21 @@ gate that is the *hard precondition* for any graph label of record.
   - **Files:** `gnn_layer/validation.py`, `process/orchestrator.py`,
     `process/assembly/master_dataset.py`, tests under `tests/unit/`.
 
-### Track A0 — Reliability recovery battery (VAAMR) — **NEW, top priority**
+### Track A0 — Reliability recovery battery (VAAMR) — **EXECUTED 2026-06-06; results in `design_decisions.md`**
+
+> **OUTCOME (authoritative record + per-arm ledger: root `design_decisions.md` + `docs/gnn_experiments/ledger.csv`).**
+> A0-pre done (human subset wired into the gate via `analysis/irr_join.py`; production gate human axis
+> κ=0.053 confirmed). Qwen3-8B features via LM Studio `/v1/embeddings` (`embedding_backend='openai'`,
+> 4096-d) — the dominant fix. **Honest participant-grouped CV** revealed the published κ=0.247 was
+> CV-leakage-inflated (true MiniLM baseline ≈ 0.05). Full battery A0–A4n + B1 ran on shared
+> grouped folds. **Findings:** (1) Qwen + class-weighting + a **No-code 6th class** reach human
+> κ≈0.37 (inside the human↔human band 0.33–0.52) — human-level IRR; (2) a **linear probe ties/beats
+> the GNN** at n≈205 (LLM 0.31 probe ≫ 0.21 GNN) → **honest split** (D-C): LLM stays label-of-record,
+> the calibrated probe is the abstention-gated assist, the GNN is reserved for the mechanism;
+> (3) **PRIMARY mechanism does NOT triangulate** (counterfactual ρ=−0.13 CI incl. 0; coupling
+> |corr|<0.07) → `analysis/mechanism.py` (observed Δprogression) leads, GNN exploratory only, no causal
+> claims. The binding constraint is data scale (n≈32). Winner classifier = **A1n** (Qwen probe,
+> class-weighted, 6-class). Recommendation: switch the production gate to participant-grouped CV.
 
 **Goal:** raise VAAMR GNN↔human κ toward the LLM↔human level (≈0.54) — i.e. *human-level IRR* (D12) —
 and recover the rare stages (Avoidance/Metacognition, currently 0% recall). Motivated by the
