@@ -385,8 +385,9 @@ class TestCollectCueBlockPurerProfile(unittest.TestCase):
         result = _collect_cue_block_purer_profile(df, 's1', 4000, 9000)
         self.assertEqual(result, {1: 1})
 
-    def test_secondary_label_added_once_per_block(self):
-        # 3 therapist segs all have purer_secondary=2 — should add only once
+    def test_secondary_labels_counted_per_segment(self):
+        # Turn-level PURER: each therapist turn carries its own secondary, so
+        # every turn's secondary is counted (not just the first).
         rows = [
             _row(session_id='s1', speaker='therapist',
                  start_ms=5000, end_ms=6000,
@@ -401,9 +402,25 @@ class TestCollectCueBlockPurerProfile(unittest.TestCase):
         df = pd.DataFrame(rows)
         result = _collect_cue_block_purer_profile(df, 's1', 4000, 9000,
                                                    include_secondary=True)
-        # Primary 3 counted 3 times; secondary 2 counted once
+        # Primary 3 counted 3 times; secondary 2 also counted once per turn.
         self.assertEqual(result.get(3), 3)
-        self.assertEqual(result.get(2), 1)
+        self.assertEqual(result.get(2), 3)
+
+    def test_distinct_secondary_labels_each_counted(self):
+        # Per-turn secondaries can differ across turns in a cue — count each.
+        rows = [
+            _row(session_id='s1', speaker='therapist',
+                 start_ms=5000, end_ms=6000,
+                 purer_primary=3, purer_secondary=2),
+            _row(session_id='s1', speaker='therapist',
+                 start_ms=6500, end_ms=7500,
+                 purer_primary=0, purer_secondary=4),
+        ]
+        df = pd.DataFrame(rows)
+        result = _collect_cue_block_purer_profile(df, 's1', 4000, 9000,
+                                                   include_secondary=True)
+        # primaries: 3×1, 0×1 ; secondaries: 2×1, 4×1
+        self.assertEqual(result, {3: 1, 0: 1, 2: 1, 4: 1})
 
     def test_secondary_not_added_when_flag_false(self):
         rows = [
