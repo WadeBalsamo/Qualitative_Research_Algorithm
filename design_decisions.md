@@ -172,6 +172,31 @@ model (D-C). Mechanism (M2) graph kept regardless.
   byte-identical. Live: **4096-d, L2-normalized** vectors (endpoint normalizes; local
   SentenceTransformer path does not — noted for cross-backend feature-magnitude comparisons; cosine
   kNN is unaffected). 21 hermetic tests + 1 `@slow_test` live smoke; full GNN suite green.
+- **2026-06-06 — Embedding latency + truncation decision.** The LM Studio Qwen3-8B endpoint has a
+  ~116s cold start (one-time model load) and ~1.3s/text warm, BUT a few pathological didactic chunks
+  (max 56k chars ≈ 10k words; p90 only 1207 chars) take ~126s each and blew the 60s batch timeout.
+  Decision: **truncate texts to 8000 chars** before embedding (covers >90% fully; the local
+  SentenceTransformer path truncates at its max_seq_length too, so this matches production), small
+  batch (8), 180s timeout, and an **incremental, resumable** cache keyed by full-text hash (so the
+  harness's `load_or_build_segment_embeddings` gets cache hits and never re-embeds). Cache:
+  `02_meta/gnn/segment_embeddings_qwen3_8b.npz`.
+- **2026-06-06 — Reference reproduced (scorer trust).** Independently reproduced the published gate
+  numbers from the existing held-out predictions: **LLM-axis κ=0.247 (n=205)** and **human-axis
+  κ=0.053 (n=66)** — exact match — using `irr_stats.cohen_kappa` + `irr_import`. Human consensus
+  label mix: **No-code 24, Vig 12, Avo 2, AttReg 10, Meta 5, Reap 13** → 36% No-code, which the
+  5-class GNN structurally cannot match (motivates the 6-class arms). This is the validated reference
+  the harness self-check must hit.
+- **2026-06-06 — SA4 merged (imbalance + No-code).** Branch `gnn-vaamr-imbalance` → `gnn-exp/harness`
+  (clean 3-way). Flags `vaamr_n_classes` (5|6), `vaamr_class_balance`, `vaamr_focal_gamma`,
+  `vaamr_hard_ce_weight`, `vaamr_tam` (logit-adjustment) — all default-off, default path **proven
+  bit-identical**; loss math audited (inverse-freq row weights mean-1 normalized; raw-logit focal;
+  class-weighted hard-CE). 13 tests + 726 GNN tests green.
+- **2026-06-06 — Model-config note (two missions, two heads).** The mechanism counterfactual reads the
+  participant's **progression coordinate E[stage]=Σk·pₖ**, which a 6-class No-code head distorts
+  (No-code at k=5 is not "stage 5" on the developmental arc; SA4 already computes `prog_val` over the
+  5 real dims). ⇒ the **mechanism deliverable uses a 5-class progression model** (best 5-class GNN,
+  e.g. A4) while the **classifier of record may be 6-class** (A4n). The two missions can use different
+  head configs on the same embedding/graph substrate.
 
 ## 9. PRIMARY work-stream — mechanism triangulation (the peer-review deliverable)
 
