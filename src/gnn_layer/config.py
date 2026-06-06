@@ -100,6 +100,41 @@ class GnnLayerConfig:
     # 'self_supervised' -> link-prediction only, no LLM labels (independence control)
     label_mode: str = 'weak'
 
+    # ---- VAAMR class-imbalance handling & "No code" class ----------------------------
+    # These four flags target design_decisions.md §4 root causes #2 ("No class
+    # rebalancing": Avoidance n=20 / Metacognition n=29 get 0% held-out recall under the
+    # unweighted batchmean KL) and #4 ("No 'No code' class": 134/339 participants are
+    # No-code and were trained to uniform noise). They power arms A4 / A4n (§6). EVERY
+    # flag defaults to the no-op, so with none set the soft-VAAMR loss and head are
+    # byte-identical to the original unweighted 5-class path.
+    #
+    # 6th "No code" class. 5 (default) → the soft-VAAMR head is size 5 and behaviour is
+    # byte-identical. 6 → head size 6 with class 5 = "No code"; build_soft_targets(...,
+    # n_stages=6) then gives participant rows with a null final_label a one-hot on class 5
+    # (instead of the uniform-noise fallback) while labeled rows keep their 5-stage
+    # mixture in dims 0..4 (dim 5 = 0). (The runner/validation wiring of this value into
+    # build_soft_targets(n_stages=...) is a separate follow-up; the head/target/loss
+    # building blocks honour it today.)
+    vaamr_n_classes: int = 5
+    # Class balancing. When True, each labeled node's soft-VAAMR KL is weighted by the
+    # inverse frequency of its dominant (argmax) class within the training batch,
+    # normalized to mean 1 — so rare stages are not drowned out. False → unweighted.
+    vaamr_class_balance: bool = False
+    # Focal modulation. When >0, multiply each labeled node's soft-VAAMR KL by
+    # (1 - p_true)^gamma, where p_true is the model's softmax mass on that row's
+    # argmax-target class — down-weighting already-confident rows so hard/rare rows
+    # dominate the gradient. 0 → off (identical). Composes with vaamr_class_balance.
+    vaamr_focal_gamma: float = 0.0
+    # Auxiliary hard-label cross-entropy. When >0, ADD a class-weighted hard CE term
+    # (this value is its loss weight) on the labeled VAAMR nodes — target = argmax of the
+    # soft mixture, class weight = inverse class frequency — giving a hard-classification
+    # signal alongside the soft KL. 0 → off (no extra term, total unchanged).
+    vaamr_hard_ce_weight: float = 0.0
+    # Logit adjustment / topology-aware margin (Menon et al. 2020). When True, add
+    # log(class_prior) (batch class frequencies) to the soft-VAAMR logits AT TRAIN TIME
+    # so rare classes get an effective margin; inference uses the raw logits. False → off.
+    vaamr_tam: bool = False
+
     # ---- Independence pass (G1: the construct-validity axis that survives review) ----
     # The main run trains on LLM ballots, so its GNN-vs-LLM agreement is DISTILLATION
     # FIDELITY, not independence. When True, a SECOND model is trained with LLM labels
