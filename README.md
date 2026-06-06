@@ -46,7 +46,7 @@ This paper derived the five-stage Vigilance–Avoidance–Attention Regulation�
 This trial is the primary deployment context for QRA. The four-cohort iterative design — Cohorts 1–2 complete, human validation in progress — is the engineering problem the pipeline was built to solve.
 
 ### The Full Methodology Paper (in preparation)
-[`methodology.md`](methodology.md) — *Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain* — is a complete, publication-ready methodology paper (Balsamo, Wexler et al., *in preparation*) housed directly in this repository. It provides the neurophenomenological theoretical grounding, the engineering rationale for every design decision, and the Text Psychometrics validation framework (Low et al., 2024) that QRA implements.
+[`methodology.md`](docs/methodology.md) — *Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain* — is a methodology paper (Balsamo, Wexler et al., *in preparation*) housed directly in this repository. It provides the neurophenomenological theoretical grounding, the engineering rationale for every design decision, and the Text Psychometrics validation framework (Low et al., 2024) that QRA implements.
 
 **If you want to understand *why* this pipeline works the way it does, read that paper.**
 
@@ -64,7 +64,7 @@ This trial is the primary deployment context for QRA. The four-cohort iterative 
 | **Corpus-level statistical analysis** | State transition matrices (within-session and between-session), PURER × VAAMR conditional lift tables, and per-participant longitudinal trajectories are computed in pure pandas/numpy on the assembled master dataset — no LLMs involved. |
 | **Layered architecture** | 8-stage data pipeline: ingestion → operationalization → classification → cross-validation → assembly → reporting. Each stage is independently runnable and gated by a frozen data boundary. |
 | **Immutable data checkpoints** | Segmentation results are written once and frozen (`01_transcripts/segmented/`). Classifiers write to independent overlay files. Re-running any classifier never touches frozen segments — immutable staging → refreshable marts. |
-| **Classification infrastructure** | Multi-run LLM consensus voting (unanimous / majority / split / none, confidence-tiered) for VAAMR/PURER; embedding + LLM ensemble with weighted reconciliation for 59-code VCE codebook. Split-vote segments auto-flagged for human review. |
+| **Classification infrastructure** | Multi-run LLM consensus voting (unanimous / majority / split / none, confidence-tiered) for VAAMR/PURER; embedding + LLM ensemble with weighted reconciliation for 54-code VCE codebook. Split-vote segments auto-flagged for human review. |
 | **Backend abstraction layer** | A single `LLMClient` interface wraps any OpenAI-compatible endpoint: LM Studio (local GPU), OpenRouter, Ollama. Swap backends with a CLI flag. Optimized for local deployment on confidential clinical data. |
 | **Hot-reloadable definitions** | VAAMR, PURER, and VCE codebook definitions live in human-editable Markdown files parsed at runtime. Researchers refine operational definitions between cohorts without touching Python. |
 | **Auditability by design** | Every LLM call logged with full prompt and response. Every segment's final label carries provenance source (`adjudicated` / `human_consensus` / `llm_zero_shot`). Full reproducibility via serialized `qra_config.json`. |
@@ -95,7 +95,7 @@ The Vigilance–Avoidance–Attention Regulation–Metacognition–Reappraisal m
 | 3 | Metacognition | Reflexive observation of one's own mental processes | *"I noticed I was getting anxious about the pain, and I could just watch that anxiety."* |
 | 4 | Reappraisal | Noematic transformation — pain decomposed into constituent sensations | *"It's interesting, when I really look at it, the 'pain' is actually many different feelings."* |
 
-Full operational definitions (prototypical features, distinguishing criteria, exemplar / subtle / adversarial utterances, word prototypes) are in [`VAAMR_FRAMEWORK.md`](VAAMR_FRAMEWORK.md), parsed at runtime into `ThemeDefinition` objects by `theme_framework/markdown_loader.py`.
+Full operational definitions (prototypical features, distinguishing criteria, exemplar / subtle / adversarial utterances, word prototypes) are in [`VAAMR_FRAMEWORK.md`](frameworks/VAAMR_FRAMEWORK.md), parsed at runtime into `ThemeDefinition` objects by `theme_framework/markdown_loader.py`.
 
 ### PURER — Five-Move Therapist Guided-Inquiry Framework
 
@@ -111,15 +111,15 @@ PURER classifies therapist contributions at the **cue-block level** (one label p
 
 Precedence rule when moves co-occur: Reinforcement is often a wrapper — code the inner substantive move; Utilization > Reframing for forward-application prompts; Reframing > Education when anchored to participant's story.
 
-Full definitions in [`PURER_FRAMEWORK.md`](PURER_FRAMEWORK.md).
+Full definitions in [`PURER_FRAMEWORK.md`](frameworks/PURER_FRAMEWORK.md).
 
 ### VCE Phenomenology Codebook — Multi-Label Enrichment
 
-The 59-code Varieties of Contemplative Experience codebook (Lindahl et al., 2017) is applied to participant segments via an embedding + LLM ensemble. Seven domains: Affective (13), Cognitive (10), Perceptual (7), Conative (3), Sense of Self (6), Social (5), Somatic (15).
+The 54-code Varieties of Contemplative Experience codebook (Lindahl et al., 2017) is applied to participant segments via an embedding + LLM ensemble. Six domains: Affective (13), Cognitive (9), Perceptual (6), Sense of Self (6), Social (5), Somatic (15).
 
-Full codebook in [`PHENOMENOLOGY_CODEBOOK.md`](PHENOMENOLOGY_CODEBOOK.md).
+Full codebook in [`PHENOMENOLOGY_CODEBOOK.md`](frameworks/PHENOMENOLOGY_CODEBOOK.md).
 
-For the complete theoretical neurophenomenological grounding and research methodology behind all three frameworks, see [`methodology.md`](methodology.md).
+For the complete theoretical neurophenomenological grounding and research methodology behind all three frameworks, see [`methodology.md`](docs/methodology.md).
 
 ---
 
@@ -189,7 +189,7 @@ A **descriptive, single-arm** summary of how participants' LLM-coded VAAMR langu
 
 **Secondary (sensitivity, interval-scale):** the continuous E[stage] progression coordinate + `mixedlm_trend` linear slope, explicitly flagged as treating the stages as equally spaced. Per-participant slope direction + sign test. p-values/CIs are shown but **flagged when underpowered** (small single-arm n).
 
-**Convergent validity (exploratory):** when an external-outcomes CSV is present at `02_meta/outcomes.csv` (auto-detects wide pre/post or long per-session), within-program progression is correlated with measured clinical change — *convergent-validity evidence that the language index tracks something real, still not efficacy*. Integration plan: [`docs/OUTCOME_INTEGRATION_ROADMAP.md`](docs/OUTCOME_INTEGRATION_ROADMAP.md) (REDCap → `outcomes.csv`).
+**Convergent validity (exploratory):** when an external-outcomes CSV is present at `02_meta/outcomes.csv` (auto-detects wide pre/post or long per-session), within-program progression is correlated with measured clinical change — *convergent-validity evidence that the language index tracks something real, still not efficacy*. Integration path: REDCap exports are mapped to `02_meta/outcomes.csv`.
 
 Outputs: `06_reports/01_outcomes/progression_summary.txt`, `03_analysis_data/efficacy/*.csv` (incl. `efficacy_summary.json`), `05_figures/program_efficacy.png`.
 
@@ -408,7 +408,7 @@ output_dir/
 | `theme_framework/purer.py` | `get_purer_framework()` — loads from `PURER_FRAMEWORK.md` |
 | `theme_framework/markdown_loader.py` | Parser: `.md` → `ThemeFramework` / `ThemeDefinition` objects |
 | `theme_framework/theme_schema.py` | `ThemeDefinition`, `ThemeFramework` dataclasses |
-| `codebook/phenomenology_codebook.py` | 59 `CodeDefinition` objects (VCE), loaded from `PHENOMENOLOGY_CODEBOOK.md` |
+| `codebook/phenomenology_codebook.py` | 54 `CodeDefinition` objects (VCE), loaded from `PHENOMENOLOGY_CODEBOOK.md` |
 | `codebook/embedding_classifier.py` | Sentence-transformer embedding-based codebook classification |
 | `codebook/ensemble.py` | Embedding + LLM ensemble reconciliation |
 | `classification_tools/llm_classifier.py` | Zero-shot prompt construction and response parsing |
@@ -604,11 +604,11 @@ python qra.py run --config ./qra_config.json
 
 ## Further Reading
 
-- [`methodology.md`](methodology.md) — Full neurophenomenological methodology paper (Balsamo, Wexler et al., *in preparation*). This is the canonical reference for *why* the pipeline is designed the way it is.
-- [`VAAMR_FRAMEWORK.md`](VAAMR_FRAMEWORK.md) — Complete operational VAAMR definitions with exemplar, subtle, and adversarial utterances
-- [`PURER_FRAMEWORK.md`](PURER_FRAMEWORK.md) — Complete operational PURER definitions
-- [`PHENOMENOLOGY_CODEBOOK.md`](PHENOMENOLOGY_CODEBOOK.md) — 59-code VCE codebook
-- [`ROADMAP.md`](ROADMAP.md) — Research and engineering trajectory
+- [`methodology.md`](docs/methodology.md) — Full neurophenomenological methodology paper (Balsamo, Wexler et al., *in preparation*). This is the canonical reference for *why* the pipeline is designed the way it is.
+- [`VAAMR_FRAMEWORK.md`](frameworks/VAAMR_FRAMEWORK.md) — Complete operational VAAMR definitions with exemplar, subtle, and adversarial utterances
+- [`PURER_FRAMEWORK.md`](frameworks/PURER_FRAMEWORK.md) — Complete operational PURER definitions
+- [`PHENOMENOLOGY_CODEBOOK.md`](frameworks/PHENOMENOLOGY_CODEBOOK.md) — 54-code VCE codebook
+- [`ROADMAP.md`](docs/ROADMAP.md) — Research and engineering trajectory
 
 ---
 
@@ -622,7 +622,7 @@ python qra.py run --config ./qra_config.json
 
 ### Publications in Preparation
 
-> **Balsamo, W.**, Wexler, R. S., et al. "Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain." *In Preparation*. — See [`methodology.md`](methodology.md).
+> **Balsamo, W.**, Wexler, R. S., et al. "Phenomenology at Trial Speed: A Computational Mixed-Methods Pipeline for Iterative Refinement of Mindfulness-Movement Therapy in Chronic Pain." *In Preparation*. — See [`methodology.md`](docs/methodology.md).
 
 > **Balsamo, W.**, Wexler, R. S., et al. "From Vigilance to Reappraisal: Computational Neurophenomenological Results from Analyzing Contemplative Transformation in Mindfulness-Based Pain Therapy." *In Preparation*.
 

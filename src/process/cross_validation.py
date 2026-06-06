@@ -297,7 +297,7 @@ def export_cross_validation_results(
     params: dict,
     run_dir: str,
 ) -> Tuple[str, str]:
-    """Write CV result JSONs to 05_validation/cross_validation/.
+    """Write CV result JSONs to 04_validation/cross_validation/.
 
     Returns (cv_output_path, assoc_output_path).
     """
