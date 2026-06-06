@@ -266,6 +266,11 @@ def triangulate(influence_result: dict, output_dir: str) -> Optional[dict]:
     Returns {n_moves, spearman, sign_agreement, per_move:[...]} or None if the observed
     table is unavailable. ``per_move`` carries both signals + a convergence flag so
     divergences (model says X, observed says not-X) are surfaced for human review.
+
+    Backward-compatible. Additively carries ``cue_transition`` — the PRE-REGISTERED
+    §1A success metric (Spearman ρ on per-(from_stage × move) cells with a participant-
+    clustered bootstrap CI + FDR-restricted sign agreement; see ``triangulation_metric``).
+    The legacy per-move keys above are kept untouched for existing callers.
     """
     observed = _observed_per_move(output_dir)
     if not observed:
@@ -273,11 +278,13 @@ def triangulate(influence_result: dict, output_dir: str) -> Optional[dict]:
     per_move = {r['move']: r['mean_influence'] for r in influence_result.get('per_move', [])}
     common = sorted(set(observed) & set(per_move))
     if len(common) < 2:
-        return {'n_moves': len(common), 'spearman': None, 'sign_agreement': None,
-                'per_move': [{'move': m, 'move_name': PURER_NAMES.get(m, str(m)),
-                              'observed_delta': round(observed.get(m, float('nan')), 5),
-                              'counterfactual_influence': round(per_move.get(m, float('nan')), 5),
-                              'converges': None} for m in common]}
+        return _attach_cue(
+            {'n_moves': len(common), 'spearman': None, 'sign_agreement': None,
+             'per_move': [{'move': m, 'move_name': PURER_NAMES.get(m, str(m)),
+                           'observed_delta': round(observed.get(m, float('nan')), 5),
+                           'counterfactual_influence': round(per_move.get(m, float('nan')), 5),
+                           'converges': None} for m in common]},
+            influence_result, output_dir)
     import numpy as np
     try:
         from scipy import stats as _sps
@@ -297,10 +304,320 @@ def triangulate(influence_result: dict, output_dir: str) -> Optional[dict]:
             'converges': bool(conv),
         })
     rows.sort(key=lambda r: -r['counterfactual_influence'])
-    return {'n_moves': len(common),
-            'spearman': round(rho, 4) if rho is not None and rho == rho else None,
-            'sign_agreement': round(sign_agree, 4),
-            'per_move': rows}
+    return _attach_cue(
+        {'n_moves': len(common),
+         'spearman': round(rho, 4) if rho is not None and rho == rho else None,
+         'sign_agreement': round(sign_agree, 4),
+         'per_move': rows},
+        influence_result, output_dir)
+
+
+# ---------------------------------------------------------------------------
+# B4 (refined) — PRE-REGISTERED cue→transition triangulation (design_decisions §1A/§9)
+#
+# Unit of analysis = the cue→transition = (from_stage × PURER move). Two INDEPENDENT
+# estimates of "does this therapist move progress the participant?":
+#   • GNN counterfactual influence  — per (from_stage, move), from counterfactual_influence
+#   • Observed Δprogression (LEAD)  — per (from_stage, move), from analysis/mechanism.py's
+#     mechanism_delta_progression.csv (mean_delta_prog + the fdr_significant flag)
+# The KEY join is (from_stage:int, move:int): mechanism.py's `behavior` is `Name(id)`
+# (move parsed from the trailing id) over the SAME PURER id-space and the SAME block
+# `from_stage` as influence.py — so the cells align. They measure conceptually different
+# things (observed-when-the-move-was-used vs counterfactual-if-the-cue-were-swapped),
+# which is precisely why their convergence is evidence.
+#
+# SUCCESS (§1A, pre-registered): Spearman ρ>0 with a participant-clustered bootstrap 95%
+# CI excluding 0, AND ≥70% sign agreement on the FDR-significant cells — reported beside
+# the GNN reliability-gate κ (the trust context). Fail ⇒ mechanism.py LEADS, GNN exploratory.
+# ---------------------------------------------------------------------------
+
+def _as_bool(v) -> bool:
+    """Coerce a CSV/DataFrame cell to bool, tolerant of 'True'/'False' strings + NaN."""
+    import pandas as pd
+    if v is None:
+        return False
+    try:
+        if pd.isna(v):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, str):
+        return v.strip().lower() in ('true', '1', 'yes', 't')
+    try:
+        return bool(int(v))
+    except (ValueError, TypeError):
+        return bool(v)
+
+
+def _parse_observed_stage_move(mdf) -> Dict[tuple, dict]:
+    """Parse mechanism.py's Δprogression table → {(from_stage, move): {...}} for grouping=purer.
+
+    Reads the EXACT mechanism.py schema: rows where ``grouping == 'purer'`` carry a
+    ``behavior`` of the form 'Reframing(2)' (move id = trailing parenthesized int), an int
+    ``from_stage``, the signed effect ``mean_delta_prog``, and the ``fdr_significant`` flag
+    (with ``fdr_q`` when present). Motif rows and unparseable behaviours are skipped.
+    """
+    import re
+    import pandas as pd
+
+    out: Dict[tuple, dict] = {}
+    if mdf is None or 'grouping' not in mdf.columns or 'behavior' not in mdf.columns:
+        return out
+    sub = mdf[mdf['grouping'] == 'purer']
+    has_fdr = 'fdr_significant' in sub.columns
+    has_q = 'fdr_q' in sub.columns
+    for _, r in sub.iterrows():
+        mobj = re.search(r'\((\d+)\)\s*$', str(r['behavior']))
+        if not mobj:
+            continue
+        move = int(mobj.group(1))
+        try:
+            stage = int(r['from_stage'])
+            delta = float(r['mean_delta_prog'])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if not (delta == delta):                       # NaN effect → unusable cell
+            continue
+        out[(stage, move)] = {
+            'mean_delta': delta,
+            'fdr_significant': _as_bool(r['fdr_significant']) if has_fdr else False,
+            'fdr_q': (float(r['fdr_q']) if has_q and pd.notna(r['fdr_q']) else None),
+        }
+    return out
+
+
+def _observed_per_stage_move(output_dir: str) -> Dict[tuple, dict]:
+    """Per-(from_stage, move) observed Δprogression from the default mechanism CSV path."""
+    import pandas as pd
+    path = os.path.join(_paths.mechanism_dir(output_dir), 'mechanism_delta_progression.csv')
+    if not os.path.isfile(path):
+        return {}
+    try:
+        return _parse_observed_stage_move(pd.read_csv(path))
+    except Exception:
+        return {}
+
+
+def _read_observed_csv(path: str) -> Dict[tuple, dict]:
+    """Per-(from_stage, move) observed Δprogression from an EXPLICIT mechanism CSV path."""
+    import pandas as pd
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        return _parse_observed_stage_move(pd.read_csv(path))
+    except Exception:
+        return {}
+
+
+def _spearman(a, b) -> float:
+    """Spearman ρ(a, b); NaN if undefined (constant input / <2 points / no scipy)."""
+    if len(a) < 2 or len(b) < 2:
+        return float('nan')
+    try:
+        from scipy import stats as _sps
+        res = _sps.spearmanr(a, b)
+        rho = getattr(res, 'correlation', None)
+        if rho is None:
+            rho = getattr(res, 'statistic', float('nan'))
+        return float(rho)
+    except Exception:
+        return float('nan')
+
+
+def _cells_detail(common: List[tuple], observed: Dict[tuple, dict],
+                  gnn_cell: Dict[tuple, float]) -> List[dict]:
+    """Per-cell side-by-side of observed Δprog vs GNN counterfactual + sign match / FDR flag."""
+    rows = []
+    for (stage, m) in common:
+        od = float(observed[(stage, m)]['mean_delta'])
+        cf = float(gnn_cell[(stage, m)])
+        rows.append({
+            'from_stage': int(stage), 'move': int(m),
+            'move_name': PURER_NAMES.get(int(m), str(m)),
+            'observed_delta': round(od, 5),
+            'counterfactual_influence': round(cf, 5),
+            'fdr_significant': bool(observed[(stage, m)].get('fdr_significant')),
+            'sign_match': bool((od >= 0) == (cf >= 0)),
+        })
+    rows.sort(key=lambda r: (r['from_stage'], -r['counterfactual_influence']))
+    return rows
+
+
+def _bootstrap_rho_ci(rows: List[dict], common: List[tuple], obs_vec: Dict[tuple, float],
+                      point_rho: float, *, n_boot: int, seed: int) -> dict:
+    """Participant-clustered bootstrap 95% CI on the Spearman ρ between the two cell vectors.
+
+    REUSES ``analysis.stats.cluster_bootstrap_ci`` as the resampling engine: participants
+    are the clusters; the per-resample statistic recomputes the GNN per-(from_stage, move)
+    mean influence over the resampled participants' cue blocks and Spearman-correlates it
+    against the FIXED observed Δprogression vector (the LEAD reference). The observed vector
+    is held fixed because mechanism.py exposes only aggregated per-cell effects — so the
+    bootstrap tests how stable the GNN↔observed alignment is to the GNN's participant sample.
+
+    Degenerate resamples (<2 surviving common cells / zero variance ⇒ undefined ρ) fall back
+    to ``point_rho`` so a single bad draw cannot poison the whole percentile CI; such draws
+    are astronomically rare with realistic support. Returns {lo, hi, n_clusters} (NaN CI when
+    there are <2 participants or no block-level rows to resample).
+    """
+    import numpy as np
+    from analysis import stats as S
+
+    common_set = set(common)
+    blk = []          # (cell_key, influence) for block rows that fall in a common cell
+    clusters = []     # participant per retained block row (the bootstrap cluster)
+    for r in rows or []:
+        try:
+            k = (int(r['from_stage']), int(r['move']))
+        except (ValueError, TypeError, KeyError):
+            continue
+        if k in common_set:
+            blk.append((k, float(r.get('influence', 0.0))))
+            clusters.append(r.get('participant_id'))
+    if not blk:
+        return {'lo': float('nan'), 'hi': float('nan'), 'n_clusters': 0}
+
+    idx_values = np.arange(len(blk), dtype=float)
+
+    def _rho(sample_idx):
+        cell_vals: Dict[tuple, List[float]] = {}
+        for j in sample_idx.astype(int):
+            k, v = blk[j]
+            cell_vals.setdefault(k, []).append(v)
+        cells = sorted(cell_vals)
+        if len(cells) < 2:
+            return point_rho                       # degenerate resample → point fallback
+        g = [float(np.mean(cell_vals[k])) for k in cells]
+        o = [obs_vec[k] for k in cells]
+        rho = _spearman(o, g)
+        return rho if rho == rho else point_rho
+
+    ci = S.cluster_bootstrap_ci(idx_values, clusters, statistic=_rho,
+                                n_boot=int(n_boot), seed=int(seed))
+    return {'lo': ci['lo'], 'hi': ci['hi'], 'n_clusters': int(ci.get('n_clusters', 0))}
+
+
+def triangulation_metric(influence_result: dict, observed: Dict[tuple, dict], *,
+                         sign_threshold: float = 0.70, n_boot: int = 1000,
+                         seed: int = 42) -> dict:
+    """PRE-REGISTERED (§1A) cue→transition triangulation metric — the peer-review success test.
+
+    ``observed`` is the per-(from_stage, move) observed Δprogression mapping
+    ``{(from_stage:int, move:int): {'mean_delta': float, 'fdr_significant': bool, ...}}``
+    (from ``_observed_per_stage_move`` / ``_read_observed_csv``). The GNN side is read from
+    ``influence_result['per_stage_move']`` (cell means) + ``['rows']`` (block-level, for the
+    bootstrap). Computes, over the common cells:
+      • spearman_rho + a participant-clustered bootstrap 95% CI [ci_lo, ci_hi] → ci_excludes_zero
+      • sign_agreement RESTRICTED to the FDR-significant cells (+ n_fdr_significant used)
+      • converges = (rho>0 AND ci_excludes_zero AND sign_agreement >= sign_threshold)
+    Returns all components + a per-cell detail table + the non-causal caveat.
+    """
+    gnn_cell = {(int(r['from_stage']), int(r['move'])): float(r['mean_influence'])
+                for r in influence_result.get('per_stage_move', [])}
+    obs_vec = {k: float(observed[k]['mean_delta']) for k in observed}
+    common = sorted(set(observed) & set(gnn_cell))
+
+    out = {
+        'unit': 'cue_transition (from_stage × PURER move)',
+        'n_cells': len(common),
+        'spearman_rho': None,
+        'ci_lo': None, 'ci_hi': None, 'ci_excludes_zero': False,
+        'n_boot': 0, 'n_participants': 0,
+        'sign_agreement': None, 'n_fdr_significant': 0,
+        'sign_agreement_threshold': float(sign_threshold),
+        'converges': False,
+        'per_cell': _cells_detail(common, observed, gnn_cell),
+        'caveat': ('Model sensitivity, NOT causation: n≈32 observational + the elicitation '
+                   'confound (methodology §9.2/§9.4). Convergence with the observed Δprogression '
+                   'is corroboration, not proof — report beside the GNN reliability-gate κ.'),
+    }
+    if len(common) < 2:
+        return out                                  # ρ undefined with <2 paired cells
+
+    rho = _spearman([obs_vec[k] for k in common], [gnn_cell[k] for k in common])
+    rho = rho if rho == rho else None
+
+    boot = _bootstrap_rho_ci(influence_result.get('rows') or [], common, obs_vec,
+                             point_rho=(rho if rho is not None else 0.0),
+                             n_boot=n_boot, seed=seed)
+    lo, hi = boot['lo'], boot['hi']
+    ci_excludes_zero = bool(lo == lo and hi == hi and (lo > 0 or hi < 0))
+
+    # Sign agreement is RESTRICTED to the cells mechanism.py flags FDR-significant.
+    fdr_cells = [k for k in common if bool(observed[k].get('fdr_significant'))]
+    n_fdr = len(fdr_cells)
+    sign_agreement = (sum(1 for k in fdr_cells if (obs_vec[k] >= 0) == (gnn_cell[k] >= 0)) / n_fdr
+                      if n_fdr else None)
+
+    converges = bool(rho is not None and rho > 0 and ci_excludes_zero
+                     and sign_agreement is not None and sign_agreement >= sign_threshold)
+
+    out.update({
+        'spearman_rho': round(rho, 4) if rho is not None else None,
+        'ci_lo': round(lo, 4) if lo == lo else None,
+        'ci_hi': round(hi, 4) if hi == hi else None,
+        'ci_excludes_zero': ci_excludes_zero,
+        'n_boot': int(n_boot),
+        'n_participants': int(boot.get('n_clusters', 0)),
+        'sign_agreement': round(sign_agreement, 4) if sign_agreement is not None else None,
+        'n_fdr_significant': n_fdr,
+        'converges': converges,
+    })
+    return out
+
+
+def triangulate_v2(influence_result: dict, output_dir: str, *,
+                   sign_threshold: float = 0.70, n_boot: int = 1000,
+                   seed: int = 42) -> Optional[dict]:
+    """``triangulation_metric`` over the default-path mechanism CSV; None if it is absent."""
+    observed = _observed_per_stage_move(output_dir)
+    if not observed:
+        return None
+    return triangulation_metric(influence_result, observed,
+                                sign_threshold=sign_threshold, n_boot=n_boot, seed=seed)
+
+
+def _attach_cue(result: Optional[dict], influence_result: dict, output_dir: str):
+    """Additively attach the pre-registered ``cue_transition`` metric to a legacy triangulate dict."""
+    if not isinstance(result, dict):
+        return result
+    try:
+        result['cue_transition'] = triangulate_v2(influence_result, output_dir)
+    except Exception:
+        result['cue_transition'] = None
+    return result
+
+
+def run_counterfactual_experiment(model, graph, df_all, config, gate_kappa=None,
+                                  mechanism_csv: Optional[str] = None) -> dict:
+    """Run the counterfactual influence + §1A triangulation on a GIVEN model+graph — UN-GATED.
+
+    The runner hard-gates the counterfactual on the legacy κ≥0.70 reliability gate, which is
+    unreachable in principle (design_decisions §3) and would permanently veto the PRIMARY
+    mechanism deliverable. This experiment entry point lets the architect run the readout on
+    the best Qwen model REGARDLESS of that gate; the gate κ is echoed back as the reported
+    TRUST CONTEXT (low κ ⇒ treat as exploratory and weight the triangulation accordingly).
+    Reuses ``counterfactual_influence`` / ``purer_centroids`` verbatim — no swap logic is
+    re-implemented here.
+
+    Returns {influence, triangulation, gate_kappa, [status]}:
+      influence     — the full counterfactual_influence dict (per_move/per_stage_move/rows)
+      triangulation — the ``triangulation_metric`` dict, or None when no observed Δprogression
+                      table is supplied (pass ``mechanism_csv`` to enable it)
+      gate_kappa    — echoed unchanged as the trust context for the readout
+    """
+    infl = counterfactual_influence(model, graph, df_all, config)
+    result = {'influence': infl, 'triangulation': None, 'gate_kappa': gate_kappa}
+    if infl.get('status'):
+        result['status'] = infl['status']
+        return result
+    observed = _read_observed_csv(mechanism_csv) if mechanism_csv else {}
+    if observed:
+        result['triangulation'] = triangulation_metric(
+            infl, observed,
+            sign_threshold=float(getattr(config, 'triangulation_sign_threshold', 0.70)),
+            n_boot=int(getattr(config, 'influence_bootstrap_n', 1000)),
+            seed=int(getattr(config, 'seed', 42)))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +702,43 @@ def write_influence_report(result: dict, tri: Optional[dict], output_dir: str) -
         L.append("  Convergence across the two independent methods is stronger evidence than")
         L.append("  either alone. DIVERGENCES (converges=no) are flagged here for human review,")
         L.append("  never hidden — the GNN is positioned primary only where it converges.")
+    L.append("")
+
+    # B4 (refined): the PRE-REGISTERED §1A cue→transition success metric.
+    ct = tri.get('cue_transition') if tri else None
+    L.append("-" * W)
+    L.append("4. PRE-REGISTERED CUE→TRANSITION TRIANGULATION (design_decisions §1A) — SUCCESS TEST")
+    L.append("-" * W)
+    if not ct:
+        L.append("  Per-(from_stage × move) observed Δprogression table not available — the")
+        L.append("  pre-registered metric needs analysis/mechanism.py to have run first.")
+    else:
+        rho = ct.get('spearman_rho')
+        lo, hi = ct.get('ci_lo'), ct.get('ci_hi')
+        sa = ct.get('sign_agreement')
+        ci = (f"[{lo:+.3f}, {hi:+.3f}]" if lo is not None and hi is not None else "[ n/a ]")
+        L.append(f"  Unit = {ct.get('unit')}   cells: {ct.get('n_cells')}"
+                 f"   participants: {ct.get('n_participants')}")
+        L.append(f"  Spearman ρ(observed Δprog, GNN counterfactual): "
+                 f"{rho if rho is not None else 'n/a'}   95% CI {ci}"
+                 f"   excludes 0: {'YES' if ct.get('ci_excludes_zero') else 'no'}")
+        L.append(f"  Sign agreement on FDR-significant cells: "
+                 f"{sa if sa is not None else 'n/a'} "
+                 f"(n_FDR={ct.get('n_fdr_significant')}; threshold={ct.get('sign_agreement_threshold')})")
+        L.append("")
+        L.append(f"  VERDICT: {'CONVERGES' if ct.get('converges') else 'does NOT converge'} "
+                 "— ρ>0 AND CI excludes 0 AND FDR-sign agreement ≥ threshold.")
+        L.append("  Read this BESIDE the GNN reliability-gate κ (06_gnn/validation*.txt): low κ ⇒")
+        L.append("  treat as exploratory and weight the triangulation. If it does NOT converge,")
+        L.append("  mechanism.py LEADS and the GNN is reported as exploratory only (§1A).")
+        if ct.get('per_cell'):
+            L.append("")
+            L.append(f"  {'from_stage':<11}{'move':<14}{'obs Δprog':>11}{'GNN cf':>10}{'FDR':>5}{'sign':>8}")
+            for r in ct['per_cell']:
+                L.append(f"  {r['from_stage']:<11}{str(r['move_name'])[:13]:<14}"
+                         f"{r['observed_delta']:>+11.3f}{r['counterfactual_influence']:>+10.3f}"
+                         f"{('*' if r['fdr_significant'] else ''):>5}"
+                         f"{('match' if r['sign_match'] else 'DIFF'):>8}")
     L.append("")
 
     rep_dir = _paths.reports_gnn_dir(output_dir)
