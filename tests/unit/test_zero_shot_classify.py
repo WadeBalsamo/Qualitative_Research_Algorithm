@@ -138,7 +138,7 @@ class QraParserAcceptsZeroShotTest(unittest.TestCase):
 
     def setUp(self):
         import qra  # noqa: F401
-        parser, _ts, _cv = qra._build_parser()
+        parser, *_ = qra._build_parser()
         self.parser = parser
 
     def test_classify_accepts_zero_shot(self):

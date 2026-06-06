@@ -1228,7 +1228,7 @@ class TestEndToEndLegacyImport(unittest.TestCase):
 class TestCLILegacySafeCommands(unittest.TestCase):
     def _subcommands(self):
         from qra import _build_parser
-        parser, _ts, _cv = _build_parser()
+        parser, *_ = _build_parser()
         return list(parser._subparsers._actions[1].choices.keys())
 
     def test_ingest_registered(self):
