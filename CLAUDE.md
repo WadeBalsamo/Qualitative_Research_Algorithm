@@ -83,7 +83,7 @@ Unit tests live in `tests/unit/` (hermetic, always run), integration tests in `t
 - Semantic segmentation via embedding similarity (adaptive threshold + topic clustering)
 - Optional LLM boundary refinement (`boundary_review`, `context_expansion`, `coherence_check`)
 - Speaker normalization and anonymization with persistent speaker map
-- **Frozen segments** written to `01_transcripts/segmented/<sid>/segments.jsonl` (Phase 1)
+- **Frozen segments** written to the `segments` table of the project SQLite store (`qra.db`)
 - Therapist segments extracted and interleaved with participant segments in chronological order
 
 ### Stage 2 — Construct Operationalization
@@ -122,8 +122,8 @@ Unit tests live in `tests/unit/` (hermetic, always run), integration tests in `t
 
 ### Stage 6 — Dataset Assembly
 (`src/process/assembly/master_dataset.py`)
-- Assembles `master_segments.jsonl` with confidence tiering
-- `run_full_pipeline` assembles here; standalone `qra assemble` joins frozen segments + classification overlays
+- Assembles `master_segments.csv` (generated export; the analysis layer reads it) with confidence tiering
+- `run_full_pipeline` assembles here; standalone `qra assemble` joins frozen segments + classification overlays (both read from `qra.db`)
 
 ### Stage 7 — Report Generation
 - Coded transcripts (`01_transcripts/coded/`)
@@ -152,35 +152,37 @@ PURER moves frequently co-occur within a single therapist turn/cue-block. When a
 - Utilization > Reframing for forward-application prompts
 - Reframing > Education when anchored to participant's specific story
 
-## On-Disk Layout (Frozen Segments + Overlays)
+## On-Disk Layout (SQLite store + human-facing/exported files)
 
-Phase 1 froze per-session segments to `01_transcripts/segmented/<sid>/segments.jsonl`. Phase 3 separated classification results into overlay files at `02_meta/classifications/`:
+The pipeline's **internal data store is a single SQLite file per project: `qra.db`** (schema in
+`src/process/db.py`). Frozen segments, the five classification overlays, the provenance manifest,
+and validation/content-validity testset metadata all live in `qra.db` tables — they are no longer
+scattered JSONL/JSON files. Everything else on disk is either a human-facing artifact (worksheets,
+reports, figures, coded transcripts), a generated export (`master_segments.csv`, BERT training JSONL),
+or external config (`qra_config.json`, speaker key).
+
+`qra.db` tables: `segments` (frozen raw segmentation + `params_hash`/`segmenter_version`/`ingest_timestamp`
+columns), `theme_labels` / `purer_labels` / `codebook_labels` / `cv_labels` / `gnn_labels` (overlays),
+`classification_manifest`, `testset_worksheets` + `testset_items`, `cv_testsets` + `cv_testset_items`.
 
 ```
 output_dir/
-├── 01_transcripts/
-│   ├── diarized/            # Raw input copies (provenance)
-│   ├── segmented/<sid>/     # FROZEN — raw segmentation only
-│   │   ├── segments.jsonl
-│   │   └── segmentation_meta.json
-│   └── coded/               # Human-readable coded transcripts
+├── qra.db                   # SQLite store: segments, overlays, manifest, testset metadata
+├── 01_transcripts_inputs/   # Raw diarized input copies (provenance)
+├── 01_transcripts/          # (per-session segments are in qra.db, not files)
 ├── 02_meta/
-│   ├── classifications/     # Phase 3 overlays (refreshable)
-│   │   ├── theme_labels.jsonl
-│   │   ├── purer_labels.jsonl
-│   │   ├── codebook_labels.jsonl
-│   │   ├── cross_validation_labels.jsonl
-│   │   └── classification_manifest.json
-│   ├── auditable_logs/      # LLM prompts/responses, checkpoints
+│   ├── auditable_logs/      # LLM prompts/responses, checkpoints (kept as files)
 │   ├── codebook_raw/        # Codebook embedding checkpoints
-│   ├── training_data/       # master_segments.jsonl/.csv, BERT training data
+│   ├── training_data/       # master_segments.csv, BERT training JSONL exports
 │   └── speaker_anonymization_key.json
 ├── 03_analysis_data/        # Session stats, graphing CSVs, per-{session,participant,theme} JSON
 ├── 04_validation/
-│   ├── testsets/<name>/     # FROZEN — validation test sets (vaamr/purer/codebook)
-│   ├── content_validity/<name>/  # FROZEN — content validity testsets
+│   ├── full_transcripts/    # Coded transcripts + human classification forms
+│   ├── testsets/            # FROZEN — human worksheets + AI answer keys (.txt); item metadata in qra.db
+│   ├── content_validity/<name>/  # FROZEN — worksheet/definition_key/AI_answer_key .txt; manifest+items in qra.db
 │   ├── cross_validation/    # Lift statistics
 │   └── human_coding_evaluation_set.csv
+├── _legacy_files/           # (only if migrated) original JSONL/JSON moved here, non-destructively
 ├── 05_figures/              # PNG visualization figures (incl. gnn_*.png)
 ├── 06_reports/              # Human-readable text reports (tiered, numbered)
 │   ├── 00_READ_ME.txt           # guide to the tree + reading order
@@ -208,15 +210,16 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 | `qra.py` | CLI entry point (setup / run / analyze / ingest / classify / assemble / testset / cv) |
 | `src/process/orchestrator.py` | Stage sequencing, `run_full_pipeline`, standalone `stage_*` functions |
 | `src/process/config.py` | `PipelineConfig` dataclass — single source of truth for all settings |
-| `src/process/segments_io.py` | Frozen per-session segment I/O, `params_hash`, `load_segments_for_stage` |
-| `src/process/classifications_io.py` | Overlay read/write, provenance manifest (Phase 3) |
-| `src/process/_freeze.py` | Freeze enforcement primitives (atomic write, SHA verification) |
-| `src/process/legacy_migration.py` | Pre-modular project migration shim (legacy-only; safe to remove once no pre-v3 project dirs remain in use) |
+| `src/process/db.py` | SQLite store: `qra.db` schema (12 tables), `open_db()` atomic-transaction context manager, WAL, JSON-column helpers |
+| `src/process/segments_io.py` | Frozen segment I/O (SQLite `segments` table), `params_hash`, `read_master_segments` (frozen+overlays), `load_segments_for_stage` |
+| `src/process/classifications_io.py` | Overlay tables read/write (SQLite UPSERT), `read_overlay`/`overlay_exists`/`remap_overlay_segment_ids`, provenance manifest |
+| `src/process/_freeze.py` | Freeze primitives — `FrozenArtifactError`, SHA verification (still used for on-disk frozen .txt worksheets) |
+| `src/process/legacy_migration.py` | Migration shim: v2.0→per-session, v2.5→v3 layout, **JSONL→SQLite (`migrate_jsonl_to_sqlite`)**, and `qra_config.json` default-fill (`upgrade_config_file`) |
 | `src/process/transcript_ingestion.py` | Semantic segmentation logic, `ConversationalSegmenter` |
 | `src/process/llm_segmentation.py` | LLM-assisted segmentation boundary refinement |
 | `src/process/speaker_anonymization.py` | Persistent speaker ID mapping across runs |
 | `src/process/speaker_filter.py` | Speaker inclusion/exclusion rules per classifier |
-| `src/process/output_paths.py` | Single source of truth for ALL output directory paths |
+| `src/process/output_paths.py` | Single source of truth for ALL output paths (incl. `db_path` → `qra.db`); overlay/manifest path helpers retained as legacy strings |
 | `src/process/output_index.py` | `00_index.txt` generation |
 | `src/process/cross_validation.py` | VAAMR × VCE code co-occurrence lift statistics |
 | `src/process/cue_blocks.py` | Canonical cue-block builder (run of therapist turns between two participant turns); unifies orchestrator/analysis/gnn implementations |
@@ -291,8 +294,9 @@ LLM backends: LM Studio (local), OpenRouter (`OPENROUTER_API_KEY`), Replicate (`
 
 ## Key Design Invariants
 
-1. **Frozen segmentation**: Once segmented, segments are frozen to `01_transcripts/segmented/<sid>/` and never rewritten (no `master_segments.jsonl` mutation on re-runs). Only raw-segmentation fields are persisted (no classification data).
-2. **Classification overlays**: Re-running a classifier overwrites only its `02_meta/classifications/<key>_labels.jsonl` overlay. Frozen segments remain untouched.
-3. **Multi-kind test sets**: VAAMR testsets sample participant segments (stratified by cohort). PURER testsets sample therapist segments with non-null labels (stratified by PURER primary). Codebook testsets sample participant segments with non-empty ensemble labels.
-4. **Content-validity freeze**: Content-validity testsets are built from framework exemplar/subtle/adversarial utterances. Human worksheets and definition keys are frozen; AI answer keys are refreshable. Codebook CV is deferred (no exemplar utterances yet).
-5. **Legacy migration**: Pre-modular project directories with `master_segments.jsonl` but no `01_transcripts/segmented/` are auto-migrated on first run via `src/process/legacy_migration.py`.
+1. **SQLite store**: The project's internal data lives in one `qra.db` per `output_dir` (`src/process/db.py`). Each `open_db()` `with` block is one atomic transaction (commit on clean exit, rollback on exception) — this replaces the old tmp-file+rename atomicity. `segment_id` is the join key across the `segments` table and every overlay table.
+2. **Frozen segmentation**: Once segmented, a session's rows in the `segments` table are frozen — `write_session_segments` raises `FrozenArtifactError` on overwrite-without-force. Only raw-segmentation fields are persisted (no classification data); classification fields stay at dataclass defaults on read-back.
+3. **Classification overlays**: Re-running a classifier replaces only its overlay table (`theme_labels` / `purer_labels` / …) — `write_*_overlay` is a full table replace, `merge_*_overlay` is an UPSERT by `segment_id`. Frozen segments are untouched. `read_overlay(run_dir, key)` returns records sorted by `segment_id`.
+4. **Multi-kind test sets**: VAAMR testsets sample participant segments (stratified by cohort). PURER testsets sample therapist segments with non-null labels (stratified by PURER primary). Codebook testsets sample participant segments with non-empty ensemble labels. The human worksheet (`.txt`) stays frozen on disk; per-item metadata + content SHAs live in `testset_worksheets`/`testset_items`.
+5. **Content-validity freeze**: Built from framework exemplar/subtle/adversarial utterances. Worksheet/definition-key `.txt` stay frozen on disk; manifest + items live in `cv_testsets`/`cv_testset_items` (the SHA there drives drift detection); AI answer keys are refreshable. Codebook CV is deferred (no exemplar utterances yet).
+6. **Migration chain** (auto-run in `stage_ingest`, all idempotent): v2.0 monolithic `master_segments.jsonl` → per-session frozen segments; v2.5 → v3 directory layout; **v3-JSONL → SQLite** (`migrate_jsonl_to_sqlite` reads the old files, writes `qra.db` via temp-DB + atomic rename, relocates originals to `_legacy_files/`). `upgrade_config_file` additionally fills defaults for newly-added parameters in a legacy `qra_config.json` (non-destructive).

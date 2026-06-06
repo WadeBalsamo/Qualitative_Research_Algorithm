@@ -88,19 +88,14 @@ class TestCreateFrozenTestset(unittest.TestCase):
                          "Sidecar .meta.json must live under 02_meta, not the worksheet dir")
 
     def test_meta_sidecar_created(self):
+        from process.assembly.human_forms import read_testset_meta
         segs = _make_pool(10)
         create_frozen_testset(
             segs, None, self.tmpdir,
             n_sets=1, set_index=1,
             fraction_per_set=0.3, random_seed=42, codebook_enabled=False,
         )
-        meta_path = _paths.testset_meta_path(self.tmpdir, 1)
-        self.assertTrue(os.path.isfile(meta_path), "Sidecar .meta.json must be written")
-        self.assertIn(os.path.join('02_meta', 'testset_meta'), meta_path,
-                      "Sidecar must be stored under 02_meta/testset_meta")
-        import json
-        with open(meta_path) as fh:
-            meta = json.load(fh)
+        meta = read_testset_meta(self.tmpdir, 1)
         self.assertIn('segments', meta)
         self.assertTrue(len(meta['segments']) > 0)
         first = meta['segments'][0]
@@ -440,9 +435,11 @@ class TestContentChangeWarning(unittest.TestCase):
     def test_no_validation_if_no_meta_sidecar(self):
         """Gracefully skips content check when .meta.json is absent (legacy testsets)."""
         import io, contextlib
-        # Remove the meta file to simulate a testset with no recorded SHA256.
-        meta_path = _paths.testset_meta_path(self.tmpdir, 1)
-        os.remove(meta_path)
+        from process import db
+        # Delete the worksheet rows to simulate a testset with no recorded SHA256.
+        with db.open_db(self.tmpdir) as conn:
+            conn.execute("DELETE FROM testset_items WHERE worksheet_n = ?", (1,))
+            conn.execute("DELETE FROM testset_worksheets WHERE worksheet_n = ?", (1,))
 
         segs_by_id = self._mutated_segs_by_id()
         buf = io.StringIO()

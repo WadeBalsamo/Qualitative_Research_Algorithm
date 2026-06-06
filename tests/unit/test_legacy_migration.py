@@ -88,17 +88,22 @@ class TestMigrateLegacySegments(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_creates_per_session_files(self):
+        from process import segments_io as sio
         n = legacy_migration.migrate_legacy_segments(self.tmpdir)
         self.assertEqual(n, 2)
-        self.assertTrue(os.path.isfile(_paths.session_segments_path(self.tmpdir, 'c1s1')))
-        self.assertTrue(os.path.isfile(_paths.session_segments_path(self.tmpdir, 'c1s2')))
+        sessions = sio.list_segmented_sessions(self.tmpdir)
+        self.assertIn('c1s1', sessions)
+        self.assertIn('c1s2', sessions)
+        self.assertTrue(sio.read_session_segments(self.tmpdir, 'c1s1'))
+        self.assertTrue(sio.read_session_segments(self.tmpdir, 'c1s2'))
 
     def test_meta_has_legacy_hash(self):
+        from process import segments_io as sio
         legacy_migration.migrate_legacy_segments(self.tmpdir)
-        meta_path = _paths.segmentation_meta_path(self.tmpdir, 'c1s1')
-        with open(meta_path) as f:
-            meta = json.load(f)
-        self.assertEqual(meta['params_hash'], 'legacy-pre-modular')
+        # Legacy-migrated sessions carry the 'legacy-pre-modular' params_hash
+        # sentinel, so is_segmentation_fresh returns True regardless of the
+        # current params hash (no forced re-segmentation).
+        self.assertTrue(sio.is_segmentation_fresh(self.tmpdir, 'c1s1', 'x'))
 
     def test_skips_already_migrated(self):
         legacy_migration.migrate_legacy_segments(self.tmpdir)

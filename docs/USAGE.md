@@ -85,7 +85,7 @@ python qra.py run --config ./qra_config.json --n-runs 5
 - Supports the 54-code Varieties of Contemplative Experience (VCE) codebook
 
 ### 5. **Classification Overlays**
-- Per-classifier results stored as independent overlay files at `02_meta/classifications/`
+- Per-classifier results stored as independent overlay tables in `qra.db`
 - Re-classification never touches frozen segments
 - Enables post-hoc re-analysis without reprocessing entire transcripts
 
@@ -145,7 +145,7 @@ The system is designed to support:
 - Ensemble methods combining different classifier outputs
 - Post-hoc re-analysis of any subset of classifications
 
-All classification overlays are stored independently in `02_meta/classifications/`, allowing for flexible re-analysis without reprocessing frozen segments.
+All classification overlays are stored independently as tables in `qra.db`, allowing for flexible re-analysis without reprocessing frozen segments.
 
 ## Output Directory Structure
 
@@ -154,22 +154,14 @@ After a complete pipeline run, the output directory contains:
 ```
 output_dir/
 ├── 00_index.txt                              # Auto-generated file index
+├── qra.db                                    # SQLite store: segments, overlays, manifest, testsets
 ├── 01_transcripts/
 │   ├── diarized/                             # Raw input copies (provenance)
-│   ├── segmented/<sid>/                      # FROZEN raw segmentation
-│   │   ├── segments.jsonl
-│   │   └── segmentation_meta.json
 │   └── coded/                                # Human-readable coded transcripts
 ├── 02_meta/
-│   ├── classifications/                      # Phase 3 overlays (refreshable)
-│   │   ├── theme_labels.jsonl
-│   │   ├── purer_labels.jsonl
-│   │   ├── codebook_labels.jsonl
-│   │   ├── cross_validation_labels.jsonl
-│   │   └── classification_manifest.json
 │   ├── auditable_logs/                       # LLM prompts/responses, checkpoints
 │   ├── codebook_raw/                         # Codebook embedding checkpoints
-│   ├── training_data/                        # master_segments.jsonl/.csv
+│   ├── training_data/                        # master_segments.csv (export), BERT training data
 │   └── speaker_anonymization_key.json
 ├── 03_analysis_data/
 │   ├── session_stats/
@@ -187,6 +179,8 @@ output_dir/
 ├── 06_reports/
 └── 07_meta/                                  # Legacy directory
 ```
+
+> Internal pipeline data (segments, classification overlays, provenance manifest, testset metadata) lives in `qra.db`; the directories and files above are human-facing or generated exports.
 
 ## Detailed Usage by Command
 
@@ -437,7 +431,7 @@ The menu adapts to detected project state. Available actions:
 
 | Option | Action |
 |--------|--------|
-| **1 — Ingest & Freeze Segments** | Stage 1: segment transcripts, write frozen `segments.jsonl` (migrates legacy layouts) |
+| **1 — Ingest & Freeze Segments** | Stage 1: segment transcripts, write the frozen `segments` table in `qra.db` (migrates legacy layouts) |
 | **2 — Classify VAAMR** | Stage 3: participant-segment VAAMR classification (optional zero-shot mode) |
 | **3 — Classify PURER** | Stage 3c: therapist cue-block PURER classification; sub-menu to re-run all / change model / add a run / redo one run |
 | **4 — Assemble Master Dataset** | Stage 6: join overlays → `master_segments` + coded transcripts + validation artifacts |
@@ -469,7 +463,7 @@ QRA is designed for qualitative research in psychotherapy and mindfulness-based 
 │  - Optional LLM-assisted boundary refinement                │
 │  - Speaker normalization and anonymization                  │
 │  - Therapist segments extracted and interleaved             │
-│  - FROZEN to 01_transcripts/segmented/<sid>/segments.jsonl  │
+│  - FROZEN to the `segments` table in qra.db                │
 └─────────────────────────────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -565,10 +559,10 @@ QRA is designed for qualitative research in psychotherapy and mindfulness-based 
 ### Data Flow
 
 1. **Input**: Diarized transcripts (JSON or VTT)
-2. **Ingest** (Stage 1): Segments frozen to `01_transcripts/segmented/<sid>/segments.jsonl` (once; never rewritten)
-3. **Classify** (Stage 3 / 3b / 3c): Each classifier writes its own overlay at `02_meta/classifications/<key>_labels.jsonl` (re-runnable independently)
+2. **Ingest** (Stage 1): Segments frozen to the `segments` table in `qra.db` (once; never rewritten)
+3. **Classify** (Stage 3 / 3b / 3c): Each classifier writes its own overlay table (`<key>_labels`) in `qra.db` (re-runnable independently)
 4. **Validate** (Stage 2 / 4 / 5): Content-validity testsets, cross-validation, human evaluation sets
-5. **Assemble** (Stage 6): Joins frozen segments + overlays into `master_segments.jsonl`
+5. **Assemble** (Stage 6): Joins frozen segments + overlays into `master_segments.csv`
 6. **Report** (Stage 7): Coded transcripts, test sets, stats, training data
 7. **Analyze** (Stage 8): Longitudinal reports, figures, graph-ready CSVs, summaries
 
@@ -837,22 +831,20 @@ The GNN layer is ON by default and runs at analyze-time (set `enabled=False` to 
 
 | File | Format | Description |
 |------|--------|-------------|
-| `01_transcripts/segmented/<sid>/segments.jsonl` | JSONL | Frozen segmentation: one `Segment` object per line |
-| `01_transcripts/segmented/<sid>/segmentation_meta.json` | JSON | Segmentation parameters hash and metadata |
-| `02_meta/classifications/theme_labels.jsonl` | JSONL | VAAMR classification overlay (refreshable) |
-| `02_meta/classifications/purer_labels.jsonl` | JSONL | PURER classification overlay (refreshable) |
-| `02_meta/classifications/codebook_labels.jsonl` | JSONL | VCE codebook overlay (refreshable) |
-| `02_meta/classifications/cross_validation_labels.jsonl` | JSONL | Cross-validation overlay |
-| `02_meta/classifications/gnn_labels.jsonl` | JSONL | Graph-distilled consensus overlay (`gnn_vaamr_pred`/`conf`, `gnn_purer_pred`/`conf`, `gnn_label_source`) |
+| `qra.db` › `segments` table | SQLite table | Frozen segmentation: one `Segment` row per segment, with `params_hash`/`segmenter_version`/`ingest_timestamp` columns |
+| `qra.db` › `theme_labels` table | SQLite table | VAAMR classification overlay (refreshable) |
+| `qra.db` › `purer_labels` table | SQLite table | PURER classification overlay (refreshable) |
+| `qra.db` › `codebook_labels` table | SQLite table | VCE codebook overlay (refreshable) |
+| `qra.db` › `cv_labels` table | SQLite table | Cross-validation overlay |
+| `qra.db` › `gnn_labels` table | SQLite table | Graph-distilled consensus overlay (`gnn_vaamr_pred`/`conf`, `gnn_purer_pred`/`conf`, `gnn_label_source`) |
 | `02_meta/gnn/segment_embeddings.npz` | NPZ | Cached Qwen3 segment embeddings (incremental) |
 | `02_meta/gnn/model/weights.pt` + `manifest.json` | PyTorch/JSON | Trained GraphSAGE checkpoint + config/seed/metrics |
-| `02_meta/classifications/classification_manifest.json` | JSON | Provenance record of all overlays |
-| `02_meta/training_data/master_segments.jsonl` | JSONL | Full assembled dataset (segments + all overlays joined) |
-| `02_meta/training_data/master_segments.csv` | CSV | Tabular version of master segments |
+| `qra.db` › `classification_manifest` table | SQLite table | Provenance record of all overlays |
+| `02_meta/training_data/master_segments.csv` | CSV | Full assembled dataset (segments + all overlays joined) — generated export the analysis layer reads; the master dataset is no longer written as `master_segments.jsonl` |
 
 ### Segment Object Fields
 
-Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `classification_tools/data_structures.py`):
+Each row in `master_segments.csv` (and each segment row joined from `qra.db`) is a serialized `Segment` dataclass (see `classification_tools/data_structures.py`):
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -942,15 +934,15 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 
 | File/Directory | Description |
 |----------------|-------------|
-| `04_validation/testsets/<name>/manifest.json` | Test set metadata |
-| `04_validation/testsets/<name>/segments_snapshot.jsonl` | Frozen segment snapshot |
-| `04_validation/testsets/<name>/human_worksheet.txt` | Frozen human coding worksheet |
-| `04_validation/testsets/<name>/AI_answer_key.txt` | Refreshable AI answer key |
-| `04_validation/content_validity/<name>/manifest.json` | Content-validity metadata |
-| `04_validation/content_validity/<name>/items.jsonl` | Content-validity items |
-| `04_validation/content_validity/<name>/human_worksheet.txt` | Frozen human worksheet |
-| `04_validation/content_validity/<name>/definition_key.txt` | Frozen definition key |
-| `04_validation/content_validity/<name>/AI_answer_key.txt` | Refreshable AI answer key |
+| `qra.db` › `testset_worksheets` table | Test set metadata + frozen segment snapshot (rows in `testset_items`) |
+| `qra.db` › `testset_items` table | Frozen per-item rows for each named testset |
+| `04_validation/testsets/<name>/human_worksheet.txt` | Frozen human coding worksheet (text) |
+| `04_validation/testsets/<name>/AI_answer_key.txt` | Refreshable AI answer key (text) |
+| `qra.db` › `cv_testsets` table | Content-validity metadata |
+| `qra.db` › `cv_testset_items` table | Content-validity items |
+| `04_validation/content_validity/<name>/human_worksheet.txt` | Frozen human worksheet (text) |
+| `04_validation/content_validity/<name>/definition_key.txt` | Frozen definition key (text) |
+| `04_validation/content_validity/<name>/AI_answer_key.txt` | Refreshable AI answer key (text) |
 | `04_validation/cross_validation/cross_validation_results.json` | Lift statistics |
 | `04_validation/cross_validation/top_theme_code_associations.json` | Top associations |
 | `04_validation/human_coding_evaluation_set.csv` | Evaluation set for human coders |
@@ -991,7 +983,7 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `segments_io.py` | Frozen segment I/O, `params_hash`, `load_segments_for_stage` |
 | `classifications_io.py` | Overlay read/write, provenance manifest (Phase 3) |
 | `_freeze.py` | Freeze enforcement (atomic write, SHA verification) |
-| `legacy_migration.py` | Pre-modular project migration shim |
+| `legacy_migration.py` | Pre-modular project migration shim; `migrate_jsonl_to_sqlite()` folds legacy per-session/overlay JSONL into `qra.db` on the next run (old files moved non-destructively to `<output_dir>/_legacy_files/`); `upgrade_config_file()` upgrades legacy `qra_config.json` in place |
 | `transcript_ingestion.py` | Load VTT/JSON, `ConversationalSegmenter` |
 | `llm_segmentation.py` | LLM-assisted segmentation boundary refinement |
 | `speaker_anonymization.py` | Persistent speaker ID mapping |

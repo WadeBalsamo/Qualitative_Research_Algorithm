@@ -63,7 +63,7 @@ This trial is the primary deployment context for QRA. The four-cohort iterative 
 | **Language pattern discovery** | The labeled corpus is indexed chronologically by session and speaker. Every stage transition is extracted as a FROM → CUE → TO triple: participant utterance before, therapist response during, participant utterance after. The full text of each triple is retrievable, grouped by transition type, across the entire trial corpus. |
 | **Corpus-level statistical analysis** | State transition matrices (within-session and between-session), PURER × VAAMR conditional lift tables, and per-participant longitudinal trajectories are computed in pure pandas/numpy on the assembled master dataset — no LLMs involved. |
 | **Layered architecture** | 8-stage data pipeline: ingestion → operationalization → classification → cross-validation → assembly → reporting. Each stage is independently runnable and gated by a frozen data boundary. |
-| **Immutable data checkpoints** | Segmentation results are written once and frozen (`01_transcripts/segmented/`). Classifiers write to independent overlay files. Re-running any classifier never touches frozen segments — immutable staging → refreshable marts. |
+| **Immutable data checkpoints** | Segmentation results are written once and frozen (the `segments` table in `qra.db`). Classifiers write to independent overlay tables. Re-running any classifier never touches frozen segments — immutable staging → refreshable marts. |
 | **Classification infrastructure** | Multi-run LLM consensus voting (unanimous / majority / split / none, confidence-tiered) for VAAMR/PURER; embedding + LLM ensemble with weighted reconciliation for 54-code VCE codebook. Split-vote segments auto-flagged for human review. |
 | **Backend abstraction layer** | A single `LLMClient` interface wraps any OpenAI-compatible endpoint: LM Studio (local GPU), OpenRouter, Ollama. Swap backends with a CLI flag. Optimized for local deployment on confidential clinical data. |
 | **Hot-reloadable definitions** | VAAMR, PURER, and VCE codebook definitions live in human-editable Markdown files parsed at runtime. Researchers refine operational definitions between cohorts without touching Python. |
@@ -255,7 +255,7 @@ Stage 3b — VCE codebook classification (embedding + LLM ensemble, optional)
 Stage 3c — PURER cue-block classification (therapist segments, optional)
 Stage 4  — Cross-framework lift statistics (VAAMR × VCE co-occurrence, requires 3b)
 Stage 5  — Validation set generation (stratified blind-coding sample)
-Stage 6  — Dataset assembly (frozen segments + overlays → master_segments.jsonl)
+Stage 6  — Dataset assembly (frozen segments + overlays → master_segments.csv)
 Stage 7  — Report generation (coded transcripts, human forms, stats)
 Stage 8  — Post-hoc analysis (trajectories, cue-response, figures) — also via `qra analyze`
 ```
@@ -270,7 +270,7 @@ Therapist and participant segments are separated at this stage. Therapist segmen
 
 Boundaries are calculated with embeddings, and ambiguous-case LLM-assisted boundary refinements: `boundary_review`, `context_expansion`, `coherence_check`.
 
-**Output:** `01_transcripts/segmented/<sid>/segments.jsonl` + `segmentation_meta.json` — frozen, never rewritten upon adding new data or changing framework definitions/exemplars. Raw input files are preserved at `01_transcripts_inputs/`.
+**Output:** → `segments` table in `qra.db` (frozen) — one row per segment, with `params_hash`/`segmenter_version`/`ingest_timestamp` columns; never rewritten upon adding new data or changing framework definitions/exemplars. Raw input files are preserved at `01_transcripts_inputs/`.
 
 ### Stage 3 — VAAMR Classification
 
@@ -282,7 +282,7 @@ Stage definition order is randomized per run (temperature > 0) to reduce positio
 
 `n_runs` calls per segment → majority vote → confidence tier. Agreement levels: `unanimous` / `majority` / `split` / `none`. Split/none → `needs_review=True`.
 
-**Output:** `02_meta/classifications/theme_labels.jsonl`
+**Output:** → `theme_labels` table in `qra.db` (refreshable overlay)
 
 ### Stage 3b — Codebook Ensemble
 
@@ -296,13 +296,13 @@ Ensemble reconciliation: union (default, recall-optimized) or intersection (prec
 
 GPU memory hand-off: reuses segmentation embedding model when model IDs match.
 
-**Output:** `02_meta/classifications/codebook_labels.jsonl`
+**Output:** → `codebook_labels` table in `qra.db` (refreshable overlay)
 
 ### Stage 3c — PURER Cue-Block Classification
 
 Therapist response between consecutive participant turns = one cue-block, one PURER label. Context window: 6 preceding segments (vs 2 for VAAMR). Long didactic stretches (lesson content) can be skipped via `PurerCueConfig.skip_lesson_content`. Label propagated back to all constituent therapist segments.
 
-**Output:** `02_meta/classifications/purer_labels.jsonl`
+**Output:** → `purer_labels` table in `qra.db` (refreshable overlay)
 
 ### Stage 4 — Cross-Validation Lift Statistics
 
@@ -310,15 +310,15 @@ Therapist response between consecutive participant turns = one cue-block, one PU
 
 Lift(stage, code) = P(code | stage) / P(code). Default thresholds: lift ≥ 1.5 and minimum 3 segments. Currently exploratory — computes empirical co-occurrence patterns. An `expected_codes` pre-specification (encoding theoretical VCE predictions per VAAMR stage) is planned before Cohort 3, enabling mechanical expected-vs-observed comparison implementing Varela's (1996) neurophenomenological mutual-constraints logic.
 
-**Output:** `02_meta/classifications/cross_validation_labels.jsonl`, lift report
+**Output:** → `cv_labels` table in `qra.db` (refreshable overlay), lift report
 
 ### Stage 6 — Assembly
 
 `process/assembly/master_dataset.py`
 
-Joins frozen segments + all overlay files. Final label priority: `adjudicated > human_consensus > llm_zero_shot`. Provenance fully auditable per segment.
+Joins frozen `segments` + all overlay tables. Final label priority: `adjudicated > human_consensus > llm_zero_shot`. Provenance fully auditable per segment.
 
-**Output:** `02_meta/training_data/master_segments.jsonl`, `master_segments.csv`. Coded transcripts → `04_validation/full_transcripts/`. Human classification forms → `04_validation/full_transcripts/`.
+**Output:** `02_meta/training_data/master_segments.csv` (generated export the analysis layer reads). Coded transcripts → `04_validation/full_transcripts/`. Human classification forms → `04_validation/full_transcripts/`.
 
 ---
 
@@ -327,21 +327,12 @@ Joins frozen segments + all overlay files. Final label priority: `adjudicated > 
 ```
 output_dir/
 ├── 00_index.txt
-├── 01_transcripts/
-│   └── segmented/<sid>/          # FROZEN — never rewritten
-│       ├── segments.jsonl
-│       └── segmentation_meta.json
+├── qra.db                        # SQLite store: segments, overlays, manifest, testsets
 ├── 01_transcripts_inputs/        # Raw input VTT/JSON copies (provenance)
 ├── 02_meta/
-│   ├── classifications/          # Refreshable overlays
-│   │   ├── theme_labels.jsonl
-│   │   ├── purer_labels.jsonl
-│   │   ├── codebook_labels.jsonl
-│   │   ├── cross_validation_labels.jsonl
-│   │   └── classification_manifest.json
 │   ├── auditable_logs/           # LLM prompts/responses/checkpoints
 │   ├── codebook_raw/             # Embedding checkpoints
-│   ├── training_data/            # master_segments.jsonl/.csv, BERT training data,
+│   ├── training_data/            # master_segments.csv (export), BERT training data,
 │   │                             #   mindfulbert_dataset.jsonl + datasheet (Track C)
 │   ├── gnn/                      # GNN model checkpoint + segment embedding cache
 │   │   ├── model/                # weights.pt + manifest.json
@@ -377,6 +368,8 @@ output_dir/
     └── 07_methods_appendix.txt
 ```
 
+> Internal pipeline data (segments, classification overlays, provenance manifest, testset metadata) lives in `qra.db`; the files below it are human-facing or generated exports.
+
 ---
 
 ## Module Map
@@ -394,7 +387,7 @@ output_dir/
 | `process/speaker_anonymization.py` | Persistent speaker ID mapping across runs |
 | `process/speaker_filter.py` | Speaker inclusion/exclusion rules per classifier |
 | `process/output_paths.py` | Single source of truth for all output directory paths |
-| `process/legacy_migration.py` | Auto-migration: v2.0 → per-session segments; v2.5 → v3 directory layout |
+| `process/legacy_migration.py` | Auto-migration: v2.0 → per-session segments; v2.5 → v3 directory layout; `migrate_jsonl_to_sqlite()` folds per-session/overlay JSONL into `qra.db` on the next run (old files moved non-destructively to `<output_dir>/_legacy_files/`); `upgrade_config_file()` fills defaults for newly-added config parameters in place |
 | `process/cross_validation.py` | VAAMR × VCE lift statistics (hard + mixture-weighted/soft) |
 | `process/anonymization_editor.py` | Speaker-key editor with full downstream cascade (`edit-anonymization` / TUI) |
 | `process/setup_wizard.py` | Interactive configuration wizard (presets + 17-step custom walkthrough) |
@@ -533,7 +526,7 @@ Running `python qra.py` with **no subcommand** launches a menu-driven TUI that s
 
 | # | Action |
 |---|--------|
-| 1 | **Ingest & Freeze Segments** — segment transcripts, write frozen `segments.jsonl` (migrates legacy layouts) |
+| 1 | **Ingest & Freeze Segments** — segment transcripts, write the frozen `segments` table in `qra.db` (migrates legacy layouts) |
 | 2 | **Classify — VAAMR** (participant stages; optional zero-shot mode) |
 | 3 | **Classify — PURER** (therapist cue-blocks; sub-menu: re-run all / change model / add a run / redo one run) |
 | 4 | **Assemble master dataset** — join overlays → `master_segments` + coded transcripts + validation artifacts |
@@ -572,8 +565,8 @@ QRA implements a scalable pipeline for maintaining human-validated datasets acro
 
 ## Key Design Invariants
 
-1. **Frozen segmentation** — `01_transcripts/segmented/<sid>/segments.jsonl` is written once. No re-segmentation on re-runs. Only raw-segmentation fields are persisted; no classification data in segment files.
-2. **Overlay separation** — re-running any classifier overwrites only its `02_meta/classifications/<key>_labels.jsonl`. Frozen segments are untouched.
+1. **Frozen segmentation** — the `segments` table in `qra.db` is written once (overwrite-without-force raises `FrozenArtifactError`). No re-segmentation on re-runs. Only raw-segmentation fields are persisted; no classification data in the segments table.
+2. **Overlay separation** — re-running any classifier overwrites only its overlay table (`<key>_labels`) in `qra.db`. Frozen segments are untouched.
 3. **Framework boundary** — VAAMR classifies participants; PURER classifies therapists. Therapist segments appear as read-only context in participant classification prompts but are never VAAMR-classified.
 4. **Auditable provenance** — every segment's final label carries its source. The resolution order is `adjudicated` > `human_consensus` > `gnn_consensus` > `llm_zero_shot`; the `gnn_consensus` tier is engaged only when `gnn_authoritative=True` (after the graph passes its reliability gate), and the raw multi-run LLM ballots remain visible per segment regardless. Every LLM call is logged with full prompt and response to `02_meta/auditable_logs/`.
 5. **Hot markdown definitions** — VAAMR, PURER, and VCE codebook definitions live in human-editable `.md` files, parsed at runtime. Researchers can refine operational definitions between cohorts without touching Python.

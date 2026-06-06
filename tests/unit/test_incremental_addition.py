@@ -98,19 +98,15 @@ class TestMergeOverlay(unittest.TestCase):
         seg.codebook_confidence = {'VE.1': 0.9}
         return seg
 
-    def _read_jsonl(self, path):
-        with open(path, encoding='utf-8') as fh:
-            return [json.loads(ln) for ln in fh if ln.strip()]
-
     # --- theme overlay ---
 
     def test_merge_into_empty_overlay(self):
-        """merge_theme_overlay on a fresh dir creates the file with sorted rows."""
+        """merge_theme_overlay on a fresh dir creates the overlay with sorted rows."""
         from process import classifications_io as cio
         seg = self._classified_theme_seg('seg_001', primary=2)
-        path = cio.merge_theme_overlay(self.tmpdir, [seg])
-        self.assertTrue(os.path.isfile(path))
-        rows = self._read_jsonl(path)
+        cio.merge_theme_overlay(self.tmpdir, [seg])
+        self.assertTrue(cio.overlay_exists(self.tmpdir, 'theme'))
+        rows = cio.read_overlay(self.tmpdir, 'theme')
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['segment_id'], 'seg_001')
         self.assertEqual(rows[0]['primary_stage'], 2)
@@ -125,7 +121,7 @@ class TestMergeOverlay(unittest.TestCase):
         seg3 = self._classified_theme_seg('seg_003', primary=3)
         cio.merge_theme_overlay(self.tmpdir, [seg3])
 
-        rows = self._read_jsonl(cio.overlay_path(self.tmpdir, 'theme'))
+        rows = cio.read_overlay(self.tmpdir, 'theme')
         ids = [r['segment_id'] for r in rows]
         self.assertEqual(ids, sorted(ids))
         self.assertIn('seg_001', ids)
@@ -148,7 +144,7 @@ class TestMergeOverlay(unittest.TestCase):
         updated_seg = self._classified_theme_seg('seg_001', primary=4)
         cio.merge_theme_overlay(self.tmpdir, [updated_seg])
 
-        rows = self._read_jsonl(cio.overlay_path(self.tmpdir, 'theme'))
+        rows = cio.read_overlay(self.tmpdir, 'theme')
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['primary_stage'], 4)
 
@@ -163,7 +159,7 @@ class TestMergeOverlay(unittest.TestCase):
         seg_b_updated = self._classified_theme_seg('seg_b', primary=4)
         cio.merge_theme_overlay(self.tmpdir, [seg_b_updated])
 
-        rows = self._read_jsonl(cio.overlay_path(self.tmpdir, 'theme'))
+        rows = cio.read_overlay(self.tmpdir, 'theme')
         self.assertEqual(len(rows), 3)
         by_id = {r['segment_id']: r for r in rows}
         self.assertEqual(by_id['seg_a']['primary_stage'], 0)
@@ -179,7 +175,7 @@ class TestMergeOverlay(unittest.TestCase):
         seg2 = self._classified_purer_seg('th_002', primary=2)
         cio.merge_purer_overlay(self.tmpdir, [seg2])
 
-        rows = self._read_jsonl(cio.overlay_path(self.tmpdir, 'purer'))
+        rows = cio.read_overlay(self.tmpdir, 'purer')
         ids = [r['segment_id'] for r in rows]
         self.assertEqual(ids, sorted(ids))
         self.assertEqual(len(rows), 2)
@@ -197,7 +193,7 @@ class TestMergeOverlay(unittest.TestCase):
         seg2.codebook_labels_ensemble = ['VE.2']
         cio.merge_codebook_overlay(self.tmpdir, [seg2])
 
-        rows = self._read_jsonl(cio.overlay_path(self.tmpdir, 'codebook'))
+        rows = cio.read_overlay(self.tmpdir, 'codebook')
         ids = [r['segment_id'] for r in rows]
         self.assertEqual(ids, sorted(ids))
         self.assertEqual(len(rows), 2)
@@ -206,7 +202,7 @@ class TestMergeOverlay(unittest.TestCase):
         self.assertEqual(by_id['seg_002']['codebook_labels_ensemble'], ['VE.2'])
 
     def test_merge_cv_overlay_round_trip(self):
-        """merge_cross_validation_overlay: file is created and is valid JSONL."""
+        """merge_cross_validation_overlay: overlay is created and holds 2 rows."""
         from process import classifications_io as cio
         seg = _make_segment('seg_001')
         cio.write_cross_validation_overlay(self.tmpdir, [seg])
@@ -214,10 +210,9 @@ class TestMergeOverlay(unittest.TestCase):
         seg2 = _make_segment('seg_002')
         cio.merge_cross_validation_overlay(self.tmpdir, [seg2])
 
-        path = cio.overlay_path(self.tmpdir, 'cv')
-        self.assertTrue(os.path.isfile(path))
-        rows = self._read_jsonl(path)
-        # File must be valid JSONL with 2 rows
+        self.assertTrue(cio.overlay_exists(self.tmpdir, 'cv'))
+        rows = cio.read_overlay(self.tmpdir, 'cv')
+        # Overlay must hold 2 rows
         self.assertEqual(len(rows), 2)
         ids = [r['segment_id'] for r in rows]
         self.assertIn('seg_001', ids)
@@ -564,9 +559,8 @@ class TestSubsetOverlayMerge(unittest.TestCase):
         )
 
         # Read the initial overlay rows for seg_a and seg_b
-        with open(cio.overlay_path(self.tmpdir, 'theme'), encoding='utf-8') as fh:
-            initial_rows = {json.loads(ln)['segment_id']: json.loads(ln)
-                            for ln in fh if ln.strip()}
+        initial_rows = {r['segment_id']: r
+                        for r in cio.read_overlay(self.tmpdir, 'theme')}
 
         # Run incremental classification for a new session c1s3
         seg_c = _make_segment(segment_id='seg_c', session_id='c1s3')
@@ -579,20 +573,19 @@ class TestSubsetOverlayMerge(unittest.TestCase):
         )
 
         # Read the updated overlay
-        with open(cio.overlay_path(self.tmpdir, 'theme'), encoding='utf-8') as fh:
-            updated_rows = {json.loads(ln)['segment_id']: json.loads(ln)
-                            for ln in fh if ln.strip()}
+        updated_rows = {r['segment_id']: r
+                        for r in cio.read_overlay(self.tmpdir, 'theme')}
 
         # All three segments present
         self.assertIn('seg_a', updated_rows)
         self.assertIn('seg_b', updated_rows)
         self.assertIn('seg_c', updated_rows)
 
-        # Old rows are byte-identical (same JSON values for all fields)
+        # Old rows are identical field-for-field (record dicts unchanged)
         self.assertEqual(updated_rows['seg_a'], initial_rows['seg_a'],
-                         "seg_a row should be byte-identical after incremental run")
+                         "seg_a row should be unchanged after incremental run")
         self.assertEqual(updated_rows['seg_b'], initial_rows['seg_b'],
-                         "seg_b row should be byte-identical after incremental run")
+                         "seg_b row should be unchanged after incremental run")
 
         # New row has the correct primary_stage
         self.assertEqual(updated_rows['seg_c']['primary_stage'], 3)
@@ -624,8 +617,7 @@ class TestSubsetOverlayMerge(unittest.TestCase):
         )
 
         # Read result
-        with open(cio.overlay_path(self.tmpdir, 'theme'), encoding='utf-8') as fh:
-            rows = {json.loads(ln)['segment_id']: json.loads(ln) for ln in fh if ln.strip()}
+        rows = {r['segment_id']: r for r in cio.read_overlay(self.tmpdir, 'theme')}
 
         self.assertEqual(rows['seg_x']['primary_stage'], 0, "seg_x must be untouched")
         self.assertEqual(rows['seg_y']['primary_stage'], 0, "seg_y must be untouched")

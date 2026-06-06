@@ -9,6 +9,17 @@ return a path string.
 import os
 
 
+# ── Internal data store (SQLite) ──────────────────────────────────────────
+
+def db_path(run_dir: str) -> str:
+    """Project SQLite database holding segments, overlays, manifest, testsets.
+
+    Mirrors ``process.db.db_path``; kept here so path resolution has a single
+    discoverable home alongside every other artifact path.
+    """
+    return os.path.join(run_dir, 'qra.db')
+
+
 # ── Provenance & configuration ────────────────────────────────────────────
 
 def meta_dir(run_dir: str) -> str:

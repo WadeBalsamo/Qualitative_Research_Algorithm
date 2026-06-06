@@ -187,14 +187,7 @@ class TestApplyKeyUpdateCascade(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _read_overlay_ids(self):
-        path = classifications_io.overlay_path(self.tmp, 'theme')
-        ids = []
-        with open(path) as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    ids.append(json.loads(line)['segment_id'])
-        return ids
+        return [r['segment_id'] for r in classifications_io.read_overlay(self.tmp, 'theme')]
 
     def test_cascade_rewrites_everything_consistently(self):
         old_key = ae.load_key(self.tmp)
