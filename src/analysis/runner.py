@@ -631,6 +631,28 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                 traceback.print_exc()
 
     # ----------------------------------------------------------------
+    # 12b. Inter-rater reliability — regenerate IFF the project has imported
+    #      human codes AND the machine state (LLM/GNN/held-out) has changed,
+    #      so IRR always reflects the current models for this validation pass.
+    # ----------------------------------------------------------------
+    try:
+        from . import irr_analysis as _irr
+        _irr_res = _irr.maybe_run_irr(output_dir, _pipeline_config, verbose=verbose)
+        if _irr_res == 'unchanged':
+            log("    IRR: human codes present, machine state unchanged — kept existing report.")
+        elif _irr_res is not None:
+            files_generated.append(_paths.reports_irr_path(output_dir))
+            _drift = _irr_res.get('testset_drift') or []
+            if _drift:
+                log(f"    ‼ IRR: {len(_drift)} test-set item(s) DRIFTED from the human-coded "
+                    "text — see the report header / run `qra irr run` to inspect.")
+            log(f"    IRR regenerated (GNN axis: {_irr_res.get('gnn_axis')}): "
+                "06_reports/06b_irr_report.txt")
+    except Exception as e:
+        print(f"  ‼ IRR analysis FAILED (non-fatal — analysis continues): {e}")
+        traceback.print_exc()
+
+    # ----------------------------------------------------------------
     # 13. Top-level synthesis: executive summary, methods appendix, READ_ME.
     #     Written LAST so they can read every artifact the run produced.
     # ----------------------------------------------------------------

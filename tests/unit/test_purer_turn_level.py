@@ -111,7 +111,8 @@ class TestBuildTurnExchangeContext(unittest.TestCase):
 
     def test_layout_contains_header_and_all_parts(self):
         ctx = _build_turn_exchange_context(
-            self.sorted_segs, self.spec, self.target,
+            self.target, self.spec.from_item, self.spec.to_item,
+            self.spec.therapist_items, self.sorted_segs, self.spec.from_index,
             window_size=2, max_words=1000,
         )
         # Header
@@ -140,7 +141,8 @@ class TestBuildTurnExchangeContext(unittest.TestCase):
 
     def test_target_demarcation_applies_to_target_only(self):
         ctx = _build_turn_exchange_context(
-            self.sorted_segs, self.spec, self.target,
+            self.target, self.spec.from_item, self.spec.to_item,
+            self.spec.therapist_items, self.sorted_segs, self.spec.from_index,
             window_size=2, max_words=1000,
         )
         marker = '>>> THERAPIST TURN TO CLASSIFY'
@@ -153,7 +155,8 @@ class TestBuildTurnExchangeContext(unittest.TestCase):
     def test_demarcation_follows_target_choice(self):
         # When the FIRST therapist turn is the target, demarcation moves to it.
         ctx = _build_turn_exchange_context(
-            self.sorted_segs, self.spec, self.sibling,
+            self.sibling, self.spec.from_item, self.spec.to_item,
+            self.spec.therapist_items, self.sorted_segs, self.spec.from_index,
             window_size=2, max_words=1000,
         )
         marker = '>>> THERAPIST TURN TO CLASSIFY'
@@ -171,7 +174,8 @@ class TestBuildTurnExchangeContext(unittest.TestCase):
         # away, but the essential exchange (opening participant + target turn +
         # next participant) must remain fully present and undamaged.
         ctx = _build_turn_exchange_context(
-            self.sorted_segs, self.spec, self.target,
+            self.target, self.spec.from_item, self.spec.to_item,
+            self.spec.therapist_items, self.sorted_segs, self.spec.from_index,
             window_size=2, max_words=1,
         )
         # Essential parts intact
@@ -201,7 +205,8 @@ class TestBuildTurnExchangeContext(unittest.TestCase):
         spec = _spec_with_two_therapists(sorted_segs, specs)
         target = spec.therapist_items[1]
         ctx = _build_turn_exchange_context(
-            sorted_segs, spec, target, window_size=4, max_words=1000,
+            target, spec.from_item, spec.to_item, spec.therapist_items,
+            sorted_segs, spec.from_index, window_size=4, max_words=1000,
         )
         # With a generous budget AND a from_index > 0, preceding context appears.
         self.assertIn('PRECEDING CONTEXT:', ctx)

@@ -168,6 +168,12 @@ def human_eval_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '04_validation')
 
 
+def irr_validation_dir(run_dir: str) -> str:
+    """Single home for ALL inter-rater-reliability artifacts: results JSON,
+    pairwise/discrepancy CSVs, and figures (IRR is a validation artifact)."""
+    return os.path.join(run_dir, '04_validation', 'irr')
+
+
 # ── Figures ───────────────────────────────────────────────────────────────
 
 def figures_dir(run_dir: str) -> str:
@@ -230,6 +236,11 @@ def reports_readme_path(run_dir: str) -> str:
 def methods_appendix_path(run_dir: str) -> str:
     """How each report/metric is computed, with methodological caveats."""
     return os.path.join(human_reports_dir(run_dir), '07_methods_appendix.txt')
+
+
+def reports_irr_path(run_dir: str) -> str:
+    """The single human-facing inter-rater-reliability report."""
+    return os.path.join(human_reports_dir(run_dir), '06b_irr_report.txt')
 
 
 def themes_dir(run_dir: str) -> str:

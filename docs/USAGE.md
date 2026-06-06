@@ -271,6 +271,22 @@ GNN representation-and-discovery layer (ON by default; force with `--gnn`, skip 
 - **Track C — MindfulBERT dataset builder** (`build_mindfulbert_dataset=true`; `augmentation_enabled=true` for the gate-gated, ablation-retained counterfactual channel): `02_meta/training_data/mindfulbert_dataset.jsonl` + datasheet.
 - **Track D — subtext communities as routines** (`subtext_communities=true`): two-algorithm partition + ARI, within-session routine transitions, participant-bootstrap stability selection (`06_gnn/communities.txt`).
 
+### Inter-Rater Reliability (`qra irr`)
+
+Validate the machine labels against human coders once the team's blind coding has been transcribed into a wide CSV (`data/irr/human_coded_testsets.csv`):
+
+```bash
+python qra.py irr import -o ./data/output/ --csv data/irr/human_coded_testsets.csv  # human codes -> qra.db (ground truth)
+python qra.py irr run    -o ./data/output/   # pull live LLM+GNN, compute κ/α, write report + figures
+python qra.py irr report -o ./data/output/   # regenerate the report from a fresh analysis
+python qra.py irr list   -o ./data/output/   # list imported test-sets   (bare `qra irr` = TUI)
+```
+
+Computes three families — **Human↔Human** (the reference ceiling), **Human↔LLM** (consensus + each model), and **Human↔GNN** (held-out validity vs in-sample distillation, never conflated). Report: `06_reports/06b_irr_report.txt`; data + figures under `04_validation/irr/`. Human codes are kept as ground truth — machine labels are pulled live, so re-running after re-classifying or retraining re-measures against the same human anchor without re-importing.
+
+- **Interpretation.** Human↔Human is the ceiling: a machine substrate cannot be more reliable than the humans are with each other. On Cohorts 1–2 that ceiling is *moderate* (Krippendorff α ≈ 0.47–0.52) and the LLM consensus matches it (κ ≈ 0.54) — read "human-level" accordingly (methodology §5.4–5.5).
+- **Content guard.** `qra irr run` re-checks every test-set segment's content hash against what the humans coded and **refuses** if any has drifted (e.g. after a re-segmentation). Re-import the affected worksheet(s), or pass `--allow-drift` to score anyway (the report flags the drift). `qra analyze` regenerates IRR automatically when labels or coded content change.
+
 ## Test Set Management
 
 ### Create a New Validation Test Set
@@ -296,6 +312,72 @@ python qra.py testset refresh -o ./data/output/ --name vaamr_testset_1
 # Create PURER content-validity testset
 python qra.py cv create -o ./data/output/ --framework purer --name cv_purer_v1
 ```
+
+## Inter-Rater Reliability (`qra irr`)
+
+Once your qualitative team has blind-coded the frozen validation worksheets, `qra irr`
+imports those human codes and reports inter-rater reliability across three families:
+
+1. **Human ↔ Human** — agreement between researchers, within each test-set (primary + secondary codes).
+2. **Human consensus ↔ LLM** — against the multi-run consensus *and each individual LLM model*.
+3. **Human consensus ↔ GNN** — along two axes: the honest **held-out** prediction (out-of-fold,
+   never trained on that segment's own LLM label) and the in-sample **distillation** overlay
+   (the operational default; its agreement with the LLM is *distillation fidelity*, not validity).
+
+Machine labels are pulled **live**, so the IRR always reflects the project's current models. The
+human codes are stored in `qra.db` and maintained as ground truth for all future validation.
+
+**Statistics use proven libraries** — Cohen's κ (scikit-learn), Fleiss' κ (statsmodels, complete-case),
+Krippendorff's α (`krippendorff` package, the headline multi-rater statistic since it tolerates the
+test-sets' missing ballots).
+
+### Step 1 — Prepare the human-coded CSV
+
+A reviewed CSV ships at `data/irr/human_coded_testsets.csv`. It is a wide table — one row per
+worksheet item — with each rater's primary/secondary code, the human consensus of record, the
+`consensus_source` (`explicit`/`majority`/`unanimous`/`unresolved`), and free-text `notes`
+(the reasoning). `worksheet_n` must match the frozen worksheets in the target project's `qra.db`.
+
+### Step 2 — Import, run, inspect
+
+```bash
+# Import the human codes into the project's qra.db (idempotent; re-import replaces them)
+python qra.py irr import -o ./data/output/ --csv data/irr/human_coded_testsets.csv
+
+# Compute IRR (pull live LLM + GNN labels) and write the report, per-item detail, figures
+python qra.py irr run -o ./data/output/
+
+# Regenerate just the report + figures from a fresh analysis
+python qra.py irr report -o ./data/output/
+
+# List the imported test-sets and their rater rosters
+python qra.py irr list -o ./data/output/
+
+# Bare `qra irr` launches an interactive menu (import / run / view / list)
+python qra.py irr
+```
+
+> To get the honest **held-out** GNN axis, run `qra gnn train` first — it persists the out-of-fold
+> predictions IRR reads. Without it the GNN comparison falls back to the distillation overlay (clearly
+> labeled), or shows "no usable items" if the GNN has not been trained.
+
+The importer validates item counts and content SHAs against the frozen worksheets and **warns on
+drift** (e.g. if a segment's text changed since the worksheet was frozen) rather than failing.
+
+### Outputs (all under `04_validation/irr/`, plus one report)
+
+| Path | Contents |
+|------|----------|
+| `06_reports/06b_irr_report.txt` | The single human-facing report: headline κ table, per-family sections, both GNN axes + gate read, ranked discrepancies |
+| `04_validation/irr/irr_results.json` | All κ/α/agreement stats + Ns per family/test-set |
+| `04_validation/irr/irr_pairwise.csv` | One row per rater-pair and per human↔machine / GNN-axis comparison |
+| `04_validation/irr/irr_discrepancies.csv` | Every item where human consensus ≠ LLM and/or ≠ GNN |
+| `04_validation/irr/irr_item_detail.csv` | Every item, all substrates flattened (machine-readable) |
+| `04_validation/irr/irr_items_testset_<n>.txt` | Line-by-line dossier per test-set: text + human codes/reasoning + LLM codes/justifications + GNN held-out + LLM↔GNN consensus |
+| `04_validation/irr/*.png` | Confusion matrices (human↔LLM, human↔GNN) + rater-agreement heatmap |
+
+When a project has imported human codes, IRR is **regenerated automatically during `qra analyze`**
+whenever the LLM/GNN labels (or held-out predictions) have changed since the last run.
 
 ## Configuration Options
 
