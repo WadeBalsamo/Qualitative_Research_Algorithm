@@ -33,6 +33,22 @@ class GnnLayerConfig:
     embedding_batch_size: int = 8
     cache_embeddings: bool = True          # cache to 02_meta/gnn/segment_embeddings.npz
 
+    # ---- Embedding backend selector (local SentenceTransformer vs remote /v1/embeddings) ----
+    # 'local'  (default) → in-process EmbeddingCodebookClassifier path. Byte-identical to
+    #                      prior behaviour; embedding_model is the HuggingFace repo id.
+    # 'openai'           → POST segment/anchor texts to an OpenAI-compatible /v1/embeddings
+    #                      endpoint (e.g. LM Studio serving Qwen3-Embedding-8B) via
+    #                      gnn_layer/embeddings_remote.py — no second 8 GB model is loaded.
+    #                      embedding_model is then the SERVED model id
+    #                      (e.g. 'text-embedding-qwen3-embedding-8b') sent in the POST body.
+    embedding_backend: str = 'local'
+    # Root URL of the OpenAI-compatible server, ending at '/v1' (the client appends
+    # '/embeddings'). Required when embedding_backend='openai'. e.g. 'http://10.0.0.58:1234/v1'.
+    embedding_base_url: Optional[str] = None
+    # Bearer token for the embeddings endpoint. Leave None for LM Studio (needs no key);
+    # only sent as an Authorization header when set.
+    embedding_api_key: Optional[str] = None
+
     # ---- Graph construction ----
     knn_k: int = 8                         # kNN similarity edges per segment node
     # Typed therapist->participant "precipitates" edges (Track A1): for each cue block,
