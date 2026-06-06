@@ -6,23 +6,52 @@
 
 ---
 
-## 1. Mission & target
+## 1. Mission (priority order)
 
-Make the VAAMR GNN reach **inter-rater reliability comparable to the LLM↔human level** on
-`./data/Meta/`, in a methodologically defensible design, and keep the graph useful for
-understanding therapist→participant VAAMR mechanism. **PURER is out of scope this phase.**
+**PRIMARY = mechanism; SECONDARY = classifier IRR (a trust floor that must never compromise
+the primary).** Workspace `./data/Meta/`. **PURER is out of scope except as cue context.** All
+claims are n≈32 observational — **NO causal claims** (elicitation confound: PURER inquiry
+*elicits* the very VAAMR language it is scored against; `methodology.md` §9.4).
 
-| Axis | Meaning | Now (held-out, honest) | Target |
+### 1A. PRIMARY — therapist→participant VAAMR mechanism (peer-review deliverable)
+A GNN that explains therapist-cue (PURER) → participant-VAAMR dynamics via **(a) model-
+counterfactual sensitivity** (ablate/swap the therapist cue, measure the predicted shift in the
+following participant's VAAMR mixture; `gnn_layer/influence.py`) and **(b) participant↔therapist
+coupling** (`gnn_layer/coupling.py`).
+
+**SUCCESS (pre-registered) = the GNN readouts TRIANGULATE with the independent observed-
+Δprogression analysis in `src/analysis/mechanism.py`:**
+- **Spearman ρ > 0** between GNN counterfactual cue-influence and mechanism.py's Δprogression
+  **per cue→transition** (from_stage × PURER move), with **participant-clustered bootstrap 95% CI
+  excluding 0**, AND
+- **≥ 70% SIGN agreement** on the cue→transition effects mechanism.py flags **FDR-significant**,
+- **always reported next to the GNN reliability-gate κ** (the trust context for the readout).
+
+**If triangulation fails → `mechanism.py` LEADS and the GNN is reported as exploratory only.**
+This is a valid, documented outcome, not a failure of the work.
+
+### 1B. SECONDARY — classifier IRR as the trust floor (pursue only if it doesn't weaken 1A)
+The classifier κ is the *trust context* reported beside the mechanism readout, and (separately) an
+**abstention-gated assist** — never forced to be label-of-record. The **LLM stays label of
+record**; "**human-level IRR is unreachable at n≈205**" is a VALID documented outcome.
+
+| Axis | Meaning | Now (held-out) | Target (push toward, not required) |
 |---|---|---|---|
-| **GNN↔human κ** | independent quality (load-bearing) | **+0.053** | → **LLM↔human ≈ +0.537**; success floor = the human band (α 0.33–0.52) |
+| **GNN↔human κ** | independent quality (load-bearing) | **+0.053** | → LLM↔human ≈ **+0.537** |
 | GNN↔LLM κ | distillation fidelity | +0.159 (n=76) / +0.247 (n=205) | → human↔human ceiling ≈ 0.45–0.52 |
 | rare-stage recall | Avoidance, Metacognition | **0% / 0%** | non-zero, no collapse |
 
-The success criterion is **human-level IRR**, not the legacy κ≥0.70 gate (unreachable in
-principle — see §3).
+κ≥0.70 is **not** the target (human↔human α≈0.33–0.52 — see §3). Promote a classifier change to
+default **only on a human-axis gain**.
 
 ## 2. Locked decisions (with the researcher)
 
+- **D-PRIORITY — Mechanism is primary; classifier IRR is a secondary trust floor.** The
+  peer-review deliverable is the §1A triangulation (Spearman ρ + ≥70% FDR-sign agreement vs
+  `mechanism.py`), reported beside the gate κ. Classifier work is pursued only insofar as it
+  (i) raises the trust floor and (ii) yields the best embedding/graph substrate for the
+  counterfactual/coupling readouts — never at the cost of the primary. The Qwen-feature +
+  precipitates-edge + calibrated-head work serves BOTH, which is why it stays first.
 - **D-A — Run the full arm battery; let the data decide.** Report the reliability frontier with
   CIs; promote the arm with the highest **GNN↔human κ**. Escalate through Path B (concept
   anchors) as part of the battery.
@@ -121,3 +150,49 @@ model (D-C). Mechanism (M2) graph kept regardless.
   Qwen result. Foundation branch `gnn-exp/harness` cut from a `beta` checkpoint
   (`062c9bd`, prior IRR + turn-level-PURER WIP) so every experiment branch shares a clean base.
   Confirmed Qwen endpoint live (4096-d) and the human-subset integration gap (0 populated rows).
+- **2026-06-06 — Reprioritization (researcher `/goal`).** **Mechanism made PRIMARY** (peer-review
+  deliverable, §1A) with a concrete pre-registered triangulation success metric; **classifier IRR
+  demoted to a SECONDARY trust floor** (§1B). The arm battery still runs (it sets the trust floor
+  and picks the best substrate for the counterfactual/coupling readouts) but the headline success
+  is the §1A triangulation, reported beside the gate κ. Added the mechanism-triangulation
+  work-stream (§9): run `influence.py` (counterfactual) + `coupling.py` on the best Qwen model and
+  triangulate vs `mechanism.py`; **decouple the counterfactual readout from the hard legacy gate**
+  — it runs with the gate κ as *reported trust context*, not as a hard suppressor (the κ≥0.70 gate
+  is unreachable in principle, so hard-gating would permanently block the primary deliverable).
+- **2026-06-06 — SA1 done (Qwen embedding client).** Added `embedding_backend='openai'` path
+  (`gnn_layer/embeddings_remote.py`) hitting LM Studio `/v1/embeddings`; default `'local'` path
+  byte-identical. Live: **4096-d, L2-normalized** vectors (endpoint normalizes; local
+  SentenceTransformer path does not — noted for cross-backend feature-magnitude comparisons; cosine
+  kNN is unaffected). 21 hermetic tests + 1 `@slow_test` live smoke; full GNN suite green.
+
+## 9. PRIMARY work-stream — mechanism triangulation (the peer-review deliverable)
+
+**Unit of analysis:** the cue→transition = (from_stage × PURER move). Two independent estimates of
+"does this therapist move progress the participant?":
+- **GNN counterfactual cue-influence** — `gnn_layer/influence.py`: swap the cue block's therapist
+  node feature with each PURER-move centroid (vs a neutral null), re-forward, read the shift in the
+  FOLLOWING participant's predicted progression coordinate E[stage]. Run on the **best Qwen model**
+  (best classifier substrate from §6), with **precipitates edges** ON (the typed therapist→
+  participant handle the counterfactual needs).
+- **Observed Δprogression** — `analysis/mechanism.py` (already built; B1/B2 LEAD): signed
+  Δprogression per (from_stage, move) with participant-clustered bootstrap CIs, within-stage
+  permutation, **FDR**. This is the label of record for "what progresses participants."
+
+**Success metric (pre-registered, §1A):** Spearman ρ>0 between the two per-(from_stage,move) vectors
+with participant-clustered bootstrap **95% CI excluding 0**, AND **≥70% sign agreement** restricted
+to the effects mechanism.py flags **FDR-significant** — both printed next to the GNN gate κ. Fail →
+mechanism.py leads, GNN exploratory only.
+
+**Key design decision — decouple the readout from the legacy hard gate.** The counterfactual pass is
+currently suppressed unless `validation.gate_ready_for_scaling` (the κ≥0.70 legacy gate). Since that
+gate is unreachable in principle (§3), hard-gating would permanently block the PRIMARY deliverable.
+Resolution: the mechanism readout **runs regardless**, and the gate κ is reported as **trust
+context** beside it (low κ ⇒ "treat as exploratory; weight the triangulation result"). The
+non-causal, n≈32, elicitation-confound caveats ride on every figure. This honors the original
+gate's intent (don't let an untrustworthy model masquerade as authoritative) without letting an
+unreachable threshold veto an honest convergence test.
+
+**Build tasks:** (i) ensure `influence.py` can run on a non-gate-passing model in the experiment
+harness; (ii) refine `influence.triangulate` so sign agreement is computed over the **FDR-significant**
+subset and ρ carries a participant-clustered bootstrap CI; (iii) re-validate `coupling.py` factors on
+Qwen embeddings. Branch: run on the winning classifier branch (needs its model) → `gnn-exp/mechanism`.
