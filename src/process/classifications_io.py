@@ -286,6 +286,19 @@ def read_overlay(run_dir: str, key: str) -> List[dict]:
     return [_row_to_record(key, r) for r in rows]
 
 
+def clear_overlay(run_dir: str, key: str) -> None:
+    """Delete every row from the overlay table for ``key`` (no-op if the DB is absent).
+
+    Used by ``process.reclassify_ops`` to reset a classifier's overlay before a
+    from-scratch re-run.
+    """
+    if not db.db_exists(run_dir):
+        return
+    table = _OVERLAY_TABLES[key]
+    with db.open_db(run_dir) as conn:
+        conn.execute(f"DELETE FROM {table}")
+
+
 def overlay_exists(run_dir: str, key: str) -> bool:
     """True if the overlay table for ``key`` has at least one row.
 
