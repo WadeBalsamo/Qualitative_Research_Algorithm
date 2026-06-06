@@ -61,7 +61,7 @@ def generate_session_summaries(
         json.dump(summaries, f, indent=2, ensure_ascii=False)
 
     # ── Write human-readable txt ──────────────────────────────────────────────
-    out_dir = _paths.human_reports_dir(output_dir)
+    out_dir = _paths.reports_per_session_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     lines = []
     lines.append('SESSION THERAPIST SUMMARIES')

@@ -20,7 +20,7 @@ def _gnn_dir(output_dir: str) -> str:
 
 def _reports_dir(output_dir: str) -> str:
     from process import output_paths as _paths
-    d = _paths.human_reports_dir(output_dir)
+    d = _paths.reports_gnn_dir(output_dir)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -55,12 +55,64 @@ def write_cue_motifs(motif_stats: dict, purity: dict, exemplars: dict, output_di
             'motif_id': m, 'n_blocks': s['n_blocks'], 'influence': s['influence'],
             'mean_pred_forward': s['mean_pred_forward'],
             'dominant_purer': p.get('dominant_purer'), 'purer_purity': p.get('purer_purity'),
-            'dominant_microskill': p.get('dominant_microskill'),
-            'microskill_purity': p.get('microskill_purity'),
             'n_exemplars': len(exemplars.get(m, [])),
         })
     path = os.path.join(d, 'cue_motifs.csv')
     pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+def write_vce_contribution(result: dict, output_dir: str) -> str:
+    """VCE-on-VAAMR hypothesis test: held-out VAAMR κ with vs without the VCE layer.
+
+    Writes vce_contribution.txt (human-readable) + gnn_vce_contribution.csv (per stage).
+    A positive Δκ is evidence the granular VCE codebook sharpens the coarse VAAMR
+    classification; ≈0 / negative is evidence it does not (justifying VCE's status as
+    an optional enrichment layer, not part of the classifier of record).
+    """
+    import pandas as pd
+    if not result or result.get('status'):
+        return ''
+    d = _gnn_dir(output_dir)
+    pd.DataFrame(result.get('per_stage', [])).to_csv(
+        os.path.join(d, 'gnn_vce_contribution.csv'), index=False)
+
+    kw = result.get('vaamr_kappa_with_vce')
+    ko = result.get('vaamr_kappa_without_vce')
+    dk = result.get('delta_kappa')
+    verdict_text = {
+        'vce_helps': 'VCE LAYER HELPS — the granular codebook improves VAAMR classification.',
+        'vce_neutral': 'VCE LAYER NEUTRAL — no measurable improvement to VAAMR classification.',
+        'vce_harms': 'VCE LAYER HARMS — VCE supervision degrades VAAMR classification.',
+        'inconclusive': 'INCONCLUSIVE — insufficient held-out labels to decide.',
+    }.get(result.get('verdict'), str(result.get('verdict')))
+
+    def _f(x):
+        return f"{x:+.3f}" if isinstance(x, (int, float)) else "  n/a"
+
+    L = ["=" * 78,
+         "VCE-ON-VAAMR HYPOTHESIS TEST (does the granular codebook sharpen the arc?)",
+         "=" * 78, "",
+         "Held-out VAAMR κ vs the LLM consensus, with the VCE multi-label head active",
+         "vs removed, on the identical graph/folds/seed. Δκ isolates the VCE layer's",
+         f"contribution to broader-theme (VAAMR-stage) classification. ({result.get('n_vce_codes')} VCE codes.)",
+         "",
+         f"  VAAMR κ  WITH VCE layer   : {_f(kw)}",
+         f"  VAAMR κ  WITHOUT VCE layer: {_f(ko)}",
+         f"  Δκ (with − without)       : {_f(dk)}",
+         "",
+         f"  VERDICT: {verdict_text}",
+         "",
+         "Per-stage Δκ (where the codebook helps or hurts):",
+         f"  {'stage':<18}{'support':>8}{'k w/VCE':>10}{'k wo/VCE':>10}{'dk':>9}"]
+    for r in result.get('per_stage', []):
+        L.append(f"  {str(r.get('class_name')):<18}{(r.get('support') or 0):>8}"
+                 f"{_f(r.get('kappa_with_vce')):>10}{_f(r.get('kappa_without_vce')):>10}"
+                 f"{_f(r.get('delta_kappa')):>9}")
+    L.append("")
+    path = os.path.join(_reports_dir(output_dir), 'vce_contribution.txt')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write("\n".join(L))
     return path
 
 
@@ -82,7 +134,7 @@ def write_gnn_construct_signal(ablation_rows: List[dict], output_dir: str) -> st
                      f"Δloss={r.get('delta'):+.4f}  "
                      f"(full={r.get('best_loss_full'):.4f} → ablated={r.get('best_loss_ablated'):.4f})")
     lines.append("")
-    path = os.path.join(rep, 'report_gnn_construct_signal.txt')
+    path = os.path.join(rep, 'construct_signal.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write("\n".join(lines))
     return path
@@ -128,13 +180,6 @@ def write_gnn_vs_llm_lift(comparison, output_dir: str) -> str:
     return path
 
 
-def write_purer_microskill_lift(table, output_dir: str) -> str:
-    d = _gnn_dir(output_dir)
-    path = os.path.join(d, 'purer_microskill_lift.csv')
-    table.to_csv(path, index=False)
-    return path
-
-
 def write_coupling_factors(factors: dict, exemplars: dict, interpretation: dict,
                            output_dir: str) -> str:
     import pandas as pd
@@ -161,12 +206,12 @@ def write_coupling_factors(factors: dict, exemplars: dict, interpretation: dict,
 def write_emergent_motifs_report(flagged: List[int], motif_stats: dict, purity: dict,
                                  exemplars: dict, output_dir: str) -> str:
     d = _reports_dir(output_dir)
-    path = os.path.join(d, 'report_gnn_emergent_motifs.txt')
+    path = os.path.join(d, 'emergent_motifs.txt')
     W = 72
     lines = ['=' * W, 'GNN EMERGENT THERAPIST-LANGUAGE MOTIFS', '=' * W,
              f'Generated : {date.today().isoformat()}',
              'Motifs that are influential on forward VAAMR transitions but poorly',
-             'explained by PURER moves or microcounseling skills — candidate new',
+             'explained by PURER moves — candidate new',
              'therapeutic-language constructs for HUMAN REVIEW (directional evidence).',
              '']
     if not flagged:
@@ -175,8 +220,7 @@ def write_emergent_motifs_report(flagged: List[int], motif_stats: dict, purity: 
         s = motif_stats.get(m, {}); p = purity.get(m, {})
         lines.append('-' * W)
         lines.append(f'Motif {m}: influence={s.get("influence")}  n_blocks={s.get("n_blocks")}')
-        lines.append(f'  dominant PURER={p.get("dominant_purer")} (purity {p.get("purer_purity")}); '
-                     f'dominant microskill={p.get("dominant_microskill")} (purity {p.get("microskill_purity")})')
+        lines.append(f'  dominant PURER={p.get("dominant_purer")} (purity {p.get("purer_purity")})')
         for ex in exemplars.get(m, []):
             lines.append(f'    e.g. {ex["session_id"]}: stage {ex["from_stage"]}->{ex["to_stage"]} '
                          f'(from {ex["from_seg_id"]})')
@@ -190,7 +234,7 @@ def write_emergent_motifs_report(flagged: List[int], motif_stats: dict, purity: 
 def write_coupling_report(factors: dict, exemplars: dict, interpretation: dict,
                           output_dir: str) -> str:
     d = _reports_dir(output_dir)
-    path = os.path.join(d, 'report_gnn_coupling.txt')
+    path = os.path.join(d, 'coupling.txt')
     W = 72
     lines = ['=' * W, 'GNN PARTICIPANT<->THERAPIST COUPLING (latent factors)', '=' * W,
              f'Generated : {date.today().isoformat()}',

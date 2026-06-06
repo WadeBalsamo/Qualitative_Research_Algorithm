@@ -9,6 +9,66 @@ to 03_analysis_data/gnn/ keyed by segment_id — never folded into master_segmen
 
 from typing import Dict, List, Optional
 
+# Rare VAAMR stages (Metacognition, Reappraisal) — the over-smoothing risk; they get a
+# higher abstention floor by default. Mirrors gnn_layer.validation.RARE_STAGES.
+_RARE_VAAMR_STAGES = (3, 4)
+
+
+def resolve_abstain_floors(config) -> Optional[Dict[int, float]]:
+    """Per-VAAMR-stage max-prob floors for abstention, or None if abstention is disabled.
+
+    Precedence: explicit ``abstain_per_stage`` (also where calibration writes its result)
+    > global ``abstain_threshold`` (with a higher ``abstain_rare_stage_threshold`` for the
+    rare stages 3/4). None means the graph never abstains.
+    """
+    if config is None:
+        return None
+    per_stage = getattr(config, 'abstain_per_stage', None)
+    if per_stage:
+        return {int(k): float(v) for k, v in per_stage.items()}
+    base = getattr(config, 'abstain_threshold', None)
+    if base is None:
+        return None
+    floors = {s: float(base) for s in range(5)}
+    rare = getattr(config, 'abstain_rare_stage_threshold', None)
+    if rare is not None:
+        for s in _RARE_VAAMR_STAGES:
+            floors[s] = float(rare)
+    return floors
+
+
+def resolve_purer_abstain_floor(config) -> Optional[float]:
+    """Global max-prob floor for PURER abstention, or None when disabled.
+
+    PURER has no rare-stage concept here, so it uses the global ``abstain_threshold`` only.
+    """
+    if config is None:
+        return None
+    base = getattr(config, 'abstain_threshold', None)
+    return float(base) if base is not None else None
+
+
+def _graph_tensors_on_model_device(model, graph):
+    """Return (x, edge_index, edge_weight, edge_type_ids) moved onto the model's device.
+
+    train_model leaves the trained model on the training device (e.g. cuda) while
+    graph.x / graph.edge_index stay on CPU. Forwarding CPU tensors through a CUDA
+    model raises a device-mismatch RuntimeError, so align them here before any
+    inference forward pass.
+    """
+    eti = getattr(graph, 'edge_type_ids', None)
+    try:
+        dev = next(model.parameters()).device
+    except StopIteration:
+        dev = None
+    if dev is None:
+        return graph.x, graph.edge_index, graph.edge_weight, eti
+    x = graph.x.to(dev)
+    edge_index = graph.edge_index.to(dev)
+    edge_weight = graph.edge_weight.to(dev) if graph.edge_weight is not None else None
+    eti = eti.to(dev) if eti is not None else None
+    return x, edge_index, edge_weight, eti
+
 
 def infer_segment_positions(model, graph, config) -> dict:
     """Forward pass → per-segment mixture / progression / embedding.
@@ -21,9 +81,9 @@ def infer_segment_positions(model, graph, config) -> dict:
     import torch.nn.functional as F
 
     model.eval()
+    _x, _ei, _ew, _eti = _graph_tensors_on_model_device(model, graph)
     with torch.no_grad():
-        out = model(graph.x, graph.edge_index,
-                    graph.edge_weight if graph.edge_weight is not None else None)
+        out = model(_x, _ei, _ew, _eti)
     emb = out['emb'].cpu().numpy()
     res = {
         'segment_id': list(graph.node_ids),
@@ -31,7 +91,9 @@ def infer_segment_positions(model, graph, config) -> dict:
         'gnn_embedding': emb,
     }
     if 'soft_vaamr' in out:
-        mix = F.softmax(out['soft_vaamr'], dim=1).cpu().numpy()
+        from .calibration import apply_temperature
+        _T = getattr(config, 'calibration_temperature', None) if config is not None else None
+        mix = F.softmax(apply_temperature(out['soft_vaamr'], _T), dim=1).cpu().numpy()
         res['vaamr_mixture'] = mix
         res['progression_coord'] = (mix * np.arange(mix.shape[1])).sum(axis=1)
     elif 'progression' in out:
@@ -57,62 +119,72 @@ def infer_head_predictions(model, graph, config=None) -> dict:
     import torch.nn.functional as F
 
     model.eval()
+    _x, _ei, _ew, _eti = _graph_tensors_on_model_device(model, graph)
     with torch.no_grad():
-        out = model(graph.x, graph.edge_index,
-                    graph.edge_weight if graph.edge_weight is not None else None)
+        out = model(_x, _ei, _ew, _eti)
     res = {
         'segment_id': list(graph.node_ids),
         'node_type': list(graph.node_types),
     }
+    from .calibration import apply_temperature
+    _T = getattr(config, 'calibration_temperature', None) if config is not None else None
+    vaamr_floors = resolve_abstain_floors(config)
+    purer_floor = resolve_purer_abstain_floor(config)
     if 'soft_vaamr' in out:
-        p = F.softmax(out['soft_vaamr'], dim=1).cpu().numpy()
-        res['gnn_vaamr_pred'] = p.argmax(axis=1).tolist()
-        res['gnn_vaamr_conf'] = p.max(axis=1).round(4).tolist()
+        p = F.softmax(apply_temperature(out['soft_vaamr'], _T), dim=1).cpu().numpy()
+        preds = p.argmax(axis=1)
+        confs = p.max(axis=1)
+        res['gnn_vaamr_pred'] = preds.tolist()
+        res['gnn_vaamr_conf'] = confs.round(4).tolist()
+        if vaamr_floors is not None:
+            res['gnn_vaamr_abstain'] = [
+                bool(confs[i] < vaamr_floors.get(int(preds[i]), 0.0))
+                for i in range(len(preds))
+            ]
     if 'purer' in out:
         p = F.softmax(out['purer'], dim=1).cpu().numpy()
-        res['gnn_purer_pred'] = p.argmax(axis=1).tolist()
-        res['gnn_purer_conf'] = p.max(axis=1).round(4).tolist()
+        preds = p.argmax(axis=1)
+        confs = p.max(axis=1)
+        res['gnn_purer_pred'] = preds.tolist()
+        res['gnn_purer_conf'] = confs.round(4).tolist()
+        if purer_floor is not None:
+            res['gnn_purer_abstain'] = [bool(c < purer_floor) for c in confs]
     return res
 
 
 def build_cue_blocks_with_segments(df_all) -> List[dict]:
     """Cue blocks (FROM->CUE->TO) retaining the therapist segment ids in each block.
 
-    Mirrors the timestamp-window logic of
-    analysis.purer_analysis.compute_cue_block_purer_profiles but keeps the therapist
-    segment ids (which CueBlock does not expose) so we can pool their GNN embeddings.
-    Returns list of dicts: session_id, from_seg_id, to_seg_id, from_stage, to_stage,
-    transition_type, therapist_seg_ids.
+    Uses the shared :func:`process.cue_blocks.cue_blocks_from_records` builder
+    which applies the canonical timestamp-overlap window with an index-position
+    fallback when ``end_time_ms == 0`` (fixing the former empty-block bug for
+    touching or zero timestamps).
+
+    Returns list of dicts: session_id, from_seg_id, to_seg_id, from_stage,
+    to_stage, transition_type, therapist_seg_ids.  Empty blocks
+    (therapist_seg_ids=[]) are included so callers can compute empty-cue rates.
     """
-    import pandas as pd
     required = {'session_id', 'speaker', 'final_label', 'start_time_ms', 'end_time_ms'}
     if not required.issubset(set(df_all.columns)):
         return []
-    blocks: List[dict] = []
-    for session_id, sdf in df_all.groupby('session_id'):
-        part = sdf[(sdf['speaker'] == 'participant') & sdf['final_label'].notna()] \
-            .sort_values('start_time_ms').reset_index(drop=True)
-        if len(part) < 2:
-            continue
-        ther = sdf[sdf['speaker'] == 'therapist']
-        for i in range(len(part) - 1):
-            fr, to = part.iloc[i], part.iloc[i + 1]
-            fe, ts = int(fr.get('end_time_ms', 0)), int(to.get('start_time_ms', 0))
-            fs, tstg = int(fr['final_label']), int(to['final_label'])
-            if ts > fe:
-                between = ther[(ther['start_time_ms'] < ts) & (ther['end_time_ms'] > fe)]
-            else:
-                between = ther.iloc[:0]
-            tids = [str(s) for s in between.get('segment_id', pd.Series(dtype=str)).tolist()]
-            blocks.append({
-                'session_id': str(session_id),
-                'from_seg_id': str(fr.get('segment_id', '')),
-                'to_seg_id': str(to.get('segment_id', '')),
-                'from_stage': fs, 'to_stage': tstg,
-                'transition_type': ('forward' if fs < tstg else 'backward' if fs > tstg else 'lateral'),
-                'therapist_seg_ids': tids,
-            })
-    return blocks
+
+    from process.cue_blocks import cue_blocks_from_records as _cue_blocks_from_records
+    specs = _cue_blocks_from_records(
+        df_all.to_dict('records'), stage_key='final_label', require_stage=True
+    )
+
+    return [
+        {
+            'session_id': spec.session_id,
+            'from_seg_id': str(spec.from_item.get('segment_id', '')),
+            'to_seg_id': str(spec.to_item.get('segment_id', '')),
+            'from_stage': spec.from_stage,
+            'to_stage': spec.to_stage,
+            'transition_type': spec.transition_type,
+            'therapist_seg_ids': [str(r['segment_id']) for r in spec.therapist_items],
+        }
+        for spec in specs
+    ]
 
 
 def cue_block_embeddings(blocks: List[dict], seg_embeddings: Dict[str, "object"]):

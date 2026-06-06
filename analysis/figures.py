@@ -157,6 +157,9 @@ def plot_group_longitudinal_trajectory(
     Combines all cohorts by session_number. Equal-weighted over participants.
     Returns path to saved PNG.
     """
+    if df.empty:
+        return ''
+
     stage_ids = sorted(framework.keys())
     colors = _stage_colors(framework)
 

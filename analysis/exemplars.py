@@ -41,6 +41,9 @@ def select_prototypical_exemplars(
     if df.empty:
         return df.iloc[0:0]
 
+    if 'llm_run_consistency' not in df.columns:
+        df = df.assign(llm_run_consistency=pd.NA)
+
     # Word count filter
     mask_words = (df['word_count'] >= min_words) & (df['word_count'] <= max_words)
 

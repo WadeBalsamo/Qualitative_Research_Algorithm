@@ -531,8 +531,8 @@ def _regenerate_derived(output_dir: str, config, *, verbose: bool = True) -> Dic
         _paths.participants_json_dir(output_dir),
         _paths.sessions_json_dir(output_dir),
         _paths.themes_json_dir(output_dir),
-        os.path.join(_paths.human_reports_dir(output_dir), 'per_participant'),
-        os.path.join(_paths.human_reports_dir(output_dir), 'per_session'),
+        _paths.reports_per_participant_dir(output_dir),
+        _paths.reports_per_session_dir(output_dir),
         _paths.themes_dir(output_dir),
     ):
         _clear_dir(d)

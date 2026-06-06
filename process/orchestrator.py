@@ -176,7 +176,6 @@ def _build_classifier_manifest_entry(config, classifier_key: str, framework=None
             'theme': 'theme_classification',
             'purer': 'purer_classification',
             'codebook': 'codebook_llm',
-            'microskill': 'microskill_llm',
         }.get(classifier_key)
         if sub_attr is not None:
             sub = getattr(config, sub_attr, None)
@@ -198,7 +197,7 @@ def _build_classifier_manifest_entry(config, classifier_key: str, framework=None
             'name': framework.name,
             'version': getattr(framework, 'version', '?'),
         }
-    if codebook is not None and classifier_key in ('codebook', 'cv', 'microskill'):
+    if codebook is not None and classifier_key in ('codebook', 'cv'):
         entry['codebook'] = {
             'name': codebook.name,
             'version': getattr(codebook, 'version', '?'),
@@ -354,56 +353,6 @@ def stage_classify_codebook(
     return segments
 
 
-def stage_classify_microskill(
-    config,
-    codebook,
-    *,
-    segments: Optional[List[Segment]] = None,
-    output_dir: Optional[str] = None,
-    observer: Optional[PipelineObserver] = None,
-    only_session_ids: Optional[set] = None,
-) -> List[Segment]:
-    """
-    Microcounseling-skill classification stage (therapist-side; mirrors codebook).
-
-    Writes microskill_labels.jsonl from current in-memory microskill fields.
-    Runs embedding + LLM classification on therapist segments only when config and
-    codebook are provided.
-
-    only_session_ids:  When set, classify only segments whose session_id is in this set
-                       and merge results into the existing overlay (instead of full rewrite).
-    """
-    _od = _resolve_output_dir(output_dir, config)
-    os.makedirs(_od, exist_ok=True)
-
-    if segments is None:
-        segments = segments_io.load_segments_for_stage(
-            _od, apply=('theme', 'purer', 'codebook', 'cv'),
-        )
-
-    if only_session_ids is not None:
-        subset = [s for s in segments if s.session_id in only_session_ids]
-    else:
-        subset = segments
-
-    if config is not None and codebook is not None:
-        _microskill_classify(config, codebook, subset, _od, observer)
-
-    if only_session_ids is not None:
-        _cio.merge_microskill_overlay(_od, subset)
-    else:
-        _cio.write_microskill_overlay(_od, segments)
-    entry = _build_classifier_manifest_entry(
-        config, 'microskill', codebook=codebook, n_segments=len(segments),
-    )
-    if only_session_ids is not None:
-        entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        entry['n_new_segments'] = len(subset)
-    _cio.update_classification_manifest(_od, key='microskill', entry=entry)
-
-    return segments
-
-
 def stage_cross_validation(
     config,
     framework,
@@ -479,7 +428,7 @@ def stage_assemble(
 
     if segments is None:
         segments = segments_io.load_segments_for_stage(
-            _od, apply=('theme', 'purer', 'codebook', 'cv'),
+            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn'),
         )
 
     confidence_tiers: dict = {}
@@ -488,10 +437,13 @@ def stage_assemble(
 
     _ms_dir = _paths.master_segments_dir(_od)
     os.makedirs(_ms_dir, exist_ok=True)
+    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, _od)
     master_df = assemble_master_dataset(
         segments,
         os.path.join(_ms_dir, 'master_segments.jsonl'),
         confidence_tiers=confidence_tiers,
+        gnn_authoritative=_gnn_auth,
+        gate_passed=_gate_ok,
     )
 
     return master_df
@@ -501,6 +453,32 @@ def stage_assemble(
 # Private helpers for stage classification logic
 # (extracted from run_full_pipeline body to avoid duplication)
 # ---------------------------------------------------------------------------
+
+def _gnn_promotion_flags(config, output_dir: str):
+    """Resolve (gnn_authoritative, gate_passed) for label-of-record promotion.
+
+    The graph can become the authoritative label of record only when the operator
+    opted in (config.gnn_layer.gnn_authoritative) AND the persisted reliability-gate
+    verdict says ready_for_scaling. A config flag alone never promotes an un-gated
+    graph (Track 0.2). If the operator opted in but the gate is missing/failing, we
+    force no-promotion and log a clear warning.
+    """
+    auth = bool(getattr(getattr(config, 'gnn_layer', None), 'gnn_authoritative', False))
+    if not auth:
+        return False, False
+    try:
+        from gnn_layer import validation as _gval
+        gate = _gval.gate_ready_for_scaling(output_dir)
+    except Exception:
+        gate = False
+    if not gate:
+        print(
+            "  Warning: gnn_authoritative=True but the GNN reliability gate has not "
+            "passed (missing or failing verdict at 03_analysis_data/gnn/gnn_gate.json). "
+            "Keeping LLM-consensus labels of record; the graph will not become "
+            "authoritative until the gate reports ready_for_scaling."
+        )
+    return auth, gate
 
 def resolve_pinned_classifier_config(
     run_dir: str,
@@ -609,7 +587,15 @@ def _theme_llm_classify(config, framework, segments, output_dir, observer):
 
 
 def _purer_llm_classify(config, segments, output_dir, observer):
-    """Run PURER cue-unit classification in-place on therapist segments."""
+    """Run PURER cue-unit classification in-place on therapist segments.
+
+    Long cue blocks (total therapist words > max_cue_words) are split along
+    turn boundaries into contiguous sub-cues before classification.  If a
+    sub-cue gets an unparseable response the sub-cue is bisected and retried
+    (up to MAX_BISECT_DEPTH times) so that single-turn failures are the only
+    remaining unlabeled blocks.  A coverage report is written to the reports
+    directory when the function returns.
+    """
     _has_therapists = any(s.speaker == 'therapist' for s in segments)
     if not getattr(config, 'run_purer_labeler', False) or not _has_therapists:
         return
@@ -645,56 +631,108 @@ def _purer_llm_classify(config, segments, output_dir, observer):
     max_lesson_words = getattr(purer_cue, 'max_lesson_words', 400)
     max_ctx_words = getattr(purer_cue, 'max_context_words', 1000)
     ctx_window = getattr(purer_cfg, 'context_window_segments', 6)
+    max_cue_words = getattr(purer_cue, 'max_cue_words', 300)
 
-    from collections import defaultdict as _dd
-    sorted_segs = sorted(segments, key=lambda s: s.start_time_ms)
-    seg_id_to_idx: dict = {}
-    segs_by_session: dict = _dd(list)
-    th_by_session: dict = _dd(list)
-    for i, s in enumerate(sorted_segs):
-        seg_id_to_idx[s.segment_id] = i
-        if s.speaker == 'participant' and s.primary_stage is not None:
-            segs_by_session[s.session_id].append(s)
-        if s.speaker == 'therapist':
-            th_by_session[s.session_id].append(s)
+    from .cue_blocks import (
+        cue_blocks_from_segments as _cue_blocks_from_segments,
+        split_by_word_budget as _split_by_word_budget,
+        format_purer_coverage as _format_purer_coverage,
+    )
+    sorted_segs, specs = _cue_blocks_from_segments(
+        segments, stage_attr='primary_stage', require_stage=True
+    )
 
-    cue_units = []
-    cue_constituents = []
-    for session_id, p_segs in segs_by_session.items():
-        th_segs = th_by_session.get(session_id, [])
-        if not th_segs:
+    # ---------------------------------------------------------------------------
+    # Coverage accumulators (per-session and overall)
+    # ---------------------------------------------------------------------------
+    _overall: dict = {
+        'n_blocks': 0,
+        'n_skipped_lesson': 0,
+        'skipped_lesson_words': 0,
+        'n_labeled_segments': 0,
+        'labeled_words': 0,
+        'n_unparseable': 0,
+        'unparseable_words': 0,
+        'total_therapist_words': 0,
+    }
+    _per_session: dict = {}  # session_id → same-keyed dict
+
+    def _session_stats(sid: str) -> dict:
+        if sid not in _per_session:
+            _per_session[sid] = {
+                'n_blocks': 0,
+                'n_skipped_lesson': 0,
+                'skipped_lesson_words': 0,
+                'n_labeled_segments': 0,
+                'labeled_words': 0,
+                'n_unparseable': 0,
+                'unparseable_words': 0,
+                'total_therapist_words': 0,
+            }
+        return _per_session[sid]
+
+    def _add(key: str, value: int, sid: str):
+        _overall[key] = _overall.get(key, 0) + value
+        ss = _session_stats(sid)
+        ss[key] = ss.get(key, 0) + value
+
+    # ---------------------------------------------------------------------------
+    # Build initial cue_units list
+    # ---------------------------------------------------------------------------
+    # Each entry: {'segment': synthetic_Segment, 'from_segment': ...,
+    #              'to_segment': ..., 'context_block': ...,
+    #              '_constituents': [Segment, ...]}
+    # The '_constituents' key is carried alongside (not sent to the LLM).
+
+    cue_units: list = []
+
+    for spec in specs:
+        if not spec.therapist_items:
             continue
-        for i in range(len(p_segs) - 1):
-            from_seg = p_segs[i]
-            to_seg = p_segs[i + 1]
-            from_idx = seg_id_to_idx.get(from_seg.segment_id, -1)
-            # Prefer timestamp-based overlap. Fall back to sorted-index positions
-            # when from_seg.end_time_ms == 0 (Segment default / field unset), to
-            # avoid collecting the entire preceding session as the cue.
-            if from_seg.end_time_ms > 0:
-                between = [
-                    t for t in th_segs
-                    if t.start_time_ms < to_seg.start_time_ms
-                    and t.end_time_ms > from_seg.end_time_ms
-                ]
-            else:
-                to_pos = seg_id_to_idx.get(to_seg.segment_id, -1)
-                between = [
-                    t for t in th_segs
-                    if from_idx < seg_id_to_idx.get(t.segment_id, -1) < to_pos
-                ]
-            if not between:
-                continue
-            cue_text = '\n'.join(t.text.strip() for t in between if t.text.strip())
-            cue_words = len(cue_text.split())
-            if skip_lessons and cue_words > max_lesson_words:
-                continue
-            exchange_ctx = (
-                _build_context_block_for_purer(sorted_segs, from_idx, window_size=ctx_window,
-                                               max_words=max_ctx_words)
-                if from_idx >= 0 else ''
-            )
-            synthetic_id = f'purer_cue_{from_seg.segment_id}_to_{to_seg.segment_id}'
+        from_seg = spec.from_item
+        to_seg = spec.to_item
+        session_id = spec.session_id
+        between = spec.therapist_items
+        from_idx = spec.from_index
+
+        cue_text_full = '\n'.join(t.text.strip() for t in between if t.text.strip())
+        cue_words = len(cue_text_full.split())
+
+        # Accumulate total therapist words before any skip/split decisions.
+        _add('n_blocks', 1, session_id)
+        _add('total_therapist_words', cue_words, session_id)
+
+        # --- skip-as-lesson branch ---
+        if skip_lessons and cue_words > max_lesson_words:
+            # This block is treated as long didactic monologue — do NOT classify.
+            _add('n_skipped_lesson', 1, session_id)
+            _add('skipped_lesson_words', cue_words, session_id)
+            continue
+        # When skip_lessons is False, even long/lesson blocks are NOT skipped;
+        # they fall through to the split-by-budget logic below, getting chunked
+        # and labeled rather than dropped.  (1d: lesson chunking when skip is OFF)
+
+        exchange_ctx = (
+            _build_context_block_for_purer(sorted_segs, from_idx, window_size=ctx_window,
+                                           max_words=max_ctx_words)
+            if from_idx >= 0 else ''
+        )
+
+        # --- split into sub-cues if block exceeds per-sub-cue word budget ---
+        if cue_words > max_cue_words:
+            sub_groups = _split_by_word_budget(between, max_cue_words, lambda s: s.text)
+        else:
+            # Single group — no splitting needed.
+            sub_groups = [between]
+
+        for k, sub_group in enumerate(sub_groups):
+            sub_text = '\n'.join(t.text.strip() for t in sub_group if t.text.strip())
+            sub_words = len(sub_text.split())
+            from_id = from_seg.segment_id
+            to_id = to_seg.segment_id
+            # Unique synthetic id includes partition index so multi-sub-cue
+            # blocks have distinct checkpoint keys.
+            synthetic_id = f'purer_cue_{from_id}_to_{to_id}_p{k}'
             synthetic = Segment(
                 segment_id=synthetic_id,
                 trial_id=from_seg.trial_id,
@@ -702,43 +740,163 @@ def _purer_llm_classify(config, segments, output_dir, observer):
                 session_number=from_seg.session_number,
                 cohort_id=from_seg.cohort_id,
                 speaker='therapist',
-                text=cue_text,
-                word_count=cue_words,
-                start_time_ms=between[0].start_time_ms,
-                end_time_ms=between[-1].end_time_ms,
+                text=sub_text,
+                word_count=sub_words,
+                start_time_ms=sub_group[0].start_time_ms,
+                end_time_ms=sub_group[-1].end_time_ms,
             )
             cue_units.append({
                 'segment': synthetic,
                 'from_segment': from_seg,
                 'to_segment': to_seg,
                 'context_block': exchange_ctx,
+                '_constituents': sub_group,
+                '_session_id': session_id,
             })
-            cue_constituents.append(between)
 
     if not cue_units:
         plog.close_llm_log()
+        _write_purer_coverage_report(output_dir, _overall, _per_session,
+                                     _format_purer_coverage)
         return
 
-    try:
-        purer_results, _ = _classify_purer_cue_units(
-            cue_units=cue_units,
-            framework=purer_framework,
-            config=purer_cfg,
-            resume_from=config.resume_from,
-            process_logger=plog,
-        )
-    except Exception:
-        purer_results = {}
+    # ---------------------------------------------------------------------------
+    # Classify + bisect-retry (1c)
+    # ---------------------------------------------------------------------------
+    MAX_BISECT_DEPTH = 6
 
-    for cu, constituents in zip(cue_units, cue_constituents):
-        sid = cu['segment'].segment_id
-        result = purer_results.get(sid)
+    # Strip '_constituents'/'_session_id' before passing to the LLM classifier
+    # (it expects only the 4 canonical keys).
+    def _strip_internal(units):
+        return [
+            {k: v for k, v in cu.items() if not k.startswith('_')}
+            for cu in units
+        ]
+
+    def _is_failure(result: dict) -> bool:
+        """Return True if this cue-unit result is missing or has no primary_stage."""
         if not isinstance(result, dict):
-            continue
+            return True
+        consensus = result.get('consensus', {})
+        if consensus.get('primary_stage') is None:
+            return True
+        if consensus.get('agreement_level') == 'none':
+            return True
+        return False
+
+    def _classify_batch(units, resume_from):
+        """Run _classify_purer_cue_units on *units*; return results dict."""
+        if not units:
+            return {}
+        try:
+            results, _ = _classify_purer_cue_units(
+                cue_units=_strip_internal(units),
+                framework=purer_framework,
+                config=purer_cfg,
+                resume_from=resume_from,
+                process_logger=plog,
+            )
+            return results
+        except Exception:
+            return {}
+
+    def _bisect_and_classify(failing_units: list, depth: int) -> dict:
+        """
+        Recursively bisect each failing multi-constituent cue-unit, classify
+        the halves, and return a mapping synthetic_id → result for all
+        (re-)classified sub-cues.  Single-constituent failures are left as-is.
+        """
+        if depth > MAX_BISECT_DEPTH or not failing_units:
+            return {}
+
+        new_units = []
+        for cu in failing_units:
+            constituents = cu['_constituents']
+            if len(constituents) <= 1:
+                # Cannot split further; will be recorded as unparseable.
+                continue
+            mid = len(constituents) // 2
+            halves = [constituents[:mid], constituents[mid:]]
+            parent_id = cu['segment'].segment_id
+            for h_idx, half in enumerate(halves):
+                h_text = '\n'.join(t.text.strip() for t in half if t.text.strip())
+                h_words = len(h_text.split())
+                h_id = f'{parent_id}_b{h_idx}'
+                h_seg = Segment(
+                    segment_id=h_id,
+                    trial_id=cu['segment'].trial_id,
+                    session_id=cu['segment'].session_id,
+                    session_number=cu['segment'].session_number,
+                    cohort_id=cu['segment'].cohort_id,
+                    speaker='therapist',
+                    text=h_text,
+                    word_count=h_words,
+                    start_time_ms=half[0].start_time_ms,
+                    end_time_ms=half[-1].end_time_ms,
+                )
+                new_units.append({
+                    'segment': h_seg,
+                    'from_segment': cu['from_segment'],
+                    'to_segment': cu['to_segment'],
+                    'context_block': cu['context_block'],
+                    '_constituents': half,
+                    '_session_id': cu['_session_id'],
+                })
+
+        if not new_units:
+            return {}
+
+        # Classify this batch — resume_from=None to avoid checkpoint key reuse.
+        batch_results = _classify_batch(new_units, resume_from=None)
+
+        # Recurse on any new failures that are still splittable.
+        still_failing = [
+            nu for nu in new_units
+            if _is_failure(batch_results.get(nu['segment'].segment_id))
+            and len(nu['_constituents']) > 1
+        ]
+        deeper = _bisect_and_classify(still_failing, depth + 1)
+
+        # Merge: deeper results override (they are more fine-grained).
+        merged = {nu['segment'].segment_id: (nu, batch_results.get(nu['segment'].segment_id))
+                  for nu in new_units}
+        # Return a flat map: synthetic_id → (unit, result) for all new_units +
+        # all recursively produced units.
+        all_results: dict = {}
+        for nu in new_units:
+            sid_k = nu['segment'].segment_id
+            all_results[sid_k] = (nu, batch_results.get(sid_k))
+        all_results.update(deeper)
+        return all_results
+
+    # --- Initial classification pass ---
+    initial_results = _classify_batch(cue_units, resume_from=config.resume_from)
+
+    # Identify failures that have more than one constituent (splittable).
+    failing_initial = [
+        cu for cu in cue_units
+        if _is_failure(initial_results.get(cu['segment'].segment_id))
+        and len(cu['_constituents']) > 1
+    ]
+
+    # --- Bisect-retry pass ---
+    bisect_results: dict = _bisect_and_classify(failing_initial, depth=1)
+    # bisect_results maps synthetic_id → (unit, result)
+
+    # ---------------------------------------------------------------------------
+    # Propagate labels to constituent therapist Segments
+    # ---------------------------------------------------------------------------
+
+    def _propagate(unit: dict, result: dict):
+        """Apply a successful consensus result to all constituent Segments."""
+        if not isinstance(result, dict):
+            return False
         consensus = result.get('consensus', {})
         primary = consensus.get('primary_stage')
         if primary is None:
-            continue
+            return False
+        session_id = unit['_session_id']
+        constituents = unit['_constituents']
         for th_seg in constituents:
             th_seg.purer_primary = primary
             th_seg.purer_secondary = consensus.get('secondary_stage')
@@ -753,7 +911,64 @@ def _purer_llm_classify(config, segments, output_dir, observer):
             th_seg.purer_needs_review = bool(consensus.get('needs_review', False))
             th_seg.purer_rater_ids = result.get('rater_ids') or []
             th_seg.purer_rater_votes = result.get('rater_votes') or []
+            seg_words = getattr(th_seg, 'word_count', None) or len((th_seg.text or '').split())
+            _add('n_labeled_segments', 1, session_id)
+            _add('labeled_words', seg_words, session_id)
+        return True
+
+    # Process initial successes.
+    for cu in cue_units:
+        sid_k = cu['segment'].segment_id
+        result = initial_results.get(sid_k)
+        if _is_failure(result):
+            # Will be handled by bisect results (or recorded as unparseable).
+            continue
+        _propagate(cu, result)
+
+    # Process bisect results.
+    for sid_k, (bisect_unit, bisect_result) in bisect_results.items():
+        if not _is_failure(bisect_result):
+            _propagate(bisect_unit, bisect_result)
+        else:
+            # Single-turn sub-cues that still failed after all bisect attempts.
+            if len(bisect_unit['_constituents']) <= 1:
+                sub_words = bisect_unit['segment'].word_count or 0
+                _add('n_unparseable', 1, bisect_unit['_session_id'])
+                _add('unparseable_words', sub_words, bisect_unit['_session_id'])
+
+    # Also record initial single-turn failures that were not splittable and had
+    # no bisect attempt (they were excluded from failing_initial above).
+    for cu in cue_units:
+        sid_k = cu['segment'].segment_id
+        result = initial_results.get(sid_k)
+        if _is_failure(result) and len(cu['_constituents']) <= 1:
+            sub_words = cu['segment'].word_count or 0
+            _add('n_unparseable', 1, cu['_session_id'])
+            _add('unparseable_words', sub_words, cu['_session_id'])
+
     plog.close_llm_log()
+
+    # ---------------------------------------------------------------------------
+    # Write coverage report (1e)
+    # ---------------------------------------------------------------------------
+    _write_purer_coverage_report(output_dir, _overall, _per_session,
+                                 _format_purer_coverage)
+
+
+def _write_purer_coverage_report(output_dir: str, overall: dict, per_session: dict,
+                                  format_fn) -> None:
+    """Write report_purer_coverage.txt to the reports directory."""
+    try:
+        reports_dir = _paths.human_reports_dir(output_dir)
+        os.makedirs(reports_dir, exist_ok=True)
+        report_path = os.path.join(reports_dir, 'report_purer_coverage.txt')
+        stats = dict(overall)
+        stats['per_session'] = per_session
+        report_text = format_fn(stats)
+        with open(report_path, 'w', encoding='utf-8') as fh:
+            fh.write(report_text)
+    except Exception:
+        pass  # Coverage report failure must never crash the pipeline.
 
 
 def _codebook_classify(config, codebook, segments, output_dir, observer):
@@ -813,66 +1028,6 @@ def _codebook_classify(config, codebook, segments, output_dir, observer):
     plog.close_llm_log()
 
 
-def _microskill_classify(config, codebook, segments, output_dir, observer):
-    """Run embedding + LLM microcounseling-skill classification in-place on therapist segments."""
-    _llm_log_path = _paths.llm_prompts_path(output_dir)
-    plog = ProcessLogger(None, llm_log_path=_llm_log_path)
-
-    micro_output_dir = os.path.join(_paths.meta_dir(output_dir), 'microskill_raw')
-    os.makedirs(micro_output_dir, exist_ok=True)
-    config.microskill_embedding.exemplar_export_path = os.path.join(
-        micro_output_dir, 'found_exemplar_utterances.json'
-    )
-
-    # Microcounseling skills are therapist behaviours — classify therapist segments only.
-    ms_segments = [s for s in segments if s.speaker == 'therapist']
-    if not ms_segments:
-        plog.close_llm_log()
-        return
-
-    embedding_classifier = EmbeddingCodebookClassifier(config.microskill_embedding)
-    embedding_results = embedding_classifier.classify_segments(ms_segments, codebook)
-
-    tc = config.theme_classification
-    llm_cfg = LLMClientConfig(
-        backend=tc.backend,
-        api_key=tc.api_key,
-        model=tc.model,
-        temperature=tc.temperature,
-        lmstudio_base_url=getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
-        ollama_host=getattr(tc, 'ollama_host', '0.0.0.0'),
-        ollama_port=getattr(tc, 'ollama_port', 11434),
-        process_logger=plog,
-    )
-    llm_client = LLMClient(llm_cfg)
-    config.microskill_llm.output_dir = micro_output_dir
-    llm_classifier = LLMCodebookClassifier(llm_client, config.microskill_llm)
-    try:
-        llm_results = llm_classifier.classify_segments(
-            ms_segments, codebook, output_dir=micro_output_dir,
-        )
-    except Exception:
-        llm_results = {}
-
-    ensemble = CodebookEnsemble(config.microskill_ensemble)
-    ensemble_results = ensemble.reconcile(embedding_results, llm_results)
-
-    for seg in segments:
-        if seg.segment_id in ensemble_results:
-            ens = ensemble_results[seg.segment_id]
-            seg.microskill_labels_embedding = sorted(
-                a.code_id for a in embedding_results.get(seg.segment_id, [])
-            )
-            seg.microskill_labels_llm = sorted(
-                a.code_id for a in llm_results.get(seg.segment_id, [])
-            )
-            seg.microskill_labels_ensemble = ens.final_codes
-            seg.microskill_disagreements = [d['code_id'] for d in ens.disagreement_details]
-            seg.microskill_confidence = {a.code_id: a.confidence for a in ens.final_assignments}
-
-    plog.close_llm_log()
-
-
 def _run_cv_stats(segments, framework, output_dir, observer):
     """Compute cross-validation co-occurrence stats and export to disk."""
     import pandas as pd
@@ -911,7 +1066,7 @@ def stage_validation_artifacts(
 
     if segments is None:
         segments = segments_io.load_segments_for_stage(
-            _od, apply=('theme', 'purer', 'codebook', 'cv'),
+            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn'),
         )
 
     if framework is None:
@@ -1023,36 +1178,6 @@ def stage_ingest(
         'existing_speaker_map': _existing_speaker_map,
         'use_unknown_prefix': _use_unknown_prefix,
     }
-    use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', True)
-    segmenter = ConversationalSegmenter(seg_config)
-
-    llm_refiner = None
-    if use_llm_refine:
-        theme_cfg = config.theme_classification
-        refiner_llm_cfg = LLMClientConfig(
-            backend=theme_cfg.backend,
-            api_key=theme_cfg.api_key,
-            model=theme_cfg.model,
-            lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
-            no_reasoning=True,
-            process_logger=plog,
-        )
-        llm_refiner = LLMSegmentationRefiner(
-            LLMClient(refiner_llm_cfg),
-            {
-                'mode': getattr(config.segmentation, 'llm_refinement_mode', 'full'),
-                'ambiguity_threshold': getattr(config.segmentation, 'llm_ambiguity_threshold', 0.15),
-                'batch_size': getattr(config.segmentation, 'llm_batch_size', 5),
-                'excluded_speakers': excluded_speakers,
-                'max_context_words': config.segmentation.max_segment_words_conversational,
-                'max_context_duration_s': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
-                'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
-                'embedding_model': config.segmentation.embedding_model,
-                'process_logger': plog,
-            },
-            speaker_normalizer=segmenter.speaker_norm,
-        )
-
     if legacy_migration.is_legacy_project(_od):
         _n_segs = legacy_migration.migrate_legacy_segments(_od)
         observer.on_stage_progress(
@@ -1082,6 +1207,52 @@ def stage_ingest(
         session_files = sorted(
             set(_glob.glob(os.path.join(config.transcript_dir, '**/*.json'), recursive=True))
             | set(_glob.glob(os.path.join(config.transcript_dir, '**/*.vtt'), recursive=True))
+        )
+
+    # Nothing to segment → write an empty anonymization key and return WITHOUT
+    # constructing the segmenter (which would eagerly load the embedding model).
+    if not session_files:
+        _speaker_key_path = os.path.join(_paths.meta_dir(_od), 'speaker_anonymization_key.json')
+        with open(_speaker_key_path, 'w') as _f:
+            json.dump({}, _f, indent=2)
+        _write_anonymization_key_txt({}, _paths.anonymization_key_txt_path(_od))
+        plog.close()
+        observer.on_stage_complete(
+            "Transcript Ingestion and Segmentation",
+            "Produced 0 segments from 0 sessions",
+        )
+        return []
+
+    # Construct the segmenter (loads the embedding model) only now that we know
+    # there is work to do.
+    use_llm_refine = getattr(config.segmentation, 'use_llm_refinement', True)
+    segmenter = ConversationalSegmenter(seg_config)
+
+    llm_refiner = None
+    if use_llm_refine:
+        theme_cfg = config.theme_classification
+        refiner_llm_cfg = LLMClientConfig(
+            backend=theme_cfg.backend,
+            api_key=theme_cfg.api_key,
+            model=theme_cfg.model,
+            lmstudio_base_url=getattr(theme_cfg, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+            no_reasoning=True,
+            process_logger=plog,
+        )
+        llm_refiner = LLMSegmentationRefiner(
+            LLMClient(refiner_llm_cfg),
+            {
+                'mode': getattr(config.segmentation, 'llm_refinement_mode', 'full'),
+                'ambiguity_threshold': getattr(config.segmentation, 'llm_ambiguity_threshold', 0.15),
+                'batch_size': getattr(config.segmentation, 'llm_batch_size', 5),
+                'excluded_speakers': excluded_speakers,
+                'max_context_words': config.segmentation.max_segment_words_conversational,
+                'max_context_duration_s': getattr(config.segmentation, 'max_segment_duration_seconds', 300.0),
+                'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
+                'embedding_model': config.segmentation.embedding_model,
+                'process_logger': plog,
+            },
+            speaker_normalizer=segmenter.speaker_norm,
         )
 
     all_segments: List[Segment] = []
@@ -1365,10 +1536,13 @@ def run_incremental_pipeline(
     confidence_tier_config = asdict(config.confidence_tiers)
     _msdir = _paths.master_segments_dir(output_dir)
     os.makedirs(_msdir, exist_ok=True)
+    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, output_dir)
     master_df = assemble_master_dataset(
         all_segments,
         os.path.join(_msdir, 'master_segments.jsonl'),
         confidence_tiers=confidence_tier_config,
+        gnn_authoritative=_gnn_auth,
+        gate_passed=_gate_ok,
     )
 
     # ------------------------------------------------------------------
@@ -1601,39 +1775,6 @@ def run_full_pipeline(
         )
 
     # ------------------------------------------------------------------
-    # Stage 3d: Microcounseling-skill Classification (optional; therapist sub-layer)
-    # ------------------------------------------------------------------
-    if getattr(config, 'run_microskill_classifier', False):
-        from codebook.microcounseling_codebook import get_microcounseling_codebook
-        micro_cb = get_microcounseling_codebook()
-        # Persist microcounseling definitions for downstream `qra analyze`.
-        _ms_def_path = os.path.join(_paths.meta_dir(output_dir), 'microcounseling_definitions.json')
-        if not os.path.exists(_ms_def_path):
-            _ms_defs = {
-                'name': micro_cb.name,
-                'version': micro_cb.version,
-                'description': micro_cb.description,
-                'codes': [
-                    {
-                        'code_id': c.code_id,
-                        'category': c.category,
-                        'domain': c.domain,
-                        'description': c.description,
-                        'inclusive_criteria': c.inclusive_criteria,
-                        'exclusive_criteria': c.exclusive_criteria,
-                        'exemplar_utterances': c.exemplar_utterances,
-                    }
-                    for c in micro_cb.codes
-                ],
-            }
-            with open(_ms_def_path, 'w') as _f:
-                json.dump(_ms_defs, _f, indent=2)
-        all_segments = stage_classify_microskill(
-            config, micro_cb,
-            segments=all_segments, output_dir=output_dir, observer=observer,
-        )
-
-    # ------------------------------------------------------------------
     # Stage 4: Cross-Validation (optional, when both theme and codebook)
     # ------------------------------------------------------------------
     if config.run_theme_labeler and config.run_codebook_classifier:
@@ -1691,10 +1832,13 @@ def run_full_pipeline(
     confidence_tier_config = asdict(config.confidence_tiers)
     _msdir = _paths.master_segments_dir(output_dir)
     os.makedirs(_msdir, exist_ok=True)
+    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, output_dir)
     master_df = assemble_master_dataset(
         all_segments,
         os.path.join(_msdir, 'master_segments.jsonl'),
         confidence_tiers=confidence_tier_config,
+        gnn_authoritative=_gnn_auth,
+        gate_passed=_gate_ok,
     )
 
     observer.on_stage_complete(

@@ -120,7 +120,8 @@ def load_segments(
         df['llm_confidence_secondary'] if 'llm_confidence_secondary' in df.columns else pd.NA,
         errors='coerce',
     )
-    df['llm_run_consistency'] = pd.to_numeric(df['llm_run_consistency'], errors='coerce')
+    if 'llm_run_consistency' in df.columns:
+        df['llm_run_consistency'] = pd.to_numeric(df['llm_run_consistency'], errors='coerce')
     df['secondary_stage'] = pd.to_numeric(
         df['secondary_stage'] if 'secondary_stage' in df.columns else pd.NA,
         errors='coerce',

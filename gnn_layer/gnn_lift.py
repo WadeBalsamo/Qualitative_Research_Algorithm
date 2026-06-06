@@ -5,8 +5,7 @@ Capability C — GNN as an independent (non-LLM) measurement substrate.
 
 Recomputes (VAAMR stage x VCE code) lift from GNN-derived VAAMR assignments and
 compares it side-by-side with the LLM-derived table. Convergence GNN<->LLM is
-stronger evidence than LLM<->LLM (methodology Sec 5.2). Also provides the therapist
-(PURER x microskill) cross-validation table. lift = P(b | a) / P(b).
+stronger evidence than LLM<->LLM (methodology Sec 5.2). lift = P(b | a) / P(b).
 """
 
 from typing import Dict, List, Optional
@@ -73,24 +72,6 @@ def llm_vaamr_vce_lift(df_all):
         stages.append(fl)
         codes.append(_codes(r.get('codebook_labels_ensemble')))
     return _lift_table(stages, codes, 'vaamr_stage', 'vce_code')
-
-
-def purer_microskill_lift(df_all):
-    """(PURER move x microskill) lift over therapist segments — therapist cross-validation."""
-    if 'purer_primary' not in df_all.columns:
-        import pandas as pd
-        return pd.DataFrame(columns=['purer_move', 'microskill', 'lift', 'count', 'p_b'])
-    ther = df_all[df_all.get('speaker', '') == 'therapist'] if 'speaker' in df_all.columns else df_all
-    moves, skills = [], []
-    for _, r in ther.iterrows():
-        pv = r.get('purer_primary')
-        try:
-            pv = int(pv)
-        except (ValueError, TypeError):
-            continue
-        moves.append(pv)
-        skills.append(_codes(r.get('microskill_labels_ensemble')))
-    return _lift_table(moves, skills, 'purer_move', 'microskill')
 
 
 def compare_gnn_vs_llm(gnn_table, llm_table):

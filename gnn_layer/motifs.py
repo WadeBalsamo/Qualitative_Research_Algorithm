@@ -8,7 +8,7 @@ five PURER moves before measuring influence) to:
   1. cluster cue-block embeddings into emergent therapist-language motifs;
   2. score each motif's influence on forward VAAMR transitions, conditioned on
      from_stage (logistic regression with from_stage one-hot);
-  3. flag influential motifs poorly explained by PURER/microskill (candidate new
+  3. flag influential motifs poorly explained by PURER (candidate new
      constructs) and surface exemplar cues.
 
 sklearn imported lazily.
@@ -80,8 +80,8 @@ def score_motif_influence(cue_embeddings, from_stages, forward_outcome, motif_id
     return out
 
 
-def annotate_label_purity(motif_ids, purer_labels, micro_labels) -> Dict[int, dict]:
-    """Per motif: dominant PURER move + its purity, and dominant microskill + purity."""
+def annotate_label_purity(motif_ids, purer_labels) -> Dict[int, dict]:
+    """Per motif: dominant PURER move + its purity."""
     import numpy as np
     from collections import Counter
     out: Dict[int, dict] = {}
@@ -89,28 +89,24 @@ def annotate_label_purity(motif_ids, purer_labels, micro_labels) -> Dict[int, di
     for m in np.unique(motif_ids):
         sel = np.where(motif_ids == m)[0]
         pl = [purer_labels[i] for i in sel if i < len(purer_labels) and purer_labels[i] is not None]
-        ml = []
-        for i in sel:
-            if i < len(micro_labels) and micro_labels[i]:
-                ml.extend(micro_labels[i])
         info = {}
         if pl:
             c = Counter(pl); dom, cnt = c.most_common(1)[0]
             info['dominant_purer'] = int(dom); info['purer_purity'] = round(cnt / len(pl), 3)
         else:
             info['dominant_purer'] = None; info['purer_purity'] = 0.0
-        if ml:
-            c = Counter(ml); dom, cnt = c.most_common(1)[0]
-            info['dominant_microskill'] = dom; info['microskill_purity'] = round(cnt / len(ml), 3)
-        else:
-            info['dominant_microskill'] = None; info['microskill_purity'] = 0.0
         out[int(m)] = info
     return out
 
 
 def flag_emergent_motifs(motif_stats: Dict[int, dict], purity: Dict[int, dict],
                          config) -> List[int]:
-    """Influential (>= min_motif_influence) but low PURER/microskill purity, enough blocks."""
+    """Influential (>= min_motif_influence) but low PURER purity, enough blocks.
+
+    PURER is the only therapist construct framework, so a motif that is influential
+    on forward transitions yet not cleanly explained by a single PURER move is a
+    candidate new therapeutic construct.
+    """
     flagged = []
     for m, s in motif_stats.items():
         if s['n_blocks'] < int(config.motif_min_block_count):
@@ -118,9 +114,7 @@ def flag_emergent_motifs(motif_stats: Dict[int, dict], purity: Dict[int, dict],
         if s['influence'] < float(config.min_motif_influence):
             continue
         p = purity.get(m, {})
-        low_purer = p.get('purer_purity', 0.0) < 0.5
-        low_micro = p.get('microskill_purity', 0.0) < 0.5
-        if low_purer and low_micro:
+        if p.get('purer_purity', 0.0) < 0.5:
             flagged.append(m)
     return sorted(flagged)
 

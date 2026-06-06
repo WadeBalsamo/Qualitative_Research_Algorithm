@@ -3,7 +3,7 @@ gnn_layer/graph_builder.py
 --------------------------
 Build the QRA graph from the assembled master DataFrame.
 
-Implementation note: the heterogeneous design (segments + VAAMR/PURER/VCE/microskill
+Implementation note: the heterogeneous design (segments + VAAMR/PURER/VCE
 anchors) is realized as a *homogeneous projection* — every node lives in the same
 Qwen3 embedding space, so one shared SAGE aggregation over the union of typed edges
 is faithful and avoids a torch-geometric dependency. Edge *types* are retained in
@@ -22,6 +22,14 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 
+# Canonical edge-type vocabulary. The integer id of an edge family is its position
+# here; SAGEConv's learnable per-type gate is indexed by these ids, so the order is a
+# stable contract across train / save / load / scale-mode (do NOT reorder). Families
+# absent from a given graph simply leave their gate unused.
+EDGE_TYPE_VOCAB: Tuple[str, ...] = ('temporal', 'knn', 'anchor', 'precipitates')
+EDGE_TYPE_TO_ID: Dict[str, int] = {t: i for i, t in enumerate(EDGE_TYPE_VOCAB)}
+
+
 @dataclass
 class HeteroGraph:
     """Unified node/edge tensors (homogeneous projection of the heterogeneous design)."""
@@ -30,6 +38,7 @@ class HeteroGraph:
     node_types: List[str] = field(default_factory=list)
     edge_index: "object" = None              # LongTensor [2, E] (undirected: both dirs)
     edge_weight: "object" = None             # FloatTensor [E]
+    edge_type_ids: "object" = None           # LongTensor [E] (id into EDGE_TYPE_VOCAB)
     index_of: Dict[str, int] = field(default_factory=dict)
     meta: dict = field(default_factory=dict)
 
@@ -115,6 +124,27 @@ def build_graph(
                 sim = float(1.0 - dist[i, j_pos])
                 _add(i, j, max(0.0, sim), 'knn')
 
+    # ---- optional typed therapist->participant "precipitates" edges (Track A1) ----
+    # For each cue block, connect each therapist cue segment to the following participant
+    # segment so the participant representation can attend to the preceding cue. Gated by
+    # config so the default graph is unchanged until the family earns its place via ablation.
+    if getattr(config, 'precipitates_edges', False):
+        from process.cue_blocks import cue_blocks_from_records
+        records = [dict(r) for r in rows]
+        specs = cue_blocks_from_records(records, require_stage=False)
+        n_prec = 0
+        for spec in specs:
+            to_sid = str(spec.to_item.get('segment_id')) if isinstance(spec.to_item, dict) \
+                else str(getattr(spec.to_item, 'segment_id', ''))
+            if to_sid not in index_of:
+                continue
+            for th in spec.therapist_items:
+                th_sid = str(th.get('segment_id')) if isinstance(th, dict) \
+                    else str(getattr(th, 'segment_id', ''))
+                if th_sid in index_of:
+                    _add(index_of[th_sid], index_of[to_sid], 1.0, 'precipitates')
+                    n_prec += 1
+
     # ---- optional anchor nodes + anchor/cross-framework edges ----
     if anchor_features:
         for aid, vec in anchor_features.items():
@@ -134,17 +164,23 @@ def build_graph(
     if edges:
         edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
         edge_weight = torch.tensor(weights, dtype=torch.float32)
+        edge_type_ids = torch.tensor(
+            [EDGE_TYPE_TO_ID[t] for t in edge_types], dtype=torch.long)
     else:
         edge_index = torch.zeros((2, 0), dtype=torch.long)
         edge_weight = torch.zeros((0,), dtype=torch.float32)
+        edge_type_ids = torch.zeros((0,), dtype=torch.long)
 
     g = HeteroGraph(
         x=x, node_ids=node_ids, node_types=node_types,
-        edge_index=edge_index, edge_weight=edge_weight, index_of=index_of,
+        edge_index=edge_index, edge_weight=edge_weight, edge_type_ids=edge_type_ids,
+        index_of=index_of,
         meta={
             'n_segments': n_seg,
             'embed_dim': int(x.shape[1]),
             'edge_types': edge_types,
+            'edge_type_vocab': list(EDGE_TYPE_VOCAB),
+            'n_precipitates': sum(1 for t in edge_types if t == 'precipitates'),
             'speaker_of': speaker_of,
             'n_anchors': len(node_ids) - n_seg,
         },
@@ -153,11 +189,17 @@ def build_graph(
 
 
 def attach_new_segments(graph: HeteroGraph, new_embeddings: Dict[str, "object"],
-                        config) -> HeteroGraph:
+                        config,
+                        node_type_of: Optional[Dict[str, str]] = None) -> HeteroGraph:
     """Inductively attach unseen segments via kNN edges into the existing nodes.
 
     New nodes connect only to existing nodes (never to each other), keeping
     predictions order-invariant. Returns a new extended HeteroGraph.
+
+    ``node_type_of`` maps each new segment_id to its node type
+    ('participant_segment' / 'therapist_segment'); without it attached nodes
+    default to the generic 'segment' type, which the head-prediction router skips —
+    so scale-mode callers must supply it (built from the df speaker column).
     """
     import numpy as np
     import torch
@@ -176,6 +218,10 @@ def attach_new_segments(graph: HeteroGraph, new_embeddings: Dict[str, "object"],
 
     edges = graph.edge_index.t().tolist() if graph.edge_index.numel() else []
     weights = graph.edge_weight.tolist() if graph.edge_weight.numel() else []
+    type_ids = graph.edge_type_ids.tolist() \
+        if getattr(graph, 'edge_type_ids', None) is not None and graph.edge_type_ids.numel() \
+        else []
+    _knn_id = EDGE_TYPE_TO_ID['knn']
 
     k = min(int(config.knn_k), max(1, len(base_ids)))
     nn = NearestNeighbors(n_neighbors=k, metric='cosine').fit(base_X)
@@ -186,16 +232,67 @@ def attach_new_segments(graph: HeteroGraph, new_embeddings: Dict[str, "object"],
         for c in range(idx.shape[1]):
             j = int(idx[r, c]) + base_offset
             sim = max(0.0, float(1.0 - dist[r, c]))
-            edges.append([gi, j]); weights.append(sim)
-            edges.append([j, gi]); weights.append(sim)
+            edges.append([gi, j]); weights.append(sim); type_ids.append(_knn_id)
+            edges.append([j, gi]); weights.append(sim); type_ids.append(_knn_id)
 
-    node_types = list(graph.node_types) + ['segment'] * len(new_ids)
+    ntype = node_type_of or {}
+    node_types = list(graph.node_types) + [ntype.get(sid, 'segment') for sid in new_ids]
+    speaker_of = dict(graph.meta.get('speaker_of', {}))
+    for sid in new_ids:
+        nt = ntype.get(sid)
+        if nt == 'participant_segment':
+            speaker_of[sid] = 'participant'
+        elif nt == 'therapist_segment':
+            speaker_of[sid] = 'therapist'
     x = torch.tensor(all_X, dtype=torch.float32)
     edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
     edge_weight = torch.tensor(weights, dtype=torch.float32)
+    edge_type_ids = torch.tensor(type_ids, dtype=torch.long) if type_ids \
+        else torch.zeros((0,), dtype=torch.long)
     return HeteroGraph(x=x, node_ids=all_ids, node_types=node_types,
                        edge_index=edge_index, edge_weight=edge_weight,
-                       index_of=index_of, meta=dict(graph.meta, n_new=len(new_ids)))
+                       edge_type_ids=edge_type_ids, index_of=index_of,
+                       meta=dict(graph.meta, n_new=len(new_ids), speaker_of=speaker_of))
+
+
+def save_graph(graph: HeteroGraph, model_dir: str) -> str:
+    """Persist a trained graph so scale-mode can attach to it inductively.
+
+    Saves tensors + node bookkeeping to ``<model_dir>/graph.pt`` (a plain dict via
+    torch.save). Paired with :func:`load_graph`.
+    """
+    import os
+    import torch
+    os.makedirs(model_dir, exist_ok=True)
+    path = os.path.join(model_dir, 'graph.pt')
+    torch.save({
+        'x': graph.x,
+        'node_ids': list(graph.node_ids),
+        'node_types': list(graph.node_types),
+        'edge_index': graph.edge_index,
+        'edge_weight': graph.edge_weight,
+        'edge_type_ids': getattr(graph, 'edge_type_ids', None),
+        'meta': graph.meta,
+    }, path)
+    return path
+
+
+def load_graph(model_dir: str) -> Optional[HeteroGraph]:
+    """Reconstruct a HeteroGraph saved by :func:`save_graph`; None if absent."""
+    import os
+    import torch
+    path = os.path.join(model_dir, 'graph.pt')
+    if not os.path.isfile(path):
+        return None
+    d = torch.load(path, map_location='cpu')
+    node_ids = list(d['node_ids'])
+    return HeteroGraph(
+        x=d['x'], node_ids=node_ids, node_types=list(d['node_types']),
+        edge_index=d['edge_index'], edge_weight=d['edge_weight'],
+        edge_type_ids=d.get('edge_type_ids'),
+        index_of={sid: i for i, sid in enumerate(node_ids)},
+        meta=d.get('meta', {}),
+    )
 
 
 def compute_cross_framework_lift(df_all, min_lift: float = 1.5) -> Dict[Tuple[str, str], float]:
