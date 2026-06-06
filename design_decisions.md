@@ -209,6 +209,20 @@ model (D-C). Mechanism (M2) graph kept regardless.
   Phenomenology > Education > Reinforcement, but **Spearman ρ=0.014, 95% CI [−0.16, 0.18] (includes
   0) → NO convergence** (gate κ=0.247 trust context). ⇒ MiniLM features are too weak for the
   mechanism, exactly as for the classifier. The **Qwen run is the real §1A test** (pending re-embed).
+- **2026-06-06 — SA2 merged (harness + human-join) + 🔴 CV-LEAKAGE FINDING.** Strict self-check
+  reproduces the published numbers (LLM κ=0.2467 / human κ=0.0530) and the **production human-axis
+  gate is now lit** (`validation.evaluate_crossval` returns graph_vs_human κ=0.053 — A0-pre done).
+  **KEY:** honest **participant-grouped** CV collapses the A0 (MiniLM) LLM-axis κ from **0.247
+  (random k-fold) → 0.050** `[-0.03, 0.12]` (human −0.02 `[-0.08, 0.06]`). **The published 0.247 was
+  inflated by CV leakage** (random folds let the GNN see same-participant neighbours via temporal+kNN
+  edges — root cause #5). The honest A0 baseline is ~0.05; the battery is measured against THIS, not
+  the leaky 0.247. Avoidance missing from 1/5 folds (logged). Folds: 205 labeled, 20 participants, 5
+  folds (StratifiedGroupKFold).
+- **2026-06-06 — No-code class VALIDATED (D-B) on MiniLM.** 6-class integration smoke (MiniLM through
+  the harness): **human-axis κ jumps −0.021 (5-class A0) → 0.206 (6-class)** because the model can now
+  emit "No code" for the 36% of human items that are No-code. Pred dist collapses to AttReg/Reap/
+  No-code (rare stages still 0), so the No-code class is a **major human-axis lever** independent of
+  rare-stage recovery. Qwen + imbalance is the next test (battery `run_battery.py`).
 
 ## 9. PRIMARY work-stream — mechanism triangulation (the peer-review deliverable)
 
