@@ -6,6 +6,49 @@
 
 ---
 
+## 0. Executive synthesis (read first)
+
+**Mission:** make the VAAMR GNN methodologically defensible — PRIMARY: a mechanism (therapist→
+participant) readout that *triangulates* with the observed analysis; SECONDARY: classifier IRR as a
+trust floor. Corpus `./data/Meta/` (n≈32 participants; 339 participant segments, 205 VAAMR-labeled,
+134 "No code"; 76 human-coded items).
+
+**Bottom line (all numbers participant-grouped CV + participant-clustered bootstrap CIs):**
+1. **The published GNN κ=0.247 was CV-leakage-inflated.** Honest participant-grouped CV puts the
+   original MiniLM GNN at κ=0.05 (vs LLM) / −0.02 (vs human) — ≈ chance. (Root cause #5; the harness
+   is now the authoritative evaluation.)
+2. **Features were the bottleneck.** Real **Qwen3-8B** embeddings (4096-d, served by LM Studio — no
+   transformers-pin risk) lift a *linear probe* to LLM κ=0.31 / human κ=0.37 off that 0.05/−0.02 floor.
+3. **Class-weighting recovers the rare stages** (Avoidance/Metacognition recall 0% → 0.35/0.31).
+4. **A "No code" 6th class carries the human axis** (36% of human items are "No code" — the LLM can
+   emit it, a 5-class model cannot; it lifts human κ −0.02→0.21 even on MiniLM).
+5. **A linear probe ties/beats the GNN at n≈205** (human 0.37 probe ≈ 0.36 GNN; LLM 0.31 probe ≫ 0.21
+   GNN; C&S worst). The GNN does **not** earn its place *as a classifier* → **honest split**: LLM stays
+   label-of-record, the calibrated probe is the abstention-gated assist, the GNN is reserved for mechanism.
+6. **SECONDARY (classifier) — human-level IRR ACHIEVED (lower band).** Best human κ ≈ **0.37** is inside
+   the human↔human band (α 0.33–0.52), approaching LLM↔human (0.537). Winner = **A1n** (Qwen probe,
+   class-weighted, 6-class/No-code).
+7. **PRIMARY (mechanism) — does NOT triangulate (honest negative).** The Qwen GNN counterfactual
+   (Spearman ρ=**−0.13**, CI incl. 0) and the coupling factors (|corr|<0.07) both fail to converge with
+   the observed Δprogression → per protocol **`analysis/mechanism.py` (observed) LEADS; the GNN is
+   exploratory only.** The *negative* ρ inverts the observed pattern — consistent with the
+   **elicitation/responsiveness confound**; the observed analysis itself has **0 FDR-significant** cells
+   at this scale. **No causal claims.**
+
+**The defensible design IS the rigorous evaluation:** participant-grouped CV (no leakage), bootstrap
+CIs (tiny n → CIs decide, not points), a pre-registered arm battery, the human axis as load-bearing,
+and negative results recorded as evidence. **The binding constraint is data scale (n≈32)** — more
+labeled participants is the only credible path to a *corroborating* (not merely exploratory) GNN
+mechanism instrument.
+
+**Recommendations:** (i) switch the production reliability gate from random-k-fold to participant-
+grouped CV (it currently over-reports κ); (ii) keep the LLM as label-of-record + ship the calibrated
+Qwen probe as the abstention-gated assist; (iii) report mechanism from `mechanism.py` (observed) with
+the GNN as an exploratory lens + the n≈32/confound caveats; (iv) wire the Qwen `/v1/embeddings` backend
+(`embedding_backend='openai'`) as the GNN feature default.
+
+---
+
 ## 1. Mission (priority order)
 
 **PRIMARY = mechanism; SECONDARY = classifier IRR (a trust floor that must never compromise
@@ -356,3 +399,11 @@ participant state, so the OBSERVED association (move m co-occurs with progressio
 reason no causal claim is admissible. The counterfactual shift is also tiny (±0.035 on a 0–4 scale):
 the participant's predicted progression is driven mostly by their own features, not the swapped cue.
 Artifacts: `06_reports/06_gnn/influence.txt`, `03_analysis_data/gnn/gnn_counterfactual_influence.csv`.
+
+**Coupling readout (b) — also weak.** PCA latent factors of the raw Qwen cue-block embeddings (161
+blocks, 5 factors) vs subsequent participant forward movement: **all |corr| < 0.07** (max 0.068) —
+no latent therapist-cue factor predicts forward movement, consistent with the prior MiniLM run
+(<0.08). **Both GNN mechanism lenses (a counterfactual, b coupling) are weak/non-convergent at
+n≈32** → the observed `mechanism.py` Δprogression analysis is the **only** defensible mechanism
+evidence (itself hypothesis-generating, 0 FDR-significant cells). The honest mission conclusion: the
+graph is a useful *exploratory* lens, not a corroborating mechanism instrument at this data scale.
