@@ -194,6 +194,7 @@ model (D-C). Mechanism (M2) graph kept regardless.
 | A3 | Qwen GNN | 5 | 0.14 (66) | 0.21 [.12,.29] | 0.28/0.20/0.00 |
 | A4 | Qwen GNN, bal+focal | 5 | 0.10 (66) | 0.16 | 0.32/0.50/0.10 |
 | A4n | Qwen GNN, bal+focal | 6 | 0.36 [.25,.45] (66) | 0.18 | 0.36/0.35/0.17 |
+| B1 | Qwen GNN **+ concept anchors** | 6 | 0.29 [.17,.44] (66) | 0.18 | 0.40/0.35/0.17 |
 
 ### Findings (root causes, confirmed)
 1. **Features were the dominant bottleneck (cause #1).** Qwen-4096 lifts the probe from the honest
@@ -210,6 +211,12 @@ model (D-C). Mechanism (M2) graph kept regardless.
    DEFER No-code (no pred for No-code participants) → scored on a **n=37 subset** (29 deferred), an
    easier denominator not directly comparable to the n=66 full-task numbers. The fair full-task
    comparison is the **6-class arms (all n=66)**.
+
+5. **Concept structure (Path B / CFiCS) does NOT help (B1).** Adding the 5 VAAMR construct-definition
+   anchor nodes to the best 6-class GNN (A4n) *lowers* human κ to **0.29** (from 0.36) — anchors add
+   noise, not signal, at n≈205 (CIs overlap, but the point estimate drops on every axis). The
+   escalation the goal reserved "only if gaps remain" was run and is a **documented negative**: the
+   homogeneous graph was the right default, and concept structure does not rescue the GNN vs the probe.
 
 ### Classifier winner → **A1n** (Qwen linear probe, class-weighted, 6-class/No-code)
 - **human κ = 0.365 [0.23, 0.51]** — inside the human↔human band (0.33–0.52), approaching LLM↔human
@@ -317,6 +324,14 @@ model (D-C). Mechanism (M2) graph kept regardless.
   claim holds. Per-move influence rank is face-valid (Utilization>Education>Reframing>Phenomenology>
   Reinforcement) but exploratory. Remaining: B1 concept-anchor escalation (completeness) + production
   defensibility (grouped-CV gate fix, config promotion, mechanism decouple) + final synthesis.
+- **2026-06-06 — B1 concept-anchor escalation (Path B) — documented NEGATIVE.** GNN + 5 VAAMR
+  construct anchors (A4n config) → human κ=**0.29** [0.17,0.44] vs A4n 0.36 vs probe A1n 0.365 —
+  concept structure does NOT help at n≈205. **Battery COMPLETE (A0–A4n + B1).** Final classifier
+  winner = **A1n** (probe). The GNN does not earn its classifier place homogeneous OR anchored →
+  honest split confirmed. **Mission concluded:** classifier human-band IRR achieved (probe); PRIMARY
+  mechanism does not triangulate → mechanism.py leads (GNN exploratory); all arms + negatives logged;
+  CV-leakage corrected; A0-pre verified in the production gate. Production rec: switch gate to
+  participant-grouped CV; keep LLM as label-of-record + ship the Qwen probe as the abstention-gated assist.
 
 ## 9. PRIMARY work-stream — mechanism triangulation (the peer-review deliverable)
 
