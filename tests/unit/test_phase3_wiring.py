@@ -158,10 +158,9 @@ class TestBuildConfigMinimalNamespace(unittest.TestCase):
             r = _run('classify', '--what', 'vaamr', '-o', d)
             # The key assertion: no AttributeError from _build_config
             self.assertNotIn("AttributeError", r.stderr)
-            # theme_labels.jsonl must exist (stage ran with config, even if LLM failed)
+            # theme overlay must exist (stage ran with config, even if LLM failed)
             from process import classifications_io
-            overlay = classifications_io.overlay_path(d, 'theme')
-            self.assertTrue(os.path.isfile(overlay),
+            self.assertTrue(classifications_io.overlay_exists(d, 'theme'),
                             "theme overlay must be written even without --config")
 
     @slow_test  # codebook classification loads the real Qwen3 embedding model
@@ -435,9 +434,8 @@ class TestRunFullPipelineOverlayWrites(unittest.TestCase):
             except Exception:
                 pass  # report generation may fail with mocks; overlay write is what we test
 
-        overlay = classifications_io.overlay_path(self.tmpdir, 'theme')
-        self.assertTrue(os.path.isfile(overlay),
-                        "theme_labels.jsonl must exist after run_full_pipeline")
+        self.assertTrue(classifications_io.overlay_exists(self.tmpdir, 'theme'),
+                        "theme overlay must exist after run_full_pipeline")
 
     def test_stage_ingest_called_from_run_full_pipeline(self):
         """run_full_pipeline must delegate Stage 1 to stage_ingest (no inline duplication)."""
@@ -1204,12 +1202,11 @@ class TestClassifyAssembleRoundTrip(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_classify_writes_overlay_without_config(self):
-        """qra classify --what theme must write theme_labels.jsonl without --config."""
+        """qra classify --what theme must write theme overlay without --config."""
         from process import classifications_io
         r = _run('classify', '--what', 'vaamr', '-o', self.tmpdir)
-        # The key contract: overlay file must exist after classify
-        overlay = classifications_io.overlay_path(self.tmpdir, 'theme')
-        self.assertTrue(os.path.isfile(overlay),
+        # The key contract: overlay must exist after classify
+        self.assertTrue(classifications_io.overlay_exists(self.tmpdir, 'theme'),
                         f"theme overlay must exist; stderr: {r.stderr}")
 
     def test_assemble_reads_overlay_written_by_classify(self):

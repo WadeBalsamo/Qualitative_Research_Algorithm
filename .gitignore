@@ -21,16 +21,10 @@ context/
 data/
 models/
 output/
-MoveMORE-Partial-Dataset/
-results/**/llm_results_status_*.txt
-
-# Local research scratch / source material (not part of the published repo)
+results/
+*.db
 references/
-plan.md
-wait_and_process.sh
-vamr_manuscript.txt
-varieties_of_contemplative_experience.txt
-MoveMORE_protocol.txt
+.env
 
 # Editor / sandbox / tooling artifacts
 .claude

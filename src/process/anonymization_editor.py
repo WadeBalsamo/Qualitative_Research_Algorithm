@@ -56,6 +56,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from . import output_paths as _paths
 from . import segments_io as _sio
 from . import classifications_io as _cio
+from . import db as _db
 from ._freeze import write_frozen, sha256_text
 
 VALID_ROLES = ('participant', 'therapist', 'staff')
@@ -306,35 +307,6 @@ def _remap_session_segments(
     return len(segs)
 
 
-def _rewrite_jsonl(path: str, rows: List[dict]) -> None:
-    def _write(fh):
-        for row in rows:
-            fh.write(json.dumps(row, default=str) + '\n')
-    write_frozen(path, _write, force=True)
-
-
-def _remap_overlay_file(path: str, segid_map: Dict[str, str]) -> int:
-    """Remap segment_id field in a classification overlay JSONL. Returns rows changed."""
-    if not os.path.isfile(path):
-        return 0
-    rows: List[dict] = []
-    changed = 0
-    with open(path, encoding='utf-8') as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            rec = json.loads(line)
-            sid = rec.get('segment_id')
-            if sid in segid_map:
-                rec['segment_id'] = segid_map[sid]
-                changed += 1
-            rows.append(rec)
-    rows.sort(key=lambda r: r.get('segment_id', ''))
-    _rewrite_jsonl(path, rows)
-    return changed
-
-
 def _remap_dict_keys(d: dict, segid_map: Dict[str, str]) -> dict:
     """Return a new dict with keys remapped via segid_map. Keys starting with '_'
     (e.g. '_meta') are preserved untouched."""
@@ -412,41 +384,40 @@ def _remap_text_files(output_dir: str, label_remap: Callable[[str], str]) -> int
 def _remap_cv_items(output_dir: str, segid_map: Dict[str, str],
                     relabel_map: Dict[str, str], token_remap: Callable[[str], str],
                     label_remap: Callable[[str], str]) -> int:
-    """Remap content-validity items.jsonl (text + any segment_id/participant_id). Returns rows changed."""
-    cv_root = _paths.content_validity_dir(output_dir)
-    if not os.path.isdir(cv_root):
+    """Remap content-validity item text in the SQLite ``cv_testset_items`` table.
+
+    CV item rows carry no segment_id/participant_id, so only the ``text`` column
+    is rewritten via ``label_remap(token_remap(text))``. Returns rows changed.
+    """
+    if not _db.db_exists(output_dir):
         return 0
     changed = 0
-    for name in sorted(os.listdir(cv_root)):
-        items_path = _paths.cv_testset_items_path(output_dir, name)
-        if not os.path.isfile(items_path):
-            continue
-        rows: List[dict] = []
-        with open(items_path, encoding='utf-8') as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
+    with _db.open_db(output_dir) as conn:
+        names = [r['name'] for r in conn.execute('SELECT name FROM cv_testsets').fetchall()]
+        for name in names:
+            items = conn.execute(
+                'SELECT item_id, text FROM cv_testset_items WHERE testset_name = ?',
+                (name,),
+            ).fetchall()
+            for item in items:
+                text = item['text']
+                if not isinstance(text, str):
                     continue
-                rec = json.loads(line)
-                before = json.dumps(rec, sort_keys=True, default=str)
-                if rec.get('segment_id') in segid_map:
-                    rec['segment_id'] = segid_map[rec['segment_id']]
-                if rec.get('participant_id') in relabel_map:
-                    rec['participant_id'] = relabel_map[rec['participant_id']]
-                if isinstance(rec.get('text'), str):
-                    rec['text'] = label_remap(token_remap(rec['text']))
-                if json.dumps(rec, sort_keys=True, default=str) != before:
+                new_text = label_remap(token_remap(text))
+                if new_text != text:
+                    conn.execute(
+                        'UPDATE cv_testset_items SET text = ? '
+                        'WHERE testset_name = ? AND item_id = ?',
+                        (new_text, name, item['item_id']),
+                    )
                     changed += 1
-                rows.append(rec)
-        _rewrite_jsonl(items_path, rows)
     return changed
 
 
 def _refresh_testset_meta_shas(output_dir: str) -> int:
-    """Recompute per-segment sha256 in flat testset meta files so drift-detection
-    stays valid after segment text changed. Returns meta files updated."""
-    meta_dir = os.path.join(_paths.meta_dir(output_dir), 'testset_meta')
-    if not os.path.isdir(meta_dir):
+    """Recompute per-item sha256 in the SQLite ``testset_items`` table so
+    drift-detection stays valid after segment text changed. Returns rows updated."""
+    if not _db.db_exists(output_dir):
         return 0
     # Index current segment text by (session_id, segment_index).
     text_by_key: Dict[Tuple[str, int], str] = {}
@@ -455,29 +426,26 @@ def _refresh_testset_meta_shas(output_dir: str) -> int:
             text_by_key[(seg.session_id, seg.segment_index)] = seg.text
 
     updated = 0
-    for path in sorted(glob.glob(os.path.join(meta_dir, '*.meta.json'))):
-        try:
-            with open(path, encoding='utf-8') as fh:
-                meta = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            continue
-        dirty = False
-        for entry in meta.get('segments', []):
-            sess = entry.get('session_id')
-            seg_num = entry.get('seg_num')
+    with _db.open_db(output_dir) as conn:
+        rows = conn.execute(
+            'SELECT worksheet_n, item_num, session_id, seg_num, sha256 FROM testset_items'
+        ).fetchall()
+        for row in rows:
+            sess = row['session_id']
+            seg_num = row['seg_num']
             if sess is None or seg_num is None:
                 continue
             text = text_by_key.get((sess, int(seg_num) - 1))  # seg_num is 1-based
             if text is None:
                 continue
             new_sha = sha256_text(text)
-            if entry.get('sha256') != new_sha:
-                entry['sha256'] = new_sha
-                dirty = True
-        if dirty:
-            with open(path, 'w', encoding='utf-8') as fh:
-                json.dump(meta, fh, indent=2)
-            updated += 1
+            if row['sha256'] != new_sha:
+                conn.execute(
+                    'UPDATE testset_items SET sha256 = ? '
+                    'WHERE worksheet_n = ? AND item_num = ?',
+                    (new_sha, row['worksheet_n'], row['item_num']),
+                )
+                updated += 1
     return updated
 
 
@@ -495,6 +463,13 @@ def _backup(output_dir: str) -> str:
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     dest_root = os.path.join(output_dir, '_backups', stamp)
     os.makedirs(dest_root, exist_ok=True)
+    # The SQLite store (qra.db) is the mutated source of truth but lives at the
+    # output_dir root, outside the _BACKUP_DIRS subdirs, so back it up explicitly
+    # (including any WAL/SHM sidecar files).
+    db_main = _db.db_path(output_dir)
+    for src in (db_main, db_main + '-wal', db_main + '-shm'):
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(dest_root, os.path.basename(src)))
     for sub in _BACKUP_DIRS:
         src = os.path.join(output_dir, sub)
         if os.path.isdir(src):
@@ -519,7 +494,7 @@ def _regenerate_derived(output_dir: str, config, *, verbose: bool = True) -> Dic
     stats = {'master': 0, 'analysis_files': 0}
 
     has_overlay = any(
-        os.path.isfile(_cio.overlay_path(output_dir, key))
+        _cio.overlay_exists(output_dir, key)
         for key in ('theme', 'purer', 'codebook', 'cv')
     )
     if has_overlay and _sio.list_segmented_sessions(output_dir):
@@ -553,7 +528,7 @@ def preview_key_update(output_dir: str, old_key: dict, new_key: dict) -> dict:
     segid_map = build_segid_map(output_dir, relabel_map)
     n_overlays = sum(
         1 for key in ('theme', 'purer', 'codebook', 'cv')
-        if os.path.isfile(_cio.overlay_path(output_dir, key))
+        if _cio.overlay_exists(output_dir, key)
     )
     n_checkpoints = 0
     for d in (_paths.llm_checkpoints_dir(output_dir),
@@ -636,7 +611,7 @@ def apply_key_update(
     # --- Classification overlays (segment_id field) ---
     if segid_map:
         for key in ('theme', 'purer', 'codebook', 'cv'):
-            stats['overlay_rows'] += _remap_overlay_file(_cio.overlay_path(output_dir, key), segid_map)
+            stats['overlay_rows'] += _cio.remap_overlay_segment_ids(output_dir, key, segid_map)
         # --- Classification checkpoints (segment_id dict keys) ---
         stats['checkpoint_keys'] += _remap_checkpoints(output_dir, segid_map)
 

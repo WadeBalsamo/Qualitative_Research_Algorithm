@@ -180,10 +180,8 @@ def assemble_master_dataset(
 
     df = pd.DataFrame(rows)
 
-    # Save as both CSV and JSONL
-    csv_path = output_path.replace('.jsonl', '.csv')
-    df.to_csv(csv_path, index=False)
-    df.to_json(output_path, orient='records', lines=True)
+    # Save as CSV only (the caller passes the .csv path as output_path)
+    df.to_csv(output_path, index=False)
 
     # Print class distribution
     if not df.empty and 'speaker' in df.columns:

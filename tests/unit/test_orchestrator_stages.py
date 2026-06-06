@@ -116,11 +116,9 @@ class TestStageClassifyThemeOverlay(unittest.TestCase):
         # Pass pre-classified segments; no LLM call needed
         stage_classify_theme(None, None, segments=segs, output_dir=self.tmpdir)
 
-        overlay = classifications_io.overlay_path(self.tmpdir, 'theme')
-        self.assertTrue(os.path.isfile(overlay))
+        self.assertTrue(classifications_io.overlay_exists(self.tmpdir, 'theme'))
 
-        with open(overlay, encoding='utf-8') as fh:
-            records = [json.loads(ln) for ln in fh if ln.strip()]
+        records = classifications_io.read_overlay(self.tmpdir, 'theme')
         self.assertEqual(len(records), 2)
         ids = {r['segment_id'] for r in records}
         self.assertIn('seg_001', ids)
@@ -162,8 +160,7 @@ class TestStageClassifyPurerOverlay(unittest.TestCase):
         segs = [_classified_purer_seg('th_001', primary=2)]
         stage_classify_purer(None, segments=segs, output_dir=self.tmpdir)
 
-        overlay = classifications_io.overlay_path(self.tmpdir, 'purer')
-        self.assertTrue(os.path.isfile(overlay))
+        self.assertTrue(classifications_io.overlay_exists(self.tmpdir, 'purer'))
 
     def test_purer_overlay_updates_manifest(self):
         from process.orchestrator import stage_classify_purer
@@ -205,8 +202,7 @@ class TestStageClassifyCodebookOverlay(unittest.TestCase):
         seg.codebook_confidence = {'VE.1': 0.9}
         stage_classify_codebook(None, None, segments=[seg], output_dir=self.tmpdir)
 
-        overlay = classifications_io.overlay_path(self.tmpdir, 'codebook')
-        self.assertTrue(os.path.isfile(overlay))
+        self.assertTrue(classifications_io.overlay_exists(self.tmpdir, 'codebook'))
 
     def test_codebook_stage_returns_segments(self):
         from process.orchestrator import stage_classify_codebook

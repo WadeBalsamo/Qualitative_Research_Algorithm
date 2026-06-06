@@ -175,7 +175,7 @@ All three are reported **per class** (per VAAMR stage, per PURER move, per code)
 
 ### 2.1 Fine-Tuning Corpus Assembly
 
-Filter `master_segments.jsonl` to rows where `label_confidence_tier in ["high", "medium"]` and a confirmed `human_label` exists (from adjudicated human validation). Structure as labeled examples for sequence classification.
+Filter `master_segments.csv` to rows where `label_confidence_tier in ["high", "medium"]` and a confirmed `human_label` exists (from adjudicated human validation). Structure as labeled examples for sequence classification.
 
 **Corpus specifications:**
 - **VAAMR classifier:** Text → 1 of 4 stages (+ unclassified)

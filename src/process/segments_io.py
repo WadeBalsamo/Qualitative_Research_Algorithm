@@ -2,20 +2,32 @@
 process/segments_io.py
 ----------------------
 Frozen per-session segmentation I/O and master-segments reader.
+
+Storage is the project SQLite database (``qra.db``, see ``process.db``): frozen
+raw-segmentation fields live in the ``segments`` table (one row per segment),
+with the former ``segmentation_meta.json`` provenance carried as the
+``params_hash`` / ``segmenter_version`` / ``ingest_timestamp`` columns.
+
+The public API is unchanged from the JSONL era — callers don't know whether the
+backing store is per-session JSONL files or a SQLite table.  ``write_frozen``-style
+overwrite protection is preserved: a session that already has rows raises
+:class:`FrozenArtifactError` unless ``force=True``.
+
+``_load_segments_from_jsonl`` is retained: ``legacy_migration`` uses it to read a
+genuinely-old monolithic ``master_segments.jsonl`` during v2.0 migration.
 """
 import datetime
-import glob
 import hashlib
 import json
-import os
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from classification_tools.data_structures import Segment
+from . import db
 from . import output_paths as _paths
-from ._freeze import write_frozen
+from ._freeze import FrozenArtifactError
 
-# Raw-segmentation fields persisted by write_session_segments.
-# Classification-only fields are intentionally excluded.
+# Raw-segmentation fields persisted to the ``segments`` table.
+# Classification-only fields are intentionally excluded (they live in overlays).
 _RAW_FIELDS = (
     'segment_id', 'trial_id', 'participant_id', 'session_id',
     'session_number', 'cohort_id', 'session_variant',
@@ -23,6 +35,9 @@ _RAW_FIELDS = (
     'total_segments_in_session', 'speaker', 'text', 'word_count',
     'speakers_in_segment', 'session_file',
 )
+
+# Field stored as a JSON TEXT column rather than a scalar.
+_JSON_FIELDS = frozenset({'speakers_in_segment'})
 
 # Segmentation parameters whose values affect output (used for params_hash).
 _HASH_FIELDS = (
@@ -34,6 +49,14 @@ _HASH_FIELDS = (
     'llm_ambiguity_threshold', 'llm_batch_size',
 )
 
+# Column order for INSERT into ``segments`` (raw fields + provenance).
+_SEGMENT_COLUMNS = _RAW_FIELDS + ('params_hash', 'segmenter_version', 'ingest_timestamp')
+_INSERT_SEGMENT_SQL = (
+    "INSERT INTO segments (" + ', '.join(_SEGMENT_COLUMNS) + ") "
+    "VALUES (" + ', '.join('?' for _ in _SEGMENT_COLUMNS) + ")"
+)
+SEGMENTER_VERSION = '1'
+
 
 def resolve_session_id(session_file: str) -> str:
     """Extract the session_id from a transcript file path.
@@ -41,6 +64,7 @@ def resolve_session_id(session_file: str) -> str:
     VTT files are keyed by their basename (stem); JSON diarization files
     are keyed by the parent directory name (which holds result.json).
     """
+    import os
     if session_file.lower().endswith('.vtt'):
         return os.path.splitext(os.path.basename(session_file))[0]
     return os.path.basename(os.path.dirname(session_file))
@@ -55,6 +79,49 @@ def params_hash(seg_cfg) -> str:
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Row <-> Segment mapping
+# ---------------------------------------------------------------------------
+
+def _seg_insert_row(seg: Segment, params_hash_val: str, ts: str,
+                    segmenter_version: str = SEGMENTER_VERSION) -> tuple:
+    """Build the INSERT tuple for ``seg`` in _SEGMENT_COLUMNS order."""
+    vals = []
+    for f in _RAW_FIELDS:
+        v = getattr(seg, f, None)
+        if f in _JSON_FIELDS:
+            v = db.dumps(v)
+        vals.append(v)
+    vals.extend([params_hash_val, segmenter_version, ts])
+    return tuple(vals)
+
+
+def _row_to_segment(row) -> Segment:
+    """Reconstruct a Segment from a ``segments`` row (raw fields only)."""
+    return Segment(
+        segment_id=str(row['segment_id'] or ''),
+        trial_id=str(row['trial_id'] or ''),
+        participant_id=str(row['participant_id'] or ''),
+        session_id=str(row['session_id'] or ''),
+        session_number=int(row['session_number'] or 0),
+        cohort_id=_int_or_none(row['cohort_id']),
+        session_variant=str(row['session_variant'] or ''),
+        segment_index=int(row['segment_index'] or 0),
+        start_time_ms=int(row['start_time_ms'] or 0),
+        end_time_ms=int(row['end_time_ms'] or 0),
+        total_segments_in_session=int(row['total_segments_in_session'] or 0),
+        speaker=str(row['speaker'] or ''),
+        text=str(row['text'] or ''),
+        word_count=int(row['word_count'] or 0),
+        speakers_in_segment=db.loads(row['speakers_in_segment']),
+        session_file=str(row['session_file'] or ''),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 def write_session_segments(
     run_dir: str,
     session_id: str,
@@ -64,113 +131,96 @@ def write_session_segments(
     force: bool = False,
 ) -> str:
     """
-    Write frozen per-session segments to
-      01_transcripts/segmented/<session_id>/segments.jsonl
-    and the corresponding segmentation_meta.json.
+    Write frozen per-session segments into the ``segments`` table.
 
     Only raw-segmentation fields are persisted; classification fields are dropped.
-    Returns the path to segments.jsonl.
+    A session that already has rows raises :class:`FrozenArtifactError` unless
+    ``force=True`` (which deletes the existing rows first).  Returns the DB path.
     """
-    segs_path = _paths.session_segments_path(run_dir, session_id)
-    meta_path = _paths.segmentation_meta_path(run_dir, session_id)
-
-    def _write_segs(fh):
-        for seg in segments:
-            rec = {f: getattr(seg, f, None) for f in _RAW_FIELDS}
-            fh.write(json.dumps(rec, default=str) + '\n')
-
-    def _write_meta(fh):
-        meta = {
-            'params_hash': current_params_hash,
-            'segmenter_version': '1',
-            'ingest_timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
-            'session_id': session_id,
-            'n_segments': len(segments),
-        }
-        json.dump(meta, fh, indent=2)
-
-    write_frozen(segs_path, _write_segs, force=force)
-    write_frozen(meta_path, _write_meta, force=force)
-    return segs_path
+    with db.open_db(run_dir) as conn:
+        existing = conn.execute(
+            "SELECT COUNT(*) AS c FROM segments WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()['c']
+        if existing > 0:
+            if not force:
+                raise FrozenArtifactError(
+                    f"Frozen segments already exist for session {session_id!r} "
+                    f"in {run_dir}  (pass force=True to overwrite)"
+                )
+            conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
+        ts = datetime.datetime.utcnow().isoformat() + 'Z'
+        rows = [_seg_insert_row(seg, current_params_hash, ts) for seg in segments]
+        if rows:
+            conn.executemany(_INSERT_SEGMENT_SQL, rows)
+    return _paths.db_path(run_dir)
 
 
 def overwrite_segment_texts(run_dir: str, session_id: str, segments: List[Segment]) -> str:
     """
-    Rewrite segments.jsonl in-place using an atomic rename, WITHOUT touching
-    segmentation_meta.json (preserves params_hash and ingest_timestamp).
+    Rewrite the raw fields of an already-frozen session in place, WITHOUT
+    touching segmentation provenance (params_hash / ingest_timestamp).
 
     Used by `qra apply-anonymization` for retroactive PHI scrubbing of already-frozen
     segments. The caller is responsible for any confirmation prompt.
 
-    Returns the path to the updated segments.jsonl.
+    Implemented as a session-level replace (DELETE + re-INSERT) so that callers may
+    also change ``segment_id`` (the anonymization cascade does) — a per-row UPDATE
+    keyed on segment_id could not rename it.  The session's existing segmentation
+    provenance (params_hash / segmenter_version / ingest_timestamp) is preserved.
+
+    Returns the DB path.  Raises FileNotFoundError if the session has no rows.
     """
-    segs_path = _paths.session_segments_path(run_dir, session_id)
-    if not os.path.isfile(segs_path):
+    if not db.db_exists(run_dir):
         raise FileNotFoundError(
             f"No frozen segments found for session {session_id!r} in {run_dir}"
         )
-    tmp = segs_path + '.tmp'
-    try:
-        with open(tmp, 'w', encoding='utf-8') as fh:
-            for seg in segments:
-                rec = {f: getattr(seg, f, None) for f in _RAW_FIELDS}
-                fh.write(json.dumps(rec, default=str) + '\n')
-        os.replace(tmp, segs_path)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
-    return segs_path
+    with db.open_db(run_dir) as conn:
+        meta = conn.execute(
+            "SELECT params_hash, segmenter_version, ingest_timestamp "
+            "FROM segments WHERE session_id = ? LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if meta is None:
+            raise FileNotFoundError(
+                f"No frozen segments found for session {session_id!r} in {run_dir}"
+            )
+        phash = meta['params_hash'] or ''
+        sver = meta['segmenter_version'] or SEGMENTER_VERSION
+        ts = meta['ingest_timestamp'] or ''
+        conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
+        rows = [_seg_insert_row(seg, phash, ts, sver) for seg in segments]
+        if rows:
+            conn.executemany(_INSERT_SEGMENT_SQL, rows)
+    return _paths.db_path(run_dir)
 
 
 def read_session_segments(run_dir: str, session_id: str) -> List[Segment]:
     """
-    Reconstruct Segment objects from the frozen segments.jsonl.
+    Reconstruct Segment objects for a session, ordered by segment_index.
 
     Only raw-segmentation fields are restored; all classification fields
     remain at their dataclass defaults.
     """
-    segs_path = _paths.session_segments_path(run_dir, session_id)
-    segments: List[Segment] = []
-    with open(segs_path, encoding='utf-8') as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            d = json.loads(line)
-            seg = Segment(
-                segment_id=str(d.get('segment_id', '')),
-                trial_id=str(d.get('trial_id', '')),
-                participant_id=str(d.get('participant_id', '')),
-                session_id=str(d.get('session_id', '')),
-                session_number=int(d.get('session_number') or 0),
-                cohort_id=_int_or_none(d.get('cohort_id')),
-                session_variant=str(d.get('session_variant', '') or ''),
-                segment_index=int(d.get('segment_index') or 0),
-                start_time_ms=int(d.get('start_time_ms') or 0),
-                end_time_ms=int(d.get('end_time_ms') or 0),
-                total_segments_in_session=int(d.get('total_segments_in_session') or 0),
-                speaker=str(d.get('speaker', '')),
-                text=str(d.get('text', '')),
-                word_count=int(d.get('word_count') or 0),
-                speakers_in_segment=d.get('speakers_in_segment'),
-                session_file=str(d.get('session_file', '')),
-            )
-            segments.append(seg)
-    return segments
+    if not db.db_exists(run_dir):
+        return []
+    with db.open_db(run_dir) as conn:
+        rows = conn.execute(
+            "SELECT * FROM segments WHERE session_id = ? ORDER BY segment_index",
+            (session_id,),
+        ).fetchall()
+    return [_row_to_segment(r) for r in rows]
 
 
 def list_segmented_sessions(run_dir: str) -> List[str]:
-    """Return session IDs that have frozen segments on disk."""
-    base = _paths.segmented_sessions_dir(run_dir)
-    if not os.path.isdir(base):
+    """Return session IDs that have frozen segments, sorted."""
+    if not db.db_exists(run_dir):
         return []
-    return [
-        name for name in sorted(os.listdir(base))
-        if os.path.isfile(os.path.join(base, name, 'segments.jsonl'))
-    ]
+    with db.open_db(run_dir) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT session_id FROM segments ORDER BY session_id"
+        ).fetchall()
+    return [r['session_id'] for r in rows]
 
 
 def is_segmentation_fresh(run_dir: str, session_id: str, current_params_hash: str) -> bool:
@@ -179,46 +229,40 @@ def is_segmentation_fresh(run_dir: str, session_id: str, current_params_hash: st
     matches current_params_hash, OR the stored hash is the legacy sentinel
     'legacy-pre-modular' (so legacy-migrated sessions don't force re-segmentation).
     """
-    segs_path = _paths.session_segments_path(run_dir, session_id)
-    meta_path = _paths.segmentation_meta_path(run_dir, session_id)
-    if not os.path.isfile(segs_path):
+    if not db.db_exists(run_dir):
         return False
-    if not os.path.isfile(meta_path):
+    with db.open_db(run_dir) as conn:
+        row = conn.execute(
+            "SELECT params_hash FROM segments WHERE session_id = ? LIMIT 1",
+            (session_id,),
+        ).fetchone()
+    if row is None:
         return False
-    try:
-        with open(meta_path, encoding='utf-8') as fh:
-            meta = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return False
-    stored_hash = meta.get('params_hash', '')
+    stored_hash = row['params_hash'] or ''
     return stored_hash == 'legacy-pre-modular' or stored_hash == current_params_hash
 
 
 def read_master_segments(run_dir: str) -> List[Segment]:
     """
-    Reconstruct all Segment objects from the latest master_segments*.jsonl.
+    Reconstruct all Segment objects with every classification overlay applied.
 
-    This is the canonical post-hoc reader used by qra.py analyze/testsets
-    commands. Moved here from qra.py:_load_segments_from_jsonl so Phase 2
-    has a single canonical reader to extend.
+    This is the canonical post-hoc reader used by qra.py testset commands.
+    Backed by the SQLite store: frozen segments + theme/purer/codebook/cv/gnn
+    overlays (equivalent to ``load_segments_for_stage`` with all overlays).
+
+    Raises FileNotFoundError if no frozen segments exist.
     """
-    jsonl_files = sorted(glob.glob(
-        os.path.join(_paths.master_segments_dir(run_dir), 'master_segments*.jsonl')
-    ))
-    if not jsonl_files:
-        jsonl_files = sorted(glob.glob(
-            os.path.join(run_dir, 'master_segments_*.jsonl')
-        ))
-    if not jsonl_files:
-        raise FileNotFoundError(
-            f"No master_segments*.jsonl found in {run_dir}. "
-            "Run the pipeline first: python qra.py run --config <config>"
-        )
-    return _load_segments_from_jsonl(jsonl_files[-1])
+    return load_segments_for_stage(
+        run_dir, apply=('theme', 'purer', 'codebook', 'cv', 'gnn')
+    )
 
 
 def _load_segments_from_jsonl(jsonl_path: str) -> List[Segment]:
-    """Reconstruct Segment objects from a single master_segments JSONL file."""
+    """Reconstruct Segment objects from a single (legacy) master_segments JSONL file.
+
+    Retained for ``legacy_migration`` (v2.0 monolithic ``master_segments.jsonl``);
+    not used by the SQLite read path.
+    """
     import pandas as pd
 
     df = pd.read_json(jsonl_path, lines=True)
@@ -294,13 +338,13 @@ def load_segments_for_stage(
     apply: tuple = ('theme', 'purer', 'codebook', 'cv'),
 ) -> List[Segment]:
     """
-    Load all frozen segments from disk and apply the requested overlays.
+    Load all frozen segments and apply the requested overlays.
 
-    ``apply`` controls which overlay files are applied; callers exclude the
-    overlay they are about to overwrite so stale labels don't bleed in.
+    ``apply`` controls which overlays are applied; callers exclude the overlay
+    they are about to overwrite so stale labels don't bleed in.
 
-    Raises FileNotFoundError if 01_transcripts/segmented/ is empty.
-    Missing overlay files in the apply tuple are silently skipped.
+    Raises FileNotFoundError if there are no frozen segments yet.
+    Missing overlays in the apply tuple are silently skipped.
     """
     sessions = list_segmented_sessions(run_dir)
     if not sessions:
@@ -320,6 +364,10 @@ def load_segments_for_stage(
 
     return segments
 
+
+# ---------------------------------------------------------------------------
+# Coercion helpers (used by _load_segments_from_jsonl)
+# ---------------------------------------------------------------------------
 
 def _int_or_none(val) -> Optional[int]:
     try:
