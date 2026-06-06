@@ -116,10 +116,13 @@ def build_model(graph, config, n_vce: int = 0):
     # otherwise n_edge_types=0 keeps the model parameter-identical to the fixed-weight path.
     n_edge_types = (len(graph.meta.get('edge_type_vocab', []))
                     if getattr(config, 'precipitates_edges', False) else 0)
+    # soft-VAAMR head width: 5 (default, byte-identical) or 6 when the "No code" class
+    # is enabled (config.vaamr_n_classes == 6). All other heads are unchanged.
+    n_vaamr = int(getattr(config, 'vaamr_n_classes', 5) or 5)
     head_sizes: Dict[str, int] = {}
     obj = set(config.objectives)
     if 'soft_vaamr' in obj:
-        head_sizes['soft_vaamr'] = 5
+        head_sizes['soft_vaamr'] = n_vaamr
     if 'progression' in obj:
         head_sizes['progression'] = 1
     if 'vce_multilabel' in obj and n_vce > 0:
@@ -127,7 +130,7 @@ def build_model(graph, config, n_vce: int = 0):
     if 'purer' in obj:
         head_sizes['purer'] = 5
     if not head_sizes:
-        head_sizes['soft_vaamr'] = 5  # always have at least one head
+        head_sizes['soft_vaamr'] = n_vaamr  # always have at least one head
     model = MultiTaskGNN(in_dim, int(config.hidden_dim), int(config.n_layers),
                          float(config.dropout), head_sizes, n_edge_types=n_edge_types)
     return model
@@ -173,6 +176,97 @@ def link_prediction_loss(emb, pos_edges, neg_edges):
     return F.binary_cross_entropy_with_logits(logits, target)
 
 
+def _batch_class_counts(mix):
+    """Count of rows whose dominant (argmax) class is each class, over the batch.
+
+    ``mix`` is the [N, C] soft-target matrix for the labeled VAAMR nodes currently in
+    the loss (already fold-subset during cross-validation), so these are the training
+    batch's class frequencies — exactly what the rebalancing flags key on.
+    """
+    import torch
+    labels = mix.argmax(dim=1)
+    return torch.bincount(labels, minlength=mix.size(1)).to(mix.dtype)
+
+
+def _inv_freq_row_weights(mix):
+    """Per-row inverse-frequency weight keyed by each row's dominant class.
+
+    weight_i = N / count(argmax_i); absent classes contribute nothing. Normalized to
+    mean 1 over the batch rows so the overall loss scale matches the unweighted mean
+    while mass is redistributed toward rare classes.
+    """
+    import torch
+    labels = mix.argmax(dim=1)
+    counts = _batch_class_counts(mix)
+    n = max(int(labels.numel()), 1)
+    inv = mix.new_zeros(mix.size(1))
+    nz = counts > 0
+    inv[nz] = n / counts[nz]
+    w = inv[labels]
+    return w / w.mean().clamp(min=1e-12)
+
+
+def _soft_vaamr_loss(logits, mix, config):
+    """Soft-VAAMR KL with optional class-balance / focal / logit-adjustment (TAM).
+
+    With no flags set this returns EXACTLY the original
+    ``F.kl_div(F.log_softmax(logits), mix, reduction='batchmean')`` — byte-identical.
+    When any flag is active the per-row KL is computed with ``reduction='none'`` and a
+    per-row weight (class-balance * focal) is applied before a mean reduction (which
+    equals batchmean when the weight is all-ones), and TAM shifts the logits by
+    log(class_prior) at train time. 5- and 6-class compatible (everything keys off the
+    width of ``mix``).
+    """
+    import torch
+    import torch.nn.functional as F
+    balance = bool(getattr(config, 'vaamr_class_balance', False))
+    gamma = float(getattr(config, 'vaamr_focal_gamma', 0.0) or 0.0)
+    tam = bool(getattr(config, 'vaamr_tam', False))
+
+    if not balance and gamma <= 0.0 and not tam:
+        # Fast path — identical computation to the original unweighted batchmean KL.
+        logp = F.log_softmax(logits, dim=1)
+        return F.kl_div(logp, mix, reduction='batchmean')
+
+    # Logit adjustment (TAM): add log(class prior) to the logits at train time so rare
+    # classes carry an effective margin (inference still reads the raw logits).
+    adj = logits
+    if tam:
+        counts = _batch_class_counts(mix)
+        prior = counts / counts.sum().clamp(min=1.0)
+        adj = logits + torch.log(prior.clamp(min=1e-12)).unsqueeze(0)
+
+    logp = F.log_softmax(adj, dim=1)
+    kl_row = F.kl_div(logp, mix, reduction='none').sum(dim=1)        # [N] per-row KL
+    weight = torch.ones_like(kl_row)
+    if balance:
+        weight = weight * _inv_freq_row_weights(mix)
+    if gamma > 0.0:
+        # p_true = the model's softmax mass on each row's argmax-target class (RAW
+        # logits — the model's actual confidence, independent of the TAM shift).
+        labels = mix.argmax(dim=1)
+        p_true = F.softmax(logits, dim=1).gather(1, labels.unsqueeze(1)).squeeze(1)
+        weight = weight * (1.0 - p_true).clamp(min=0.0).pow(gamma)
+    return (weight * kl_row).mean()
+
+
+def _vaamr_hard_ce_loss(logits, mix):
+    """Class-weighted hard-label CE on the labeled VAAMR nodes.
+
+    target = argmax of the soft mixture; class weight = inverse batch frequency. A hard
+    classification signal to sit alongside the soft KL. 5- and 6-class compatible.
+    """
+    import torch
+    import torch.nn.functional as F
+    labels = mix.argmax(dim=1)
+    counts = _batch_class_counts(mix)
+    n = max(int(labels.numel()), 1)
+    w = logits.new_zeros(mix.size(1))
+    nz = counts > 0
+    w[nz] = n / counts[nz]
+    return F.cross_entropy(logits, labels, weight=w)
+
+
 def compute_losses(outputs, targets, config) -> Dict[str, "object"]:
     """Weighted sum of the enabled task losses. Returns {'total': scalar, <term>: scalar}.
 
@@ -189,8 +283,12 @@ def compute_losses(outputs, targets, config) -> Dict[str, "object"]:
 
     if 'soft_vaamr' in outputs and 'vaamr_idx' in targets and targets['vaamr_idx'].numel():
         idx = targets['vaamr_idx']
-        logp = F.log_softmax(outputs['soft_vaamr'][idx], dim=1)
-        losses['soft_vaamr'] = F.kl_div(logp, targets['vaamr_mix'], reduction='batchmean')
+        logits = outputs['soft_vaamr'][idx]
+        mix = targets['vaamr_mix']
+        losses['soft_vaamr'] = _soft_vaamr_loss(logits, mix, config)
+        hce_w = float(getattr(config, 'vaamr_hard_ce_weight', 0.0) or 0.0)
+        if hce_w > 0.0:
+            losses['vaamr_hard_ce'] = hce_w * _vaamr_hard_ce_loss(logits, mix)
 
     if 'progression' in outputs and 'vaamr_idx' in targets and targets['vaamr_idx'].numel():
         idx = targets['vaamr_idx']

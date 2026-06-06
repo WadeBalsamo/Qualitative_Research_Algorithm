@@ -132,15 +132,25 @@ def build_soft_targets(df_all, label_mode: str = 'weak',
       'weak'            — from rater_votes (fallback: one-hot of final_label)
       'human'           — only rows with in_human_coded_subset; one-hot of human_label
       'self_supervised' — {} (no label targets; link-prediction only)
+
+    ``n_stages``:
+      5 (default)       — the five VAAMR stages; behaviour is byte-identical to before.
+      6                 — adds a "No code" class at index 5. In 'weak' mode a participant
+                          row whose ``final_label`` is null/NaN gets a one-hot on class 5
+                          (replacing the old uniform-noise fallback that design_decisions.md
+                          §4 #4 flags); labeled rows keep their 5-stage ballot mixture in
+                          dims 0..4 with dim 5 = 0.
     """
     if label_mode == 'self_supervised':
         return {}
+    import numpy as np
 
     if 'speaker' in df_all.columns:
         part = df_all[df_all['speaker'] == 'participant']
     else:
         part = df_all
 
+    six_class = int(n_stages) > N_VAAMR_STAGES
     targets: Dict[str, object] = {}
     for _, row in part.iterrows():
         sid = str(row.get('segment_id'))
@@ -154,10 +164,26 @@ def build_soft_targets(df_all, label_mode: str = 'weak',
             targets[sid] = one_hot(stage, n_stages)
             continue
         # weak
+        if six_class:
+            # 6-class "No code" handling: key off final_label. Null/NaN → a clean
+            # one-hot on the No-code class (index N_VAAMR_STAGES); labeled rows keep
+            # their 5-stage ballot mixture padded into dims 0..4 (dim 5 stays 0).
+            stage = _coerce_stage(row.get('final_label', row.get('primary_stage')),
+                                  N_VAAMR_STAGES)
+            if stage is None:
+                targets[sid] = one_hot(N_VAAMR_STAGES, n_stages)
+                continue
+            votes = _parse_votes(row.get('rater_votes'))
+            mix5 = ballots_to_mixture(votes, n_stages=N_VAAMR_STAGES)
+            if votes is None or np.allclose(mix5, 1.0 / N_VAAMR_STAGES):
+                mix5 = one_hot(stage, N_VAAMR_STAGES)
+            mix = np.zeros(int(n_stages), dtype=np.float64)
+            mix[:N_VAAMR_STAGES] = mix5
+            targets[sid] = mix
+            continue
         votes = _parse_votes(row.get('rater_votes'))
         mix = ballots_to_mixture(votes, n_stages=n_stages)
         # If ballots were unusable, fall back to a final_label one-hot when available.
-        import numpy as np
         if votes is None or np.allclose(mix, 1.0 / n_stages):
             stage = _coerce_stage(row.get('final_label', row.get('primary_stage')), n_stages)
             if stage is not None:
