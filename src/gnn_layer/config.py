@@ -191,6 +191,42 @@ class GnnLayerConfig:
     scale_sim_holdout_sessions: int = 1   # whole sessions held out per simulation fold
     scale_sim_max_gap: float = 0.10       # CV κ − inductive κ above this flags domain-shift risk
 
+    # ---- Track B: model-counterfactual influence (B3/B4/B5) ----
+    # Swap each cue block's therapist node feature with each PURER move's centroid (vs a
+    # neutral baseline), re-forward, and measure the shift in the FOLLOWING participant's
+    # predicted progression coordinate — context-dependent influence the additive
+    # Δprogression tables miss. GATED: the runner only invokes it from a gate-passing model
+    # (validation.gate_ready_for_scaling), and B4 triangulates it against analysis/mechanism.py.
+    # Sensitivity analysis, NOT causation (n≈32 observational + elicitation confound). Default OFF.
+    counterfactual: bool = False
+    counterfactual_max_blocks: Optional[int] = None  # cap re-forwards (None = all; logged when capped)
+    influence_bootstrap_n: int = 1000                # participant-clustered bootstrap resamples
+    counterfactual_subgroups: bool = False           # B5 by session-number tertile (underpowered-flagged)
+
+    # ---- Track D: subtext communities as routines (D1-D5) ----
+    # The "deepest qualitative" layer: which language ROUTINES/SEQUENCES flow together and
+    # recur across sessions. A thresholded cross-session segment-similarity graph is partitioned
+    # by TWO independent algorithms (Louvain + hierarchical) to separate real structure from
+    # algorithm artifact (agreement = adjusted Rand index); community→community within-session
+    # transitions model routines; participant-bootstrap STABILITY SELECTION suppresses/flags
+    # communities too fragile at n≈32; TF-IDF terms + exemplars + per-session prevalence name
+    # them. Discovery / hypothesis-generating only. Independent of the gate. Default OFF.
+    subtext_communities: bool = False
+    community_sim_threshold: float = 0.85   # cosine-similarity edge threshold for the subtext graph
+    community_min_size: int = 3             # ignore communities smaller than this
+    community_stability_min: float = 0.5    # suppress communities whose bootstrap co-membership < this
+    community_stability_boots: int = 50     # participant-bootstrap resamples for stability selection
+
+    # ---- Track C: MindfulBERT training-set builder (C1-C5) ----
+    # The end-goal artifact: a versioned (cue language → observed Δprogression) dataset for
+    # fine-tuning MindfulBERT. The PRIMARY labels are the OBSERVED Δprogression of cue blocks
+    # (the label of record); GNN model-counterfactual "would-progress" targets are a SEPARATE,
+    # provenance-tagged augmentation channel produced only from a gate-passing model and
+    # RETAINED only if a held-out ablation (C4) shows it helps (gain > augmentation_min_gain).
+    build_mindfulbert_dataset: bool = False  # master switch for Track C
+    augmentation_enabled: bool = False       # add the GNN-counterfactual channel (C3; gate-passing only)
+    augmentation_min_gain: float = 0.0       # retain augmentation only if held-out gain exceeds this (C4)
+
     # ---- Reliability gate (out-of-sample, the over-smoothing safeguard) ----
     # The gate is measured by cross-validation: each fold's soft-label targets are masked
     # during training, then predicted, so the reported kappa is on segments the graph did

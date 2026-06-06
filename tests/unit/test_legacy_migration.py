@@ -5,7 +5,9 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
+if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from process import legacy_migration, output_paths as _paths
 

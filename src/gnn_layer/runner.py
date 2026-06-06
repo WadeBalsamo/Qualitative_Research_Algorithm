@@ -438,6 +438,55 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
         except Exception as e:
             _log(verbose, f"VCE-on-VAAMR test failed: {e}")
 
+    # ---- Track B3/B4/B5: model-counterfactual influence (GATED on the reliability gate) ----
+    # The observed Δprogression (analysis/mechanism.py) is the LEAD signal; this is the GNN's
+    # secondary, corroborating lens. It runs ONLY from a gate-passing model — an un-gated
+    # graph's counterfactuals are not trustworthy enough to inform the MindfulBERT dataset.
+    if getattr(config, 'counterfactual', False):
+        try:
+            from . import validation as _val
+            if not _val.gate_ready_for_scaling(output_dir):
+                _log(verbose, "counterfactual influence suppressed: reliability gate not passed "
+                              "(needs ready_for_scaling=YES)")
+            else:
+                from . import influence as _infl
+                infl_res = _infl.counterfactual_influence(model, graph, df_all, config)
+                if infl_res.get('status'):
+                    _log(verbose, f"counterfactual influence {infl_res['status']}")
+                else:
+                    tri = _infl.triangulate(infl_res, output_dir)
+                    p = _infl.write_influence_csv(infl_res, output_dir)
+                    if p:
+                        files.append(p)
+                    files.append(_infl.write_influence_report(infl_res, tri, output_dir))
+                    if getattr(config, 'counterfactual_subgroups', False):
+                        sp = _infl.subgroup_influence(infl_res, df_all, output_dir)
+                        if sp:
+                            files.append(sp)
+                    _log(verbose, f"counterfactual influence: {infl_res.get('n_blocks')} blocks"
+                                  + (f", Spearman ρ={tri.get('spearman')}" if tri else ""))
+        except Exception as e:
+            _log(verbose, f"counterfactual influence failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+    # ---- Track D: subtext communities as routines (independent of the gate; discovery) ----
+    # Uses the raw Qwen3 embeddings (recurring-language similarity), not the trained kNN graph.
+    if getattr(config, 'subtext_communities', False):
+        try:
+            from . import communities as _comm
+            comm_res = _comm.run_subtext_communities(df_all, seg_emb, output_dir, config)
+            files.extend(comm_res.get('files_written', []))
+            if comm_res.get('status') == 'ok':
+                _log(verbose, f"subtext communities: {comm_res.get('n_communities')} found, "
+                              f"{comm_res.get('n_stable')} stable (ARI={comm_res.get('ari')})")
+            else:
+                _log(verbose, f"subtext communities {comm_res.get('status')}")
+        except Exception as e:
+            _log(verbose, f"subtext communities failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
     # ---- Figures (render whatever GNN data exists; each plotter is guarded) ----
     try:
         from . import figures as _gfigs
