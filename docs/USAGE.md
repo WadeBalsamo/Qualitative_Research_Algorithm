@@ -82,7 +82,7 @@ python qra.py run --config ./qra_config.json --n-runs 5
 ### 4. **Codebook Classification (Multi-label Phenomenology)**
 - Multi-label coding via embedding similarity + LLM zero-shot prompting
 - Ensemble reconciliation of both methods for better accuracy
-- Supports the 59-code Varieties of Contemplative Experience (VCE) codebook
+- Supports the 54-code Varieties of Contemplative Experience (VCE) codebook
 
 ### 5. **Classification Overlays**
 - Per-classifier results stored as independent overlay files at `02_meta/classifications/`

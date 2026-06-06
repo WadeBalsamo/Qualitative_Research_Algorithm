@@ -889,7 +889,7 @@ def _action_edit_config(config_path: str) -> None:
         ('Change LM Studio server URL', 'Update the lmstudio_base_url for theme and PURER classifiers.'),
         ('Change classification models', 'Set primary model and per-run checker models.'),
         ('Change number of classification runs', 'n_runs controls the multi-model ensemble size.'),
-        ('Toggle codebook (VCE) classifier', 'Enable or disable the 59-code phenomenology codebook.'),
+        ('Toggle codebook (VCE) classifier', 'Enable or disable the 54-code phenomenology codebook.'),
         ('Toggle PURER classifier', 'Enable or disable PURER therapist cue classification.'),
         ('Toggle GNN layer', 'Enable or disable the GNN discovery + consensus-distillation layer.'),
         ('Toggle GNN authoritative labels', 'Make graph-consensus labels the label of record\n'
@@ -1188,8 +1188,8 @@ def _about() -> None:
         '  E  Educate/Expectancy Psychoeducation about pain / mindfulness\n'
         '  R  Reinforcement     Selective affirmation of adaptive responses\n'
         '\n'
-        'VCE Codebook — optional 59-code phenomenology multi-label enrichment\n'
-        'across 7 domains.  Applied only to participant segments.\n'
+        'VCE Codebook — optional 54-code phenomenology multi-label enrichment\n'
+        'across 6 domains.  Applied only to participant segments.\n'
         '\n'
         'On-disk layout:\n'
         '  01_transcripts/segmented/   FROZEN — one segments.jsonl per session\n'

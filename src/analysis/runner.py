@@ -96,13 +96,14 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                  force_gnn: bool = None) -> dict:
     """Execute the full results analysis on an existing pipeline output directory.
 
-    Reads master_segment_dataset.csv and theme_definitions.json from output_dir.
-    Writes all reports to output_dir/02_human_reports/ and output_dir/04_analysis_data/.
+    Reads master_segments.{jsonl,csv} and theme_definitions.json from output_dir.
+    Writes text reports to output_dir/06_reports/, graphing data to
+    output_dir/03_analysis_data/, and figures to output_dir/05_figures/.
 
     Parameters
     ----------
     output_dir : str
-        Pipeline output directory (must contain master_segment_dataset.csv
+        Pipeline output directory (must contain master_segments.csv
         and theme_definitions.json).
     verbose : bool
         Print progress messages to stdout.

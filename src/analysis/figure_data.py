@@ -3,7 +3,7 @@ analysis/figure_data.py
 -----------------------
 Export graph-ready CSV datasets for visualization in R/Python.
 
-Graph-ready CSVs land in {output_dir}/04_analysis_data/graphing/.
+Graph-ready CSVs land in {output_dir}/03_analysis_data/graphing/.
 """
 
 import os

@@ -74,7 +74,7 @@ def generate_theme_stage_report(
 
     Returns
     -------
-    Report dict (also written to 02_human_reports/per_theme/stage_{id}_{name}.json).
+    Report dict (also written to 03_analysis_data/per_theme/stage_{id}_{name}.json).
     """
     stage_info = framework.get(stage_id, {'name': f'Stage {stage_id}', 'short_name': f'Stage {stage_id}'})
     stage_name_slug = re.sub(r'[^a-z0-9]+', '_', stage_info.get('short_name', '').lower()).strip('_')
@@ -196,7 +196,7 @@ def generate_codebook_code_report(
 
     Returns
     -------
-    Report dict (also written to 02_human_reports/per_theme/codebook_{code_id}.json).
+    Report dict (also written to 03_analysis_data/per_theme/codebook_{code_id}.json).
     """
     # Rows that contain this code
     code_df = df[df['codebook_labels_ensemble'].apply(
