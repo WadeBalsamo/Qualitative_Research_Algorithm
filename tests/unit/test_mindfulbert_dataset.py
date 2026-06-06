@@ -148,11 +148,67 @@ class TestAblationProxy(unittest.TestCase):
 
 class TestDefaults(unittest.TestCase):
 
-    def test_off_by_default(self):
+    def test_build_on_by_default_augmentation_off(self):
         c = GnnLayerConfig()
-        self.assertFalse(c.build_mindfulbert_dataset)
+        # Track C ships on by default (feeds the fine-tuning workshop) ...
+        self.assertTrue(c.build_mindfulbert_dataset)
+        # ... but the gate-gated augmentation channel stays off (Decision D10).
         self.assertFalse(c.augmentation_enabled)
         self.assertEqual(c.augmentation_min_gain, 0.0)
+
+
+class TestContractAdditions(unittest.TestCase):
+    """Contract §3 additions exposed on cue blocks + sibling exports."""
+
+    def test_cue_block_enriched_fields(self):
+        df = make_master_df(n_sessions=3, n_participants=2)
+        out = tempfile.mkdtemp()
+        build_mindfulbert_dataset(df, out, config=GnnLayerConfig(), verbose=False)
+        rows = _read_jsonl(os.path.join(_paths.training_data_dir(out), 'mindfulbert_dataset.jsonl'))
+        ex = rows[0]
+        for key in ('from_coord', 'to_coord', 'from_stage_mixture', 'to_stage_mixture',
+                    'from_confidence', 'to_confidence', 'text_sha'):
+            self.assertIn(key, ex)
+        # Mixtures recomputed from rater_votes → normalized 5-vectors.
+        self.assertEqual(len(ex['from_stage_mixture']), 5)
+        self.assertAlmostEqual(sum(ex['from_stage_mixture']), 1.0, places=5)
+        # text_sha is a stable sha256 hex digest.
+        self.assertEqual(len(ex['text_sha']), 64)
+
+    def test_cue_pool_and_sft_written(self):
+        df = make_master_df(n_sessions=3, n_participants=2)
+        out = tempfile.mkdtemp()
+        build_mindfulbert_dataset(df, out, config=GnnLayerConfig(), verbose=False)
+        tdir = _paths.training_data_dir(out)
+        pool = _read_jsonl(os.path.join(tdir, 'therapist_cue_pool.jsonl'))
+        self.assertTrue(pool)
+        for row in pool:
+            for key in ('cue_text', 'dominant_purer', 'n_uses', 'p_advance', 'text_sha'):
+                self.assertIn(key, row)
+            self.assertGreaterEqual(row['n_uses'], 1)
+            self.assertTrue(0.0 <= row['p_advance'] <= 1.0)
+        # Cue pool is deduplicated by text_sha.
+        shas = [r['text_sha'] for r in pool]
+        self.assertEqual(len(shas), len(set(shas)))
+        # SFT view: advancers only.
+        examples = _read_jsonl(os.path.join(tdir, 'mindfulbert_dataset.jsonl'))
+        n_adv = sum(1 for e in examples if e['direction'] == 'advanced')
+        sft = _read_jsonl(os.path.join(tdir, 'mindfulbert_sft.jsonl'))
+        self.assertEqual(len(sft), n_adv)
+        if sft:
+            for key in ('instruction', 'input', 'output', 'provenance_tier',
+                        'from_stage', 'dominant_purer', 'text_sha'):
+                self.assertIn(key, sft[0])
+
+    def test_datasheet_has_stage_counts_and_weights(self):
+        df = make_master_df(n_sessions=3, n_participants=2)
+        out = tempfile.mkdtemp()
+        build_mindfulbert_dataset(df, out, config=GnnLayerConfig(), verbose=False)
+        with open(os.path.join(_paths.training_data_dir(out), 'mindfulbert_datasheet.json')) as f:
+            sheet = json.load(f)
+        self.assertIn('theme_label_counts', sheet)
+        self.assertIn('class_weights', sheet)
+        self.assertTrue(sheet['theme_label_counts'])
 
 
 if __name__ == '__main__':
