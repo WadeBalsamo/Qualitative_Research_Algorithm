@@ -70,12 +70,32 @@ def release_embedder():
 
 
 def embed_segment_texts(texts: List[str], config):
-    """Encode segment texts as query embeddings → (N, D) float32 ndarray."""
+    """Encode segment texts as query embeddings → (N, D) float32 ndarray.
+
+    Dispatches on ``config.embedding_backend``:
+      * ``'local'`` (default) → cached EmbeddingCodebookClassifier._embed_queries
+        (byte-identical to prior behaviour).
+      * ``'openai'`` → remote OpenAI-compatible /v1/embeddings with the query prefix
+        applied (``is_query=True``).
+    """
+    if getattr(config, 'embedding_backend', 'local') == 'openai':
+        from . import embeddings_remote
+        return embeddings_remote.embed_texts_remote(list(texts), config, is_query=True)
     return _make_embedder(config)._embed_queries(list(texts))
 
 
 def embed_anchor_texts(texts: List[str], config):
-    """Encode construct-anchor / definition texts as passage embeddings → (N, D)."""
+    """Encode construct-anchor / definition texts as passage embeddings → (N, D).
+
+    Dispatches on ``config.embedding_backend``:
+      * ``'local'`` (default) → cached EmbeddingCodebookClassifier._embed
+        (byte-identical to prior behaviour).
+      * ``'openai'`` → remote OpenAI-compatible /v1/embeddings with NO prefix
+        (``is_query=False``).
+    """
+    if getattr(config, 'embedding_backend', 'local') == 'openai':
+        from . import embeddings_remote
+        return embeddings_remote.embed_texts_remote(list(texts), config, is_query=False)
     return _make_embedder(config)._embed(list(texts))
 
 
