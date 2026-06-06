@@ -30,6 +30,11 @@ EDGE_TYPE_VOCAB: Tuple[str, ...] = ('temporal', 'knn', 'anchor', 'precipitates')
 EDGE_TYPE_TO_ID: Dict[str, int] = {t: i for i, t in enumerate(EDGE_TYPE_VOCAB)}
 
 
+def _codes(v):
+    """Return v if it is a list of codebook labels, else an empty list."""
+    return v if isinstance(v, list) else []
+
+
 @dataclass
 class HeteroGraph:
     """Unified node/edge tensors (homogeneous projection of the heterogeneous design)."""
@@ -309,11 +314,6 @@ def compute_cross_framework_lift(df_all, min_lift: float = 1.5) -> Dict[Tuple[st
     n = len(part)
     if n == 0:
         return out
-
-    def _codes(v):
-        if isinstance(v, list):
-            return v
-        return []
 
     code_counts: Dict[str, int] = {}
     for v in part['codebook_labels_ensemble']:

@@ -47,6 +47,27 @@ def _wrap_quote(text: str, indent: int = 9, max_width: int = 80) -> str:
     return '\n'.join(lines)
 
 
+def _wrap_text(text: str, indent: int = 0, max_width: int = 80) -> str:
+    """Word-wrap plain text (no quotes) to max_width."""
+    if not text:
+        return ''
+    prefix = ' ' * indent
+    out_lines = []
+    for raw_line in text.replace('\r\n', '\n').split('\n'):
+        if not raw_line.strip():
+            out_lines.append('')
+            continue
+        current = prefix
+        for word in raw_line.split():
+            if len(current) + len(word) + 1 > max_width:
+                out_lines.append(current)
+                current = prefix + word
+            else:
+                current = current + word if current == prefix else current + ' ' + word
+        out_lines.append(current)
+    return '\n'.join(out_lines)
+
+
 def _collect_therapist_cue(
     df: pd.DataFrame, session_id: str, from_end_ms: int, to_start_ms: int,
     annotate_purer: bool = False,
