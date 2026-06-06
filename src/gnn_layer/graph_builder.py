@@ -306,6 +306,7 @@ def compute_cross_framework_lift(df_all, min_lift: float = 1.5) -> Dict[Tuple[st
     lift = P(code | stage) / P(code). Returns pairs whose lift >= min_lift.
     """
     import numpy as np
+    from analysis.stats import lift_ratio
     out: Dict[Tuple[str, str], float] = {}
     if 'final_label' not in df_all.columns or 'codebook_labels_ensemble' not in df_all.columns:
         return out
@@ -328,7 +329,7 @@ def compute_cross_framework_lift(df_all, min_lift: float = 1.5) -> Dict[Tuple[st
             p_code_given_stage = in_stage / m
             p_code = code_counts[c] / n
             if p_code > 0:
-                lift = p_code_given_stage / p_code
+                lift = lift_ratio(p_code_given_stage, p_code)
                 if lift >= min_lift:
                     out[(f'vaamr_{int(stage)}', c)] = round(lift, 3)
     return out

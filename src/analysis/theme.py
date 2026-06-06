@@ -16,6 +16,7 @@ import pandas as pd
 
 from .exemplars import select_prototypical_exemplars, format_exemplar
 from .loader import sort_session_ids
+from .stats import lift_ratio
 
 
 def _compute_lift(n_code_in_stage: int, n_stage: int, n_code: int, n_total: int) -> float:
@@ -28,7 +29,7 @@ def _compute_lift(n_code_in_stage: int, n_stage: int, n_code: int, n_total: int)
         return 0.0
     observed = n_code_in_stage / n_stage
     expected = n_code / n_total
-    return round(observed / expected, 4)
+    return round(lift_ratio(observed, expected), 4)
 
 
 def _longitudinal_slope(values_by_session: dict, session_order: list) -> float:

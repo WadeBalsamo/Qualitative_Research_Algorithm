@@ -10,6 +10,86 @@ pipeline after Stage 7 when config.auto_analyze is True.
 import json
 import os
 import traceback
+from dataclasses import dataclass
+
+
+@dataclass
+class _AnalysisContext:
+    """Best-effort pipeline config + LLM handles for analysis-time report features."""
+    pipeline_config: object = None
+    therapist_cue_config: object = None
+    session_summaries_config: object = None
+    participant_summaries_config: object = None
+    llm_client: object = None
+    analysis_plog: object = None
+
+
+def _load_analysis_context(output_dir: str, llm_log_path, log) -> _AnalysisContext:
+    """Load the pipeline config (if present) and build LLM-backed report handles.
+
+    Best-effort: reads qra_config.json from the output dir (trying legacy
+    locations), and constructs the summarization LLMClient only when therapist-
+    cue / session / participant summaries are enabled. Missing or unreadable
+    config degrades gracefully — the returned context leaves LLM features unset
+    and report generation skips them.
+    """
+    from process import output_paths as _paths
+
+    ctx = _AnalysisContext()
+
+    for _cfg_path in (
+        os.path.join(_paths.meta_dir(output_dir), 'qra_config.json'),
+        os.path.join(output_dir, 'qra_config.json'),
+        os.path.join(output_dir, 'config.json'),
+    ):
+        if os.path.isfile(_cfg_path):
+            try:
+                with open(_cfg_path, encoding='utf-8') as _f:
+                    _raw = json.load(_f)
+                from process.setup_wizard import build_config_from_wizard_data
+                ctx.pipeline_config = build_config_from_wizard_data(_raw)
+            except Exception:
+                pass
+            break
+
+    if ctx.pipeline_config is None:
+        log("Note: no pipeline config found in output_dir — LLM-backed report summarization skipped.")
+        return ctx
+
+    _tc_cfg = ctx.pipeline_config.therapist_cues
+    if _tc_cfg.enabled:
+        ctx.therapist_cue_config = _tc_cfg
+    ctx.session_summaries_config = getattr(ctx.pipeline_config, 'session_summaries', None)
+    ctx.participant_summaries_config = getattr(ctx.pipeline_config, 'participant_summaries', None)
+
+    _needs_llm = (
+        _tc_cfg.enabled
+        or (ctx.session_summaries_config and ctx.session_summaries_config.enabled)
+        or (ctx.participant_summaries_config and ctx.participant_summaries_config.enabled)
+    )
+    if _needs_llm:
+        try:
+            from classification_tools.llm_client import LLMClient, LLMClientConfig
+            _tc = ctx.pipeline_config.theme_classification
+            _summ_model = getattr(_tc, 'summarization_model', 'nvidia/nemotron-3-nano-4b') or _tc.model
+            if _tc and _summ_model:
+                _llm_cfg = LLMClientConfig(
+                    backend=_tc.backend,
+                    api_key=_tc.api_key,
+                    model=_summ_model,
+                    models=[_summ_model],
+                    temperature=_tc.temperature,
+                    lmstudio_base_url=getattr(_tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+                )
+                ctx.llm_client = LLMClient(_llm_cfg)
+                if llm_log_path:
+                    from process.process_logger import ProcessLogger
+                    ctx.analysis_plog = ProcessLogger(llm_log_path=llm_log_path)
+                    ctx.llm_client.config.process_logger = ctx.analysis_plog
+        except Exception as _e:
+            log(f"Warning: could not initialize LLM for analysis reports: {_e}")
+
+    return ctx
 
 
 def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None,
@@ -58,64 +138,13 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
     # ----------------------------------------------------------------
     # 0. Load pipeline config for LLM-backed features (best-effort)
     # ----------------------------------------------------------------
-    therapist_cue_config = None
-    llm_client = None
-    _pipeline_config = None
-    _analysis_plog = None  # ProcessLogger for LLM prompts captured during analysis
-
-    for _cfg_path in (
-        os.path.join(_paths.meta_dir(output_dir), 'qra_config.json'),
-        os.path.join(output_dir, 'qra_config.json'),
-        os.path.join(output_dir, 'config.json'),
-    ):
-        if os.path.isfile(_cfg_path):
-            try:
-                with open(_cfg_path, encoding='utf-8') as _f:
-                    _raw = json.load(_f)
-                from process.setup_wizard import build_config_from_wizard_data
-                _pipeline_config = build_config_from_wizard_data(_raw)
-            except Exception:
-                pass
-            break
-
-    session_summaries_config = None
-    participant_summaries_config = None
-
-    if _pipeline_config is not None:
-        _tc_cfg = _therapist_cue_config_raw = _pipeline_config.therapist_cues
-        if _tc_cfg.enabled:
-            therapist_cue_config = _tc_cfg
-        session_summaries_config = getattr(_pipeline_config, 'session_summaries', None)
-        participant_summaries_config = getattr(_pipeline_config, 'participant_summaries', None)
-
-        _needs_llm = (
-            _tc_cfg.enabled
-            or (session_summaries_config and session_summaries_config.enabled)
-            or (participant_summaries_config and participant_summaries_config.enabled)
-        )
-        if _needs_llm:
-            try:
-                from classification_tools.llm_client import LLMClient, LLMClientConfig
-                _tc = _pipeline_config.theme_classification
-                _summ_model = getattr(_tc, 'summarization_model', 'nvidia/nemotron-3-nano-4b') or _tc.model
-                if _tc and _summ_model:
-                    _llm_cfg = LLMClientConfig(
-                        backend=_tc.backend,
-                        api_key=_tc.api_key,
-                        model=_summ_model,
-                        models=[_summ_model],
-                        temperature=_tc.temperature,
-                        lmstudio_base_url=getattr(_tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
-                    )
-                    llm_client = LLMClient(_llm_cfg)
-                    if llm_log_path:
-                        from process.process_logger import ProcessLogger
-                        _analysis_plog = ProcessLogger(llm_log_path=llm_log_path)
-                        llm_client.config.process_logger = _analysis_plog
-            except Exception as _e:
-                log(f"Warning: could not initialize LLM for analysis reports: {_e}")
-    else:
-        log("Note: no pipeline config found in output_dir — LLM-backed report summarization skipped.")
+    _ctx = _load_analysis_context(output_dir, llm_log_path, log)
+    _pipeline_config = _ctx.pipeline_config
+    therapist_cue_config = _ctx.therapist_cue_config
+    session_summaries_config = _ctx.session_summaries_config
+    participant_summaries_config = _ctx.participant_summaries_config
+    llm_client = _ctx.llm_client
+    _analysis_plog = _ctx.analysis_plog
 
     # ----------------------------------------------------------------
     # 1. Load data
