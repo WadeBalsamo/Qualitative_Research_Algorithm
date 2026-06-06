@@ -265,5 +265,229 @@ class TestMigrateV25ToV3(unittest.TestCase):
             self.assertEqual(f.read(), 'existing content')
 
 
+class TestJSONLToSQLiteMigration(unittest.TestCase):
+    """Full v3-JSONL project -> qra.db importer (migrate_jsonl_to_sqlite).
+
+    Builds a complete legacy JSONL project (frozen segments + every overlay +
+    manifest + testset metadata + content-validity testset), migrates it, and
+    asserts every table/field round-trips — including JSON columns, bool columns,
+    and the gnn abstain 3-state (NULL | 0 | 1) — and that originals are relocated.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self._build_v3_jsonl_project(self.tmpdir)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _seg_record(self, sid, session, idx, speaker):
+        return {
+            'segment_id': sid, 'trial_id': 'trial_A', 'participant_id': 'p1',
+            'session_id': session, 'session_number': 1, 'cohort_id': 1,
+            'session_variant': '', 'segment_index': idx,
+            'start_time_ms': idx * 1000, 'end_time_ms': idx * 1000 + 900,
+            'total_segments_in_session': 3, 'speaker': speaker,
+            'text': f'text {sid}', 'word_count': 2,
+            'speakers_in_segment': None, 'session_file': 'c1s1.json',
+        }
+
+    def _build_v3_jsonl_project(self, run_dir):
+        from process import classifications_io as cio
+
+        # 1. frozen segments (2 sessions; s2 is a therapist segment)
+        for session, members in (('c1s1', [('s1', 'participant'), ('s2', 'therapist')]),
+                                 ('c1s2', [('s3', 'participant')])):
+            seg_dir = _paths.segmented_session_dir(run_dir, session)
+            os.makedirs(seg_dir, exist_ok=True)
+            with open(os.path.join(seg_dir, 'segments.jsonl'), 'w') as f:
+                for i, (sid, spk) in enumerate(members):
+                    f.write(json.dumps(self._seg_record(sid, session, i, spk)) + '\n')
+            with open(os.path.join(seg_dir, 'segmentation_meta.json'), 'w') as f:
+                json.dump({'params_hash': 'PH', 'ingest_timestamp': 'T0'}, f)
+
+        # 2. overlays (theme / purer / codebook / gnn) — written to the exact
+        #    legacy filenames the importer reads.
+        cls_dir = _paths.classifications_dir(run_dir)
+        os.makedirs(cls_dir, exist_ok=True)
+
+        def _wjsonl(key, records):
+            with open(os.path.join(cls_dir, cio.OVERLAY_FILENAMES[key]), 'w') as f:
+                for r in records:
+                    f.write(json.dumps(r) + '\n')
+
+        _wjsonl('theme', [
+            {'segment_id': 's1', 'primary_stage': 2, 'secondary_stage': None,
+             'llm_confidence_primary': 0.8, 'llm_confidence_secondary': None,
+             'llm_justification': 'because', 'rater_ids': ['m1', 'm2'],
+             'rater_votes': [2, 2], 'agreement_level': 'unanimous',
+             'agreement_fraction': 1.0, 'needs_review': False,
+             'consensus_vote': 2, 'tie_broken_by_confidence': False,
+             'llm_run_consistency': 1, 'secondary_agreement_level': None,
+             'secondary_agreement_fraction': None},
+            {'segment_id': 's3', 'primary_stage': 0, 'secondary_stage': 1,
+             'llm_confidence_primary': 0.4, 'llm_confidence_secondary': 0.3,
+             'llm_justification': '', 'rater_ids': ['m1', 'm2', 'm3'],
+             'rater_votes': [0, 1, 0], 'agreement_level': 'majority',
+             'agreement_fraction': 0.67, 'needs_review': True,
+             'consensus_vote': 'ABSTAIN', 'tie_broken_by_confidence': True,
+             'llm_run_consistency': 0, 'secondary_agreement_level': 'split',
+             'secondary_agreement_fraction': 0.33},
+        ])
+        _wjsonl('purer', [
+            {'segment_id': 's2', 'purer_primary': 1, 'purer_secondary': None,
+             'purer_confidence_primary': 0.7, 'purer_confidence_secondary': None,
+             'purer_justification': 'util', 'purer_run_consistency': 1,
+             'purer_agreement_level': 'unanimous', 'purer_agreement_fraction': 1.0,
+             'purer_needs_review': False, 'purer_rater_ids': ['m1'],
+             'purer_rater_votes': [1]},
+        ])
+        _wjsonl('codebook', [
+            {'segment_id': 's1',
+             'codebook_labels_embedding': ['A1', 'B2'], 'codebook_labels_llm': ['A1'],
+             'codebook_labels_ensemble': ['A1', 'B2'], 'codebook_disagreements': ['B2'],
+             'codebook_confidence': {'A1': 0.9, 'B2': 0.5}},
+        ])
+        # gnn — exercise the abstain 3-state explicitly: False(0), True(1), None(NULL)
+        _wjsonl('gnn', [
+            {'segment_id': 's1', 'gnn_vaamr_pred': 2, 'gnn_vaamr_conf': 0.9,
+             'gnn_vaamr_abstain': False, 'gnn_purer_pred': None,
+             'gnn_purer_conf': None, 'gnn_purer_abstain': None,
+             'gnn_label_source': 'gnn_trained'},
+            {'segment_id': 's3', 'gnn_vaamr_pred': 0, 'gnn_vaamr_conf': 0.3,
+             'gnn_vaamr_abstain': True, 'gnn_purer_pred': None,
+             'gnn_purer_conf': None, 'gnn_purer_abstain': None,
+             'gnn_label_source': 'gnn_scale_mode'},
+            {'segment_id': 's2', 'gnn_vaamr_pred': None, 'gnn_vaamr_conf': None,
+             'gnn_vaamr_abstain': None, 'gnn_purer_pred': 1,
+             'gnn_purer_conf': 0.8, 'gnn_purer_abstain': False,
+             'gnn_label_source': 'gnn_trained'},
+        ])
+
+        # 3. classification manifest
+        with open(_paths.classification_manifest_path(run_dir), 'w') as f:
+            json.dump({
+                'theme': {'model': 'm', 'framework': {'name': 'vaamr', 'version': '1'},
+                          'n_segments': 2},
+                'purer': {'model': 'm', 'n_segments': 1},
+            }, f)
+
+        # 4. validation testset worksheet metadata
+        ts_meta_dir = os.path.join(_paths.meta_dir(run_dir), 'testset_meta')
+        os.makedirs(ts_meta_dir, exist_ok=True)
+        _ts_meta_name = 'human_classification_testset_worksheet_1.meta.json'
+        with open(os.path.join(ts_meta_dir, _ts_meta_name), 'w') as f:
+            json.dump({'kind': 'vaamr', 'legacy_import': False, 'segments': [
+                {'session_id': 'c1s1', 'seg_num': 1, 'sha256': 'abc'},
+                {'session_id': 'c1s2', 'seg_num': 1, 'sha256': 'def'},
+            ]}, f)
+
+        # 5. content-validity testset
+        cv_dir = os.path.join(_paths.content_validity_dir(run_dir), 'cv_vaamr_v1')
+        os.makedirs(cv_dir, exist_ok=True)
+        with open(os.path.join(cv_dir, 'manifest.json'), 'w') as f:
+            json.dump({'name': 'cv_vaamr_v1', 'kind': 'vaamr',
+                       'framework': {'name': 'vaamr', 'version': '1'},
+                       'created_at': '2026-01-01'}, f)
+        with open(os.path.join(cv_dir, 'items.jsonl'), 'w') as f:
+            for i in range(2):
+                f.write(json.dumps({'id': f'item{i}', 'text': f't{i}',
+                                    'expected_stage': i, 'difficulty': 'clear',
+                                    'source_field': 'exemplar',
+                                    'content_sha256': f'sha{i}'}) + '\n')
+
+    def test_segments_imported(self):
+        from process import segments_io as sio
+        legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        self.assertEqual(set(sio.list_segmented_sessions(self.tmpdir)), {'c1s1', 'c1s2'})
+        segs = {s.segment_id: s for s in sio.read_session_segments(self.tmpdir, 'c1s1')}
+        self.assertEqual(set(segs), {'s1', 's2'})
+        self.assertEqual(segs['s2'].speaker, 'therapist')
+
+    def test_counts_returned(self):
+        counts = legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        self.assertEqual(counts['sessions'], 2)
+        self.assertEqual(counts['segments'], 3)
+        self.assertEqual(counts['overlays'].get('theme'), 2)
+        self.assertEqual(counts['overlays'].get('purer'), 1)
+        self.assertEqual(counts['overlays'].get('codebook'), 1)
+        self.assertEqual(counts['overlays'].get('gnn'), 3)
+        self.assertEqual(counts['manifest_keys'], 2)
+        self.assertEqual(counts['testset_worksheets'], 1)
+        self.assertEqual(counts['cv_testsets'], 1)
+
+    def test_theme_overlay_roundtrip(self):
+        from process import classifications_io as cio
+        legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        recs = {r['segment_id']: r for r in cio.read_overlay(self.tmpdir, 'theme')}
+        self.assertEqual(recs['s1']['rater_votes'], [2, 2])          # JSON list
+        self.assertIs(recs['s1']['needs_review'], False)             # bool 0
+        self.assertIs(recs['s3']['needs_review'], True)              # bool 1
+        self.assertIs(recs['s3']['tie_broken_by_confidence'], True)
+        self.assertEqual(recs['s3']['consensus_vote'], 'ABSTAIN')    # heterogeneous JSON
+
+    def test_gnn_abstain_3state_preserved(self):
+        from process import classifications_io as cio
+        legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        recs = {r['segment_id']: r for r in cio.read_overlay(self.tmpdir, 'gnn')}
+        self.assertIs(recs['s1']['gnn_vaamr_abstain'], False)   # stored 0
+        self.assertIs(recs['s3']['gnn_vaamr_abstain'], True)    # stored 1
+        self.assertIsNone(recs['s2']['gnn_vaamr_abstain'])      # stored NULL
+        self.assertIsNone(recs['s1']['gnn_purer_abstain'])
+        self.assertIs(recs['s2']['gnn_purer_abstain'], False)
+
+    def test_codebook_json_roundtrip(self):
+        from process import classifications_io as cio
+        legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        rec = cio.read_overlay(self.tmpdir, 'codebook')[0]
+        self.assertEqual(rec['codebook_labels_ensemble'], ['A1', 'B2'])
+        self.assertEqual(rec['codebook_confidence'], {'A1': 0.9, 'B2': 0.5})
+
+    def test_manifest_roundtrip(self):
+        from process import classifications_io as cio
+        legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        man = cio.read_classification_manifest(self.tmpdir)
+        self.assertEqual(set(man), {'theme', 'purer'})
+        self.assertEqual(man['theme']['framework']['name'], 'vaamr')
+
+    def test_testset_and_cv_roundtrip(self):
+        from process.assembly import content_validity as cv
+        from process import db
+        legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        with db.open_db(self.tmpdir) as conn:
+            ws = conn.execute(
+                "SELECT kind, n_items FROM testset_worksheets WHERE worksheet_n=1"
+            ).fetchone()
+            self.assertEqual(ws['kind'], 'vaamr')
+            self.assertEqual(ws['n_items'], 2)
+            shas = conn.execute(
+                "SELECT sha256 FROM testset_items WHERE worksheet_n=1 ORDER BY item_num"
+            ).fetchall()
+            self.assertEqual([r['sha256'] for r in shas], ['abc', 'def'])
+        man = cv.read_cv_manifest(self.tmpdir, 'cv_vaamr_v1')
+        self.assertEqual(man['item_ids'], ['item0', 'item1'])
+        self.assertEqual(man['content_sha256']['item1'], 'sha1')
+
+    def test_preview_counts_matches_migration(self):
+        preview = legacy_migration.preview_counts(self.tmpdir)
+        self.assertEqual(preview['sessions'], 2)
+        self.assertEqual(preview['segments'], 3)
+        self.assertEqual(preview['overlays'].get('gnn'), 3)
+        self.assertEqual(preview['testset_worksheets'], 1)
+        self.assertEqual(preview['cv_testsets'], 1)
+
+    def test_originals_relocated_and_idempotent(self):
+        from process import db
+        legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        moved = os.path.join(self.tmpdir, '_legacy_files', '01_transcripts',
+                             'segmented', 'c1s1', 'segments.jsonl')
+        self.assertTrue(os.path.isfile(moved))
+        self.assertTrue(db.db_exists(self.tmpdir))
+        # qra.db now exists, so re-running migrates nothing.
+        counts2 = legacy_migration.migrate_jsonl_to_sqlite(self.tmpdir)
+        self.assertEqual(counts2['segments'], 0)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -301,6 +301,7 @@ def migrate_jsonl_to_sqlite(run_dir: str) -> Dict:
             table = _cio._OVERLAY_TABLES[key]
             fields = _cio._OVERLAY_FIELDS_MAP[key]
             json_fields = _cio._OVERLAY_JSON_FIELDS[key]
+            bool_fields = _cio._OVERLAY_BOOL_FIELDS[key]
             cols = ('segment_id',) + fields
             sql = (
                 f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "
@@ -313,6 +314,11 @@ def migrate_jsonl_to_sqlite(run_dir: str) -> Dict:
                     v = rec.get(f)
                     if f in json_fields:
                         v = _db.dumps(v)
+                    elif f in bool_fields:
+                        # Encode bool -> INTEGER 0/1 explicitly; preserve the
+                        # 3-state (None stays NULL) for the gnn abstain flags
+                        # rather than relying on SQLite's implicit coercion.
+                        v = None if v is None else (1 if v else 0)
                     vals.append(v)
                 conn.execute(sql, tuple(vals))
                 n += 1
@@ -340,17 +346,19 @@ def migrate_jsonl_to_sqlite(run_dir: str) -> Dict:
             meta = _read_json(mp) or {}
             segs = meta.get('segments', []) or []
             legacy_import = 1 if meta.get('legacy_import') else 0
+            # Prefer an explicit stored kind; fall back to the worksheet-header sniff.
+            kind = meta.get('kind') or _sniff_testset_kind(run_dir, wn)
             conn.execute(
                 "INSERT OR REPLACE INTO testset_worksheets "
                 "(worksheet_n, kind, name, created_at, n_items, params_hash, frozen, legacy_import) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (wn, _sniff_testset_kind(run_dir, wn), None, '', len(segs), None, 1, legacy_import),
+                (wn, kind, None, '', len(segs), None, 1, legacy_import),
             )
             for i, e in enumerate(segs, 1):
                 conn.execute(
                     "INSERT OR REPLACE INTO testset_items "
                     "(worksheet_n, item_num, session_id, seg_num, sha256) VALUES (?, ?, ?, ?, ?)",
-                    (wn, i, e.get('session_id', ''), int(e.get('seg_num') or 0), e.get('sha256')),
+                    (wn, i, e.get('session_id', ''), _safe_nonneg_int(e.get('seg_num')), e.get('sha256')),
                 )
             counts['testset_worksheets'] += 1
 
@@ -399,6 +407,58 @@ def migrate_jsonl_to_sqlite(run_dir: str) -> Dict:
         _relocate_legacy_jsonl(run_dir)
     except OSError:
         pass
+
+    return counts
+
+
+def preview_counts(run_dir: str) -> Dict:
+    """Count what :func:`migrate_jsonl_to_sqlite` WOULD import, writing nothing.
+
+    Cheap filesystem scan returning the same shape as the migration's result
+    dict ({'sessions', 'segments', 'overlays': {key: n}, 'manifest_keys',
+    'testset_worksheets', 'cv_testsets'}).  Used by ``qra migrate`` (preview) and
+    the TUI so a user can see the scope before committing to the migration.
+    """
+    from . import classifications_io as _cio
+
+    counts: Dict = {
+        'sessions': 0, 'segments': 0, 'overlays': {}, 'manifest_keys': 0,
+        'testset_worksheets': 0, 'cv_testsets': 0,
+    }
+
+    seg_dir = _paths.segmented_sessions_dir(run_dir)
+    for sid in _list_dir_safe(seg_dir):
+        segs_path = os.path.join(seg_dir, sid, 'segments.jsonl')
+        if not os.path.isfile(segs_path):
+            continue
+        n = sum(1 for _ in _read_jsonl(segs_path))
+        if n:
+            counts['segments'] += n
+            counts['sessions'] += 1
+
+    cls_dir = _paths.classifications_dir(run_dir)
+    for key in _cio.OVERLAY_KEYS:
+        path = os.path.join(cls_dir, _cio.OVERLAY_FILENAMES[key])
+        if os.path.isfile(path):
+            n = sum(1 for _ in _read_jsonl(path))
+            if n:
+                counts['overlays'][key] = n
+
+    manifest = _read_json(_paths.classification_manifest_path(run_dir))
+    if isinstance(manifest, dict):
+        counts['manifest_keys'] = len(manifest)
+
+    ts_meta_dir = os.path.join(_paths.meta_dir(run_dir), 'testset_meta')
+    counts['testset_worksheets'] = sum(
+        1 for mp in glob.glob(os.path.join(ts_meta_dir, '*.meta.json'))
+        if _TS_META_RE.match(os.path.basename(mp))
+    )
+
+    cv_root = _paths.content_validity_dir(run_dir)
+    counts['cv_testsets'] = sum(
+        1 for name in _list_dir_safe(cv_root)
+        if os.path.isfile(os.path.join(cv_root, name, 'manifest.json'))
+    )
 
     return counts
 
@@ -517,6 +577,18 @@ def _read_json(path: str):
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _safe_nonneg_int(v) -> int:
+    """Coerce ``v`` to a non-negative int, defaulting to 0 on bad/missing input.
+
+    Guards the testset ``seg_num`` import against corrupt metadata (non-numeric
+    or negative values) rather than raising mid-migration.
+    """
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _segment_from_raw_record(rec: dict):
