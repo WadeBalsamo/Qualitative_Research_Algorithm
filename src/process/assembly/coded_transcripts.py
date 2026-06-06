@@ -58,7 +58,7 @@ def export_coded_transcript(
     os.makedirs(coded_dir, exist_ok=True)
     output_path = os.path.join(coded_dir, f'coded_transcript_{session_id}.txt')
 
-    sorted_segs = sorted(segments, key=lambda s: (s.session_id, s.segment_index))
+    sorted_segs = sorted(segments, key=lambda s: (s.session_id, s.start_time_ms, s.segment_index))
 
     # ---------------- Session header aggregates ----------------
     theme_counts: Counter = Counter()

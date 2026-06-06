@@ -154,20 +154,25 @@ class ConversationalSegmenter:
     def __init__(self, config: dict):
         import torch as _torch
         _model_id = config.get('embedding_model', 'Qwen/Qwen3-Embedding-8B')
-        _model_kwargs: dict = {}
-        if _torch.cuda.is_available() or hasattr(_torch.backends, 'mps'):
-            _model_kwargs['torch_dtype'] = _torch.float16
-        try:
-            self.embedding_model = SentenceTransformer(
-                _model_id,
-                model_kwargs=_model_kwargs or None,
-                trust_remote_code=True,
-            )
-        except TypeError:
-            # Older sentence-transformers without model_kwargs support
-            self.embedding_model = SentenceTransformer(_model_id, trust_remote_code=True)
-        _device = getattr(self.embedding_model, 'device', 'unknown')
-        print(f"[segmenter] Loaded {_model_id!r} on {_device}")
+        # Therapist-only re-segmentation needs no embeddings; skip the (large)
+        # SentenceTransformer construction entirely when requested.
+        if config.get('skip_embedding_model', False):
+            self.embedding_model = None
+        else:
+            _model_kwargs: dict = {}
+            if _torch.cuda.is_available() or hasattr(_torch.backends, 'mps'):
+                _model_kwargs['torch_dtype'] = _torch.float16
+            try:
+                self.embedding_model = SentenceTransformer(
+                    _model_id,
+                    model_kwargs=_model_kwargs or None,
+                    trust_remote_code=True,
+                )
+            except TypeError:
+                # Older sentence-transformers without model_kwargs support
+                self.embedding_model = SentenceTransformer(_model_id, trust_remote_code=True)
+            _device = getattr(self.embedding_model, 'device', 'unknown')
+            print(f"[segmenter] Loaded {_model_id!r} on {_device}")
         self._embedding_model_id = _model_id
         self.min_words = config.get('min_segment_words_conversational', 60)
         self.max_words = config.get('max_segment_words_conversational', 400)
