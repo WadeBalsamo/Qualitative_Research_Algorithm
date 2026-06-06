@@ -3,7 +3,7 @@ process/legacy_migration.py
 ---------------------------
 
 # ============================================================================
-# LEGACY MIGRATION SHIM — REMOVE IN NEXT VERSION
+# LEGACY MIGRATION SHIM — legacy-only; safe to remove once no pre-v3 projects remain
 #
 # This module upgrades older project layouts to the current v3 layout:
 #

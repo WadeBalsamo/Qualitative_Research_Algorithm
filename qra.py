@@ -8,16 +8,19 @@ This script orchestrates the complete workflow for analyzing therapy transcripts
 using two classification frameworks:
 - VAAMR (Vigilance-Avoidance-Attention Regulation-Metacognition-Reappraisal): Classifies participant segments across a five-stage developmental arc
 - PURER (Phenomenological-Utilization-Reframing-Educate/Expectancy-Reinforcement): Classifies therapist segments across five guided-inquiry moves
-- VCE Phenomenology Codebook: Optional multi-label construct enrichment (59 codes, 7 domains) applied to participant segments
+- VCE Phenomenology Codebook: Optional multi-label construct enrichment (54 codes, 6 domains) applied to participant segments
 
-The pipeline has 8 core stages that can be executed as a complete workflow or modularly:
-1. Ingestion & Segmentation: Load and segment diarized transcripts into semantic units
-2. Construct Operationalization: Build framework definitions from theme_framework/ (VAAMR/PURER)
-3-3c. Theme Classification: Zero-shot LLM classification of VAAMR, PURER, and codebook constructs
-4-5. Confidence Voting & Consensus: Multi-run model voting with confidence thresholds
-6. Assembly: Join frozen segments with overlays into master_segments.jsonl
-7. Validation Artifacts: Generate human worksheet, definition key, answer keys for validation
-8. Analysis: Generate comprehensive reports on classification results
+The pipeline has 8 stages (+2 optional sub-stages), sequenced by process/orchestrator.py:
+1.  Ingestion & segmentation       -> 01_transcripts/segmented/<sid>/ (frozen)
+2.  Construct operationalization    -> theme definitions + content-validity set
+3.  VAAMR zero-shot classification  (participant segments; multi-run consensus)
+3b. Codebook classification         (optional; participant segments)
+3c. PURER cue-block classification  (optional; therapist segments)
+4.  Cross-validation                (optional; VAAMR x VCE lift)
+5.  Human validation set            -> 04_validation/
+6.  Dataset assembly                -> 02_meta/training_data/master_segments.{jsonl,csv}
+7.  Report generation               -> 01_transcripts/coded/ + 04_validation/
+8.  Results analysis                (optional) -> 03_analysis_data/, 05_figures/, 06_reports/
 
 Command Structure:
   qra <command> [options]
@@ -33,24 +36,20 @@ run
   Input: Transcript files in transcript-dir
   Output: Complete pipeline output in output-dir with all intermediate and final artifacts
   Generates:
-    - 01_transcripts/segmented/ : Frozen segments (JSONL)
-    - 02_meta/ : Configuration, logs
-    - 03_classification/ : Theme, PURER, codebook classification overlays (JSONL)
-    - 04_validation/ : Human worksheet, definition key, answer keys for validation
-    - 05_validation/ : Test sets and content validity results
-    - 06_reports/ : Analysis reports in HTML, CSV, PDF formats
-    - master_segments.jsonl : Final integrated segments with all classifications
+    - 01_transcripts/ : segmented/<sid>/ (frozen) + coded/ transcripts
+    - 02_meta/ : config, classifications/ overlays, training_data/master_segments.{jsonl,csv}
+    - 04_validation/ : worksheets, definition/answer keys, testsets/, content_validity/
+    - 05_figures/ : PNG visualization figures
+    - 06_reports/ : tiered human-readable text reports (00_* through 06_gnn/)
 
 analyze
   Run post-hoc analysis on existing pipeline output directory
-  Input: Existing output directory containing master_segments.jsonl
-  Output: Comprehensive analysis reports in output_dir/06_reports/
-    - participant_summary.html/csv : Summary of each participant's theme progression
-    - session_summary.html/csv : Summary of each session by construct prevalence
-    - longitudinal_analysis.csv : Longitudinal trends across sessions
-    - framework_statistics.json : Statistical summaries of classification distributions
-    - validation_metrics.json : Accuracy metrics for content validity test sets
-    - heatmap_visualizations/ : Visual representations of code/theme frequencies
+  Input: Existing output dir with 02_meta/training_data/master_segments.{jsonl,csv}
+  Output:
+    - 06_reports/ : tiered text reports — 00_executive_summary.txt, 01_outcomes/,
+      02_mechanism/, 03_per_session/, 04_per_participant/, 05_per_stage/, 06_gnn/
+    - 03_analysis_data/ : per-session / participant / theme JSON + graphing CSVs
+    - 05_figures/ : heatmaps, trajectories, transition + GNN figures (PNG)
 
 ingest
   Stage 1: Segment transcripts only (Phase 3, Stage 1)
@@ -63,15 +62,30 @@ classify
   --what purer   : Classify PURER constructs only (therapist segments)
   --what codebook: Classify VCE phenomenology codes only
   --what all     : Run all enabled classifiers (default)
-  Output: Classification overlays written to output_dir/03_classification/
+  Output: Classification overlays written to output_dir/02_meta/classifications/
     - theme_labels.jsonl : VAAMR classifications
     - purer_labels.jsonl : PURER classifications
     - codebook_labels.jsonl : Codebook classifications
 
 assemble
-  Stage 6: Join frozen segments with classification overlays into master_segments.jsonl (Phase 3, Stage 6)
+  Stage 6: Join frozen segments with classification overlays into the master dataset
   Input: Frozen segments + classification overlays
-  Output: output_dir/01_transcripts/master_segments.jsonl (complete integrated dataset)
+  Output: output_dir/02_meta/training_data/master_segments.{jsonl,csv} (integrated dataset)
+
+add-data
+  Incrementally segment + classify only NEW transcripts, then re-assemble and
+  re-analyze. Frozen validation testsets are never mutated; exits non-zero if no
+  new sessions are detected.
+
+reclassify-run
+  Re-run a single classifier over existing frozen segments (overlay refresh).
+
+apply-anonymization
+  Retroactively scrub PHI names from frozen segment text (segments.jsonl).
+
+edit-anonymization
+  Edit the speaker anonymization key (interactive TUI or flags) and cascade the
+  change across frozen segments, overlays, checkpoints, worksheets, and reports.
 
 validate
   Refresh validation artifacts without re-classifying (Stage 7)
@@ -87,7 +101,7 @@ testset
   create --kind vaamr/purer/codebook --name <name> : Create new frozen test set
   refresh --all/--name <name>                     : Refresh AI answer key for test set(s)
   list                                            : List existing test sets
-  Output: output_dir/05_validation/testsets/<name>/
+  Output: output_dir/04_validation/testsets/<name>/
     - manifest.json : Test set metadata and segment IDs
     - human_worksheet.txt : Human-annotated answers (for validation)
     - ai_answer_key.json : AI-generated answer key for automated evaluation
@@ -97,7 +111,7 @@ testset
   create --framework vaamr/purer --name <name>   : Create new CV test set
   refresh --all/--name <name>                    : Refresh AI answer key using specified model(s)
   list                                          : List existing content-validity test sets
-  Output: output_dir/04_validation/cv/<name>/
+  Output: output_dir/04_validation/content_validity/<name>/
     - manifest.json : Test set metadata and segment IDs
     - human_worksheet.txt : Human-annotated answers (for validation)
     - ai_answer_key.json : AI-generated answer key for automated evaluation
@@ -107,7 +121,7 @@ testset
   Run zero-shot LLM classification against content validity test sets only
   Bypasses full pipeline; skips ingestion and assembly stages
   Input: Content validity test set (created via cv create)
-  Output: output_dir/05_validation/content_validity_zeroshot_results.txt
+  Output: output_dir/04_validation/content_validity_zeroshot_results.txt
     - Detailed report with per-item results, consensus scores, confidence levels
     - Summary statistics by difficulty level (clear/subtle/adversarial)
     - Per-rater performance metrics
@@ -122,7 +136,7 @@ Framework & Codebook:
 - PURER: Theme framework for therapist segments (requires separate classification)
 - VCE Phenomenology Codebook: Optional multi-label construct enrichment system
   
-For more information on the neurophenomenological methodology, see methodology.md.
+For more information on the neurophenomenological methodology, see docs/methodology.md.
 """
 
 import argparse
@@ -242,7 +256,7 @@ def _add_common_args(parser: argparse.ArgumentParser):
         '--test-zeroshot',
         action='store_true',
         help='Run zero-shot LLM classification against the content validity test set '
-             '(skips full pipeline; writes graded report to 05_validation/)',
+             '(skips full pipeline; writes graded report to 04_validation/)',
     )
     parser.add_argument(
         '--preset',
@@ -701,7 +715,7 @@ def _write_zeroshot_report(
     """
     Write a human-readable graded report for the zero-shot content validity test.
 
-    Format mirrors 05_validation/ artifacts (78-char separators, same header style).
+    Format mirrors 04_validation/ artifacts (78-char separators, same header style).
     Returns the written file path.
     """
     import datetime as _dt
@@ -2251,7 +2265,7 @@ Examples:
         help='Run results analysis on an existing pipeline output directory',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            'Reads master_segment_dataset.csv and theme_definitions.json from OUTPUT_DIR\n'
+            'Reads master_segments.csv and theme_definitions.json from OUTPUT_DIR\n'
             'and produces per-session, per-participant, per-construct, and longitudinal\n'
             'reports in OUTPUT_DIR/reports/analysis/.'
         ),
@@ -2259,7 +2273,7 @@ Examples:
     analyze_parser.add_argument(
         '--output-dir', '-o',
         required=True,
-        help='Path to pipeline output directory containing master_segment_dataset.csv',
+        help='Path to pipeline output directory containing master_segments.csv',
     )
     _gnn_grp = analyze_parser.add_mutually_exclusive_group()
     _gnn_grp.add_argument(

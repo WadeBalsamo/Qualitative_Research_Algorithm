@@ -98,7 +98,7 @@ Targeted examination of the Avoidance stage as a developmental waypoint — the 
 
 ### 1.7 VCE × VAAMR Cross-Validation: Exploratory Lift Discovery
 
-Compute co-occurrence lift statistics for all (VAAMR stage, VCE code) pairs to discover emergent empirical associations between construct frameworks. This is an **exploratory, data-driven analysis** — no directional hypotheses are encoded in the codebase. The VCE codebook (59 codes, 7 domains) and the VAAMR framework are independent constructs whose co-occurrence structure is unknown a priori.
+Compute co-occurrence lift statistics for all (VAAMR stage, VCE code) pairs to discover emergent empirical associations between construct frameworks. This is an **exploratory, data-driven analysis** — no directional hypotheses are encoded in the codebase. The VCE codebook (54 codes, 6 domains) and the VAAMR framework are independent constructs whose co-occurrence structure is unknown a priori.
 
 **Theoretical framing in text** (from `methodology.md`): Varela's mutual-constraints logic predicts that participant therapeutic-stage development (VAAMR) and the specific experiential qualities they describe (VCE) should show systematic empirical associations. For example, participants articulating pain-related somatic language may be more likely to be in an early vigilance/avoidance stage, while those describing metacognitive clarity may be in a later metacognitive/reappraisal stage. These are text-level expectations in the methodology document — **not hardcoded predictions in the code**.
 

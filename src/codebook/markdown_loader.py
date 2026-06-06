@@ -10,6 +10,10 @@ Heading format: ## Code N — code_id — Category Name
 Per-block YAML: code_id, category, domain
 H3 sections: Description, Inclusive Criteria, Exclusive Criteria,
              Exemplar Utterances
+
+The canonical PARSER CONTRACT is specified in the HTML-comment block at the top
+of frameworks/PHENOMENOLOGY_CODEBOOK.md (HTML comments are stripped before
+data extraction).
 """
 
 import re

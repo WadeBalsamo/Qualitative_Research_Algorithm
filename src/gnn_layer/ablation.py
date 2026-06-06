@@ -45,7 +45,7 @@ def run_ablation(graph, targets: dict, config, ablate: str,
 def vce_vaamr_contribution(graph, df_all, config) -> dict:
     """Direct, falsifiable test of the VCE-on-VAAMR hypothesis (methodology §3.3 / §5.2).
 
-    Question: does adding the granular 59-code VCE phenomenology codebook as a
+    Question: does adding the granular 54-code VCE phenomenology codebook as a
     multi-task layer ON TOP of the coarse five-stage VAAMR arc improve the graph's
     ability to classify VAAMR — i.e., does fine-grained construct supervision sharpen
     the broader mindfulness-skill-development themes, or is it superfluous?
