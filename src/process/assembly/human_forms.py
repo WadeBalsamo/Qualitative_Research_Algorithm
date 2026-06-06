@@ -303,7 +303,7 @@ def export_human_classification_forms(
     written: List[str] = []
 
     for session_id, segs in sorted(by_session.items()):
-        sorted_segs = sorted(segs, key=lambda s: s.segment_index)
+        sorted_segs = sorted(segs, key=lambda s: (s.start_time_ms, s.segment_index))
 
         # Only participant segments (skip therapist-only context turns)
         participant_segs = [
@@ -990,7 +990,7 @@ def _stratified_sample(
                 sets[i].extend(shuffled[start:end])
 
     result = sets[set_index - 1]
-    result.sort(key=lambda x: (x.session_id, x.segment_index))
+    result.sort(key=lambda x: (x.session_id, x.start_time_ms, x.segment_index))
     return result
 
 

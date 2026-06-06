@@ -141,9 +141,19 @@ class TherapistCueConfig:
 class PurerCueConfig:
     """Settings for cue-unit PURER classification (Stage 3c).
 
-    PURER is classified at the *cue-block* level — one label per therapist
-    response between two consecutive participant turns — rather than classifying
-    every individual therapist segment in isolation.
+    PURER can be classified at two granularities, selected by
+    ``classification_unit``:
+
+    - ``"turn"`` (default): one PURER label per individual therapist turn
+      (segment).  Each turn is classified within its full surrounding exchange
+      (the bracketing participant turns + sibling therapist turns) so the model
+      sees enough context to complete the idea, but the label is assigned to the
+      single turn.  This avoids length-driven fragmentation of cue blocks and
+      keeps the unit of analysis theory-driven rather than verbosity-driven.
+    - ``"cue_block"``: one label per therapist *response* between two consecutive
+      participant turns (the historical behavior); over-long blocks are split by
+      ``max_cue_words`` along turn boundaries and the label is propagated to the
+      constituent turns.
 
     By default, PURER uses a single model for classification to ensure robustness,
     with no multi-run validation required. This simplifies implementation and 
@@ -184,11 +194,12 @@ class PurerCueConfig:
         Splitting produces finer-grained PURER labels (one per sub-cue) rather
         than dropping or monolithically sending the block.
     """
+    classification_unit: str = "turn"   # "turn" (one PURER label per therapist turn, classified within its full surrounding exchange) | "cue_block" (one label per therapist response between participant turns, split by max_cue_words and propagated)
     skip_lesson_content: bool = True
     max_lesson_words: int = 400
     therapist_max_gap_seconds: float = 120.0
     max_context_words: int = 1000
-    max_cue_words: int = 300   # words; cue blocks longer than this are split into contiguous sub-cues (along turn boundaries) before LLM classification, instead of being sent as one over-long prompt
+    max_cue_words: int = 300   # words; only used when classification_unit="cue_block": cue blocks longer than this are split into contiguous sub-cues (along turn boundaries) before LLM classification, instead of being sent as one over-long prompt
 
 
 @dataclass
