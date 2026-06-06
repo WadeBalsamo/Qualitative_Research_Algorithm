@@ -66,7 +66,7 @@ class _FakeModel:
                batch_size=8, prompt_name=None):
         return np.stack([self._vec(t) for t in texts])
 
-    def get_embedding_dimension(self):
+    def get_sentence_embedding_dimension(self):
         return self._dim
 
     # sentence-transformers stores prompt templates here; our fake has none.
@@ -79,7 +79,7 @@ def _patch_model(classifier: EmbeddingCodebookClassifier,
     if fake is None:
         fake = _FakeModel(dim=8, seed=42)
     classifier._model = fake
-    classifier._embed_dim = fake.get_embedding_dimension()
+    classifier._embed_dim = fake.get_sentence_embedding_dimension()
     return fake
 
 
@@ -329,7 +329,7 @@ class TestTwoPassBehaviour(unittest.TestCase):
                     vecs.append(np.array(v, dtype=np.float32))
                 return np.stack(vecs)
 
-            def get_embedding_dimension(self_):
+            def get_sentence_embedding_dimension(self_):
                 return dim
 
         clf._model = _Controlled()
