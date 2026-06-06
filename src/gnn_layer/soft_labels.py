@@ -91,6 +91,39 @@ def _parse_votes(raw):
     return None
 
 
+def ballot_coverage(df_all) -> dict:
+    """Summarize multi-run LLM ballot coverage across participant segments.
+
+    The GNN's soft consensus targets are learned from per-segment ``rater_votes``
+    (the multi-run LLM ballots).  When a segment carries <2 ballots,
+    :func:`build_soft_targets` degrades to a one-hot of the final label — a weak
+    training signal that makes the reliability gate κ optimistic/unreliable.  This
+    quantifies coverage so ``analysis.runner`` / ``qra gnn train`` can warn when a
+    project was classified with a single LLM run.
+
+    Returns ``{'n_participant', 'n_with_multirun_ballots', 'multirun_fraction'}``.
+    A missing ``rater_votes`` column counts as zero coverage (triggers the warning).
+    """
+    empty = {'n_participant': 0, 'n_with_multirun_ballots': 0, 'multirun_fraction': 0.0}
+    if df_all is None or len(df_all) == 0:
+        return empty
+    part = df_all[df_all['speaker'] == 'participant'] if 'speaker' in df_all.columns else df_all
+    n_part = len(part)
+    if n_part == 0:
+        return empty
+    n_multi = 0
+    if 'rater_votes' in part.columns:
+        for _, row in part.iterrows():
+            votes = _parse_votes(row.get('rater_votes'))
+            if votes is not None and len(votes) >= 2:
+                n_multi += 1
+    return {
+        'n_participant': int(n_part),
+        'n_with_multirun_ballots': int(n_multi),
+        'multirun_fraction': (n_multi / n_part) if n_part else 0.0,
+    }
+
+
 def build_soft_targets(df_all, label_mode: str = 'weak',
                        n_stages: int = N_VAAMR_STAGES) -> Dict[str, "object"]:
     """Return {segment_id: mixture_vector} for participant segments.
