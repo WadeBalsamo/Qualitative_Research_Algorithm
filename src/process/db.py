@@ -251,23 +251,58 @@ _SCHEMA_STATEMENTS = (
 )
 
 
+class SchemaVersionError(RuntimeError):
+    """Raised when the on-disk schema is newer than this code understands."""
+
+
+# Forward migrations, keyed on the FROM version: ``_MIGRATIONS[n]`` is a
+# ``callable(conn)`` that upgrades a v``n`` database to v``n+1``.  Each step must
+# be forward-only and idempotent (safe to re-apply).  To evolve the schema:
+#   1. add the new column/table to ``_SCHEMA_STATEMENTS`` (use IF NOT EXISTS),
+#   2. write ``def _migrate_1_to_2(conn): conn.execute("ALTER TABLE ...")``,
+#   3. register it (``_MIGRATIONS = {1: _migrate_1_to_2}``) and bump
+#      ``SCHEMA_VERSION`` above.
+_MIGRATIONS: dict = {}
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """
-    Create every table/index if absent, then record/verify ``schema_version``.
+    Create every table/index if absent, then bring the schema up to
+    ``SCHEMA_VERSION`` by running any registered forward migrations.
 
-    On a future ``SCHEMA_VERSION`` bump, add forward-only ``ALTER TABLE`` /
-    data-migration steps here, keyed on the stored value below.
+    * Fresh DB  -> create tables, stamp ``schema_version = SCHEMA_VERSION``.
+    * Older DB  -> run ``_MIGRATIONS[v]`` for each v in ``[stored, SCHEMA_VERSION)``
+      in order, then stamp the new version.
+    * Newer DB  -> raise :class:`SchemaVersionError` (never silently downgrade).
     """
     for stmt in _SCHEMA_STATEMENTS:
         conn.execute(stmt)
-    row = conn.execute(
-        "SELECT value FROM _schema_meta WHERE key = 'schema_version'"
-    ).fetchone()
-    if row is None:
-        conn.execute(
-            "INSERT INTO _schema_meta (key, value) VALUES ('schema_version', ?)",
-            (str(SCHEMA_VERSION),),
+
+    stored = get_meta(conn, 'schema_version')
+    if stored is None:
+        set_meta(conn, 'schema_version', SCHEMA_VERSION)
+        conn.commit()
+        return
+
+    stored_v = int(stored)
+    if stored_v == SCHEMA_VERSION:
+        conn.commit()
+        return
+    if stored_v > SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"qra.db schema_version={stored_v} is newer than this build of QRA "
+            f"(SCHEMA_VERSION={SCHEMA_VERSION}); upgrade QRA to open this project."
         )
+
+    # stored_v < SCHEMA_VERSION: apply forward migrations in ascending order.
+    for v in range(stored_v, SCHEMA_VERSION):
+        migrate = _MIGRATIONS.get(v)
+        if migrate is None:
+            raise SchemaVersionError(
+                f"No migration registered for qra.db schema v{v} -> v{v + 1}."
+            )
+        migrate(conn)
+    set_meta(conn, 'schema_version', SCHEMA_VERSION)
     conn.commit()
 
 
