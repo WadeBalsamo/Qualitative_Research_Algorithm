@@ -10,18 +10,17 @@ Covers:
   load('bogus')       → raises KeyError
   lru_cache           → same object returned on repeat calls
 
-SOURCE BUG DOCUMENTED:
-  theme_framework/purer.py get_purer_framework() uses parents[2] which resolves to
-  /root/QRA instead of the repo root (/root/QRA/Qualitative_Research_Algorithm), so
-  it looks for PURER_FRAMEWORK.md at /root/QRA/PURER_FRAMEWORK.md which does not
-  exist → FileNotFoundError.  get_vaamr_framework() uses parents[1] correctly.
-  registry.load('purer') uses parents[1] in registry.py and therefore works correctly.
+Packages live in src/; framework .md files live in frameworks/ at the repo root.
+  All path computations use parents[2] from src/<pkg>/<module>.py to reach repo root,
+  then frameworks/<file>.md to locate the definition files.
 """
 import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
+if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from theme_framework.registry import load
 
@@ -176,38 +175,37 @@ class TestLruCache(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# SOURCE BUG: purer.py get_purer_framework() uses parents[2]
+# Framework path regression guard (packages live in src/, .md files in frameworks/)
 # ---------------------------------------------------------------------------
 
-class TestPurerModulePathBug(unittest.TestCase):
+class TestFrameworkModulePaths(unittest.TestCase):
     """
-    Guards the markdown path in theme_framework/purer.py.
+    Guards the markdown paths in src/theme_framework/purer.py and vaamr.py.
 
-    get_purer_framework() computes its markdown path as:
-        Path(__file__).resolve().parents[1] / "PURER_FRAMEWORK.md"
+    After the src/ layout move, path computations use parents[2]:
+        Path(__file__).resolve().parents[2] / "frameworks" / "PURER_FRAMEWORK.md"
 
-    parents[1] of  .../theme_framework/purer.py  resolves to the repo root
-    (/root/QRA/Qualitative_Research_Algorithm), where PURER_FRAMEWORK.md lives.
-    A previous parents[2] bug pointed outside the repo and raised
-    FileNotFoundError; this test pins the corrected behavior so it can't regress.
-    registry.load('purer') and get_vaamr_framework() use the same parents[1] path.
+    parents[2] of .../src/theme_framework/purer.py resolves to the repo root
+    where the frameworks/ directory lives.  This test pins that behavior so
+    accidental parents-index drift raises a failure rather than a silent
+    FileNotFoundError at runtime.
     """
 
     def test_get_purer_framework_loads_correctly(self):
-        """get_purer_framework() uses parents[1] (correct) and succeeds."""
+        """get_purer_framework() uses parents[2] + frameworks/ (correct) and succeeds."""
         from theme_framework.purer import get_purer_framework
         fw = get_purer_framework()
         self.assertEqual(fw.num_themes, 5)
 
     def test_get_vaamr_framework_works_correctly(self):
-        """get_vaamr_framework() uses parents[1] (correct) and succeeds."""
+        """get_vaamr_framework() uses parents[2] + frameworks/ (correct) and succeeds."""
         from theme_framework.vaamr import get_vaamr_framework
         fw = get_vaamr_framework()
         self.assertEqual(fw.num_themes, 5)
         self.assertEqual(fw.name, "VAAMR")
 
     def test_registry_load_purer_works(self):
-        """registry.load('purer') uses the correct parents[1] path and succeeds."""
+        """registry.load('purer') uses the correct parents[2] + frameworks/ path and succeeds."""
         fw = load('purer')
         self.assertIsNotNone(fw)
         self.assertEqual(fw.num_themes, 5)

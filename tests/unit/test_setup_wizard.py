@@ -24,7 +24,9 @@ import tempfile
 import shutil
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
+if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from process.setup_wizard import (
     build_config_from_wizard_data,
