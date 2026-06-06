@@ -266,6 +266,14 @@ model (D-C). Mechanism (M2) graph kept regardless.
   full-66: probe 0.37 ≈ GNN 0.36). **Winner = A1n** (Qwen probe, class-weighted, 6-class): human
   κ=0.365 [0.23,0.51], within the human band → human-level IRR achieved. Honest split (D-C): LLM stays
   label-of-record, A1n is the abstention-gated assist + trust floor, the GNN serves the mechanism.
+- **2026-06-06 — PRIMARY mechanism RESULT (§9B): honest negative.** Qwen GNN counterfactual does NOT
+  triangulate with observed Δprogression: **ρ=−0.13 [−0.48, 0.01]** (plain), −0.25 (balanced) — both
+  CIs include 0, point estimates negative. **→ mechanism.py LEADS; GNN counterfactual = exploratory
+  only** (per the pre-registered protocol). The negative ρ inverts the observed pattern, consistent
+  with the **elicitation/responsiveness confound** — evidence *of* the confound, the reason no causal
+  claim holds. Per-move influence rank is face-valid (Utilization>Education>Reframing>Phenomenology>
+  Reinforcement) but exploratory. Remaining: B1 concept-anchor escalation (completeness) + production
+  defensibility (grouped-CV gate fix, config promotion, mechanism decouple) + final synthesis.
 
 ## 9. PRIMARY work-stream — mechanism triangulation (the peer-review deliverable)
 
@@ -323,3 +331,28 @@ with the independent observed analysis), make it computable + honest:
 
 `influence.triangulate` (SA-mech) still computes the FDR-subset version (correct, returns n=0 on real
 data); the architect adds the adapted ρ(n≥3) + CI-reliable-sign-agreement during integration.
+
+### 9B. RESULT — the mechanism does NOT triangulate (honest negative; mechanism.py leads)
+Ran the counterfactual + §1A triangulation on two Qwen 5-class GNNs (precipitates ON), 161 cue
+blocks, 20 cells (`run_mechanism.py`):
+
+| candidate | gate κ (trust ctx) | Spearman ρ | 95% CI | converges |
+|---|---|---|---|---|
+| plain (5-class) | 0.201 | **−0.132** | [−0.477, 0.006] | **no** (CI incl. 0) |
+| balanced (5-class) | 0.128 | **−0.254** | [−0.562, 0.053] | no |
+
+Per-move counterfactual influence (both candidates, face-valid rank): **Utilization +0.035 >
+Education +0.029 > Reframing +0.026 > Phenomenology +0.012 > Reinforcement −0.006**. The §1A test
+**FAILS** (ρ not >0; CI includes 0; FDR-significant cells = 0). **Per the pre-registered protocol →
+`analysis/mechanism.py` (observed Δprogression) LEADS; the GNN counterfactual is reported as
+EXPLORATORY only.**
+
+**Interpretation (defensible, not a code failure):** the point ρ is *negative* — the counterfactual
+sensitivity **inverts** the observed per-cell association. This is exactly what the **elicitation /
+responsiveness confound** predicts (methodology §9.4): therapists deploy PURER moves *in response to*
+participant state, so the OBSERVED association (move m co-occurs with progression) reflects
+*responsiveness*, while the COUNTERFACTUAL (swap-to-m → predicted shift) attempts to isolate
+*sensitivity*. At n≈32 the two diverge — the divergence is **evidence of the confound**, the central
+reason no causal claim is admissible. The counterfactual shift is also tiny (±0.035 on a 0–4 scale):
+the participant's predicted progression is driven mostly by their own features, not the swapped cue.
+Artifacts: `06_reports/06_gnn/influence.txt`, `03_analysis_data/gnn/gnn_counterfactual_influence.csv`.
