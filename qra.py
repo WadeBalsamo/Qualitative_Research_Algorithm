@@ -1210,8 +1210,9 @@ def cmd_apply_anonymization(args):
     if not getattr(args, 'yes', False):
         print()
         confirm = input(
-            f"  This will OVERWRITE segments.jsonl for {len(sessions_to_process)} session(s).\n"
-            "  segmentation_meta.json will NOT be modified.\n"
+            f"  This will rewrite segment text for {len(sessions_to_process)} session(s)\n"
+            "  in the project database (qra.db). Segmentation boundaries and metadata\n"
+            "  are preserved; only the text of each frozen segment is updated.\n"
             "  Type 'yes' to continue: "
         ).strip().lower()
         if confirm != 'yes':
@@ -1439,18 +1440,18 @@ def cmd_classify(args):
     if 'vaamr' in to_run:
         print("  Running VAAMR classifier...")
         stage_classify_theme(config, framework, segments=segments, output_dir=output_dir)
-        print(f"  theme_labels.jsonl written ({len(segments)} segments)")
+        print(f"  theme overlay written to qra.db ({len(segments)} segments)")
 
     if 'purer' in to_run:
         print("  Running PURER classifier...")
         stage_classify_purer(config, segments=segments, output_dir=output_dir)
-        print(f"  purer_labels.jsonl written")
+        print(f"  purer overlay written to qra.db")
 
     if 'codebook' in to_run:
         codebook = _load_codebook(getattr(args, 'codebook', None))
         print("  Running codebook classifier...")
         stage_classify_codebook(config, codebook, segments=segments, output_dir=output_dir)
-        print(f"  codebook_labels.jsonl written")
+        print(f"  codebook overlay written to qra.db")
 
     if 'cross-validation' in to_run:
         print("  Running cross-validation...")
