@@ -3,7 +3,7 @@ analysis/
 ---------
 Post-hoc results analysis module for the QRA pipeline.
 
-Reads from master_segment_dataset.csv (produced by the pipeline) and generates:
+Reads from master_segments.csv (produced by the pipeline) and generates:
   - Per-participant longitudinal reports
   - Per-session analyses
   - Per-theme (VAMMR stage + codebook code) reports

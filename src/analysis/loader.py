@@ -70,12 +70,12 @@ def load_segments(
     speaker_filter: str = 'participant',
     require_labeled: bool = True,
 ) -> pd.DataFrame:
-    """Load master_segment_dataset.csv and return a clean analysis-ready DataFrame.
+    """Load master_segments.csv and return a clean analysis-ready DataFrame.
 
     Parameters
     ----------
     output_dir : str
-        Pipeline output directory containing master_segment_dataset.csv.
+        Pipeline output directory containing master_segments.csv.
     speaker_filter : str
         Keep only segments from this speaker role ('participant', 'therapist',
         or None to keep all).
