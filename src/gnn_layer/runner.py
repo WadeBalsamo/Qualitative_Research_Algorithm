@@ -59,6 +59,20 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     if 'segment_id' not in df_all.columns or 'text' not in df_all.columns:
         return {'files_written': files, 'status': 'skipped: missing columns', 'n_segments': len(df_all)}
 
+    # ---- close the human-subset integration gap (A0-pre) ----
+    # master_segments.csv ships in_human_coded_subset / human_label EMPTY; the human
+    # consensus codes live in qra.db. Populate the two columns from there BEFORE the
+    # reliability gate runs so validation.evaluate_crossval's human axis lights up.
+    # Guarded: a no-op when no human codes have been imported.
+    try:
+        from analysis.irr_join import populate_human_columns
+        df_all = populate_human_columns(df_all, output_dir)
+        _n_human = int((df_all['in_human_coded_subset'] == True).sum())  # noqa: E712
+        if _n_human:
+            _log(verbose, f"human-coded subset: {_n_human} segments joined from qra.db")
+    except Exception as e:
+        _log(verbose, f"human-subset join skipped ({e})")
+
     from process import output_paths as _paths
     from . import embeddings as _emb
     from . import soft_labels as _sl
