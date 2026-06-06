@@ -16,6 +16,7 @@ from .graph_builder import _codes
 def _lift_table(pairs_stage, pairs_codes, label_a='stage', label_b='code'):
     """Generic lift table. pairs_stage: list of a-values; pairs_codes: list of code-lists."""
     import pandas as pd
+    from analysis.stats import lift_ratio
     n = len(pairs_stage)
     if n == 0:
         return pd.DataFrame(columns=[label_a, label_b, 'lift', 'count', 'p_b'])
@@ -36,7 +37,7 @@ def _lift_table(pairs_stage, pairs_codes, label_a='stage', label_b='code'):
                 continue
             p_b = total / n
             p_b_given_a = in_a / m
-            lift = (p_b_given_a / p_b) if p_b > 0 else 0.0
+            lift = lift_ratio(p_b_given_a, p_b)
             rows.append({label_a: a, label_b: c, 'lift': round(lift, 3),
                          'count': in_a, 'p_b': round(p_b, 4)})
     return pd.DataFrame(rows)
