@@ -337,6 +337,42 @@ def gate_ready_for_scaling(output_dir: str) -> bool:
     return bool(v and v.get('ready_for_scaling'))
 
 
+def format_gate_verdict(verdict, output_dir: str = '') -> str:
+    """Render the reliability-gate verdict as a human-readable block.
+
+    Single source of truth for the κ readout shared by ``qra gnn status`` (CLI)
+    and the TUI's "View GNN validation details" action, so the two never drift.
+    ``verdict`` is the dict from :func:`read_gate_verdict` (or None if the gate
+    has not run).
+    """
+    lines = ["GNN reliability gate" + (f" — {output_dir}" if output_dir else "")]
+    if not verdict:
+        lines.append("  Status: not run (train the GNN layer first: `qra gnn train`).")
+        return "\n".join(lines)
+
+    ready = verdict.get('ready_for_scaling')
+    status = "READY for LLM-free scaling" if ready else "NOT READY (keep LLM consensus)"
+    target = verdict.get('irr_target')
+    tgt = f"   (target κ ≥ {target})" if target is not None else ""
+
+    def _row(name, kappa, ok):
+        k = "n/a" if kappa is None else f"{kappa:.3f}"
+        flag = "" if ok is None else ("  [ready]" if ok else "  [not ready]")
+        return f"  {name} κ(graph,LLM): {k}{tgt}{flag}"
+
+    lines.append(f"  Status:            {status}")
+    lines.append(f"  Ready for scaling: {'YES' if ready else 'NO'}")
+    lines.append(_row("VAAMR", verdict.get('vaamr_kappa'), verdict.get('vaamr_ready')))
+    lines.append(_row("PURER", verdict.get('purer_kappa'), verdict.get('purer_ready')))
+    notes = verdict.get('rare_stage_notes') or []
+    lines.append(f"  Rare-stage checks: {'OK' if not notes else '; '.join(map(str, notes))}")
+    if verdict.get('calibration_temperature') is not None:
+        lines.append(f"  Calibration T:     {verdict['calibration_temperature']:.3f}")
+    if verdict.get('timestamp'):
+        lines.append(f"  Gate run at:       {verdict['timestamp']}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Scale-mode simulation gate (A5)
 # ---------------------------------------------------------------------------

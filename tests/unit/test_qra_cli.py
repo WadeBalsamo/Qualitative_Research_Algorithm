@@ -5,7 +5,7 @@ Pure arg/config helper tests for qra.py CLI entry point.
 
 Covers (without running the pipeline or any LLM):
   1. _flatten_wizard_config passes gnn_layer sub-dict through unchanged
-  2. argparse: `classify --backend gnn` routes to run_gnn_classify
+  2. argparse: `gnn classify` routes to run_gnn_classify
      (monkeypatched — no real classify)
   3. argparse: `analyze --gnn` / `analyze --no-gnn` parse to the correct
      force_gnn flag values and run_analysis is called with the right kwarg
@@ -91,96 +91,56 @@ class TestFlattenWizardConfigGnn(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 2. classify --backend gnn routes to run_gnn_classify
+# 2. `qra gnn classify` routes to run_gnn_classify (LLM-free scale mode)
 # ---------------------------------------------------------------------------
 
-class TestClassifyBackendGnn(unittest.TestCase):
+class TestGnnClassifyCommand(unittest.TestCase):
     """
-    `qra classify --backend gnn` must call gnn_layer.runner.run_gnn_classify
-    instead of the LLM-based classifiers, and must not call stage_classify_theme.
+    `qra gnn classify` must call gnn_layer.runner.run_gnn_classify (the former
+    `classify --backend gnn` path now lives in the dedicated `gnn` group).
     """
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        # Create a minimal frozen-segment directory so classify doesn't
-        # error out on "no frozen segments" guard.
-        seg_dir = os.path.join(self.tmpdir, '01_transcripts', 'segmented', 'c1s1')
-        os.makedirs(seg_dir, exist_ok=True)
-        # Write a minimal segments.jsonl so list_segmented_sessions finds it
-        with open(os.path.join(seg_dir, 'segments.jsonl'), 'w') as f:
-            f.write('')
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def _parse(self, extra_args):
+    def test_gnn_classify_parses(self):
         parser, *_ = qra._build_parser()
-        return parser.parse_args(['classify', '-o', self.tmpdir] + extra_args)
+        args = parser.parse_args(['gnn', 'classify', '-o', self.tmpdir])
+        self.assertEqual(args.command, 'gnn')
+        self.assertEqual(args.gnn_command, 'classify')
 
-    def test_backend_gnn_in_choices(self):
-        """
-        The classify parser accepts arbitrary --backend values (it's not
-        restricted to a choices list), so --backend gnn must parse cleanly.
-        """
-        args = self._parse(['--backend', 'gnn', '--no-downstream'])
-        self.assertEqual(args.backend, 'gnn')
+    def test_cmd_gnn_classify_calls_run_gnn_classify(self):
+        """cmd_gnn_classify must call run_gnn_classify and not the LLM classifiers."""
+        fake_result = {'status': 'ok', 'n_classified': 5}
 
-    def test_classify_backend_gnn_calls_run_gnn_classify(self):
-        """
-        When --backend gnn, cmd_classify must call run_gnn_classify and
-        must NOT call stage_classify_theme.
-        """
-        fake_classify_result = {'status': 'ok', 'n_classified': 5}
+        class _FakeGnnCfg:
+            enabled = True
+
+        class _FakeCfg:
+            gnn_layer = _FakeGnnCfg()
 
         with patch('process.segments_io.list_segmented_sessions',
                    return_value=['c1s1']), \
              patch('process.segments_io.load_segments_for_stage',
                    return_value=[]), \
              patch('process.classifications_io.apply_overlays'), \
+             patch('qra._build_config', return_value=_FakeCfg()), \
+             patch('qra._load_framework', return_value=object()), \
              patch('process.orchestrator.stage_classify_theme') as mock_theme, \
              patch('gnn_layer.runner.run_gnn_classify',
-                   return_value=fake_classify_result) as mock_gnn, \
-             patch('pandas.DataFrame') as mock_df:
+                   return_value=fake_result) as mock_gnn:
 
-            # Build a minimal args namespace directly
             args = argparse.Namespace(
                 output_dir=self.tmpdir,
-                what='all',
-                backend='gnn',
-                model=None,
-                api_key=None,
                 config=None,
                 framework=None,
-                codebook=None,
-                no_downstream=True,      # skip assemble/analyze cascade
-                zero_shot=False,
-                transcript_dir=None,
-                trial_id=None,
-                n_runs=None,
-                temperature=None,
-                resume_from=None,
-                speaker_filter_mode=None,
-                exclude_speakers=None,
-                no_theme_labeler=False,
-                run_codebook_classifier=False,
-                no_codebook_classifier=False,
-                verbose_segmentation=False,
-                no_auto_analyze=False,
-                no_text_anonymization=False,
-                lmstudio_url=None,
-                models=None,
-                no_two_pass=False,
-                embedding_model=None,
-                exemplar_import_path=None,
-                criteria_weight=None,
-                exemplar_weight=None,
-                exemplar_confidence_threshold=None,
-                max_exemplar_tokens=None,
-                high_confidence_threshold=None,
-                medium_confidence_threshold=None,
+                all_segments=False,
+                no_downstream=True,   # skip assemble/analyze cascade
             )
-
-            qra.cmd_classify(args)
+            qra.cmd_gnn_classify(args)
 
         mock_gnn.assert_called_once()
         mock_theme.assert_not_called()
@@ -275,7 +235,8 @@ class TestBuildParser(unittest.TestCase):
     def test_build_parser_returns_tuple(self):
         result = qra._build_parser()
         self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 3)
+        # (parser, testset_parser, cv_parser, gnn_parser)
+        self.assertEqual(len(result), 4)
 
     def test_first_element_is_argument_parser(self):
         parser, *_ = qra._build_parser()

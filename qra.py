@@ -1137,7 +1137,7 @@ def cmd_ingest(args):
     config.output_dir = output_dir
 
     force_reingest = getattr(args, 'reingest', None)
-    force_reingest_all = getattr(args, 'reingest_all', False)
+    force_reingest_all = getattr(args, 'reingest_all', False) or getattr(args, 'fresh', False)
 
     print(f"\nQRA INGEST")
     print(f"  Input:  {config.transcript_dir}")
@@ -1403,38 +1403,21 @@ def cmd_classify(args):
 
     to_run = {what} if what != 'all' else {'vaamr', 'purer', 'codebook', 'cross-validation'}
 
+    # --fresh: clear checkpoints + overlay for each targeted framework so the
+    # classifier starts over instead of resuming from prior runs.
+    if getattr(args, 'fresh', False):
+        from process import reclassify_ops as _reclassify
+        for w in sorted(to_run):
+            r = _reclassify.reset_for_fresh(output_dir, w)
+            print(f"  Fresh: cleared {r['checkpoints_removed']} checkpoint(s) + overlay for {w}")
+        config.resume_from = None
+
     # Load frozen segments once (raw); apply overlays selectively per stage below.
     from process import classifications_io as _cio
     segments = _segments_io.load_segments_for_stage(output_dir, apply=())
     # Apply all existing overlays up-front so each stage sees the current on-disk state.
     by_id = {s.segment_id: s for s in segments}
     _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv'))
-
-    # --backend gnn: LLM-FREE classification with the trained graph (scale mode).
-    # Routes around the LLM classifiers entirely; labels only segments lacking an LLM
-    # label, using the checkpoint trained on prior LLM/human-labeled data.
-    if str(getattr(args, 'backend', '') or '').lower() == 'gnn':
-        import pandas as _pd
-        from gnn_layer.runner import run_gnn_classify
-        df_all = _pd.DataFrame([{
-            'segment_id': s.segment_id, 'text': s.text, 'speaker': s.speaker,
-            'session_id': s.session_id,
-            'start_time_ms': s.start_time_ms, 'end_time_ms': s.end_time_ms,
-            'final_label': s.final_label, 'primary_stage': s.primary_stage,
-            'purer_primary': getattr(s, 'purer_primary', None),
-        } for s in segments])
-        print("  Backend: GNN (graph-only, no LLM calls)")
-        if not config.gnn_layer.enabled:
-            print("  Note: gnn_layer.enabled is False in config; classifying with the "
-                  "existing checkpoint anyway.")
-        res = run_gnn_classify(df_all, output_dir, framework=framework,
-                               config=config.gnn_layer, verbose=True)
-        print(f"  status: {res['status']}; classified {res.get('n_classified', 0)} segment(s)")
-        if not getattr(args, 'no_downstream', False):
-            print("\nRunning downstream pipeline...")
-            cmd_assemble(args)
-            cmd_analyze(args)
-        return
 
     if 'vaamr' in to_run:
         print("  Running VAAMR classifier...")
@@ -1455,7 +1438,7 @@ def cmd_classify(args):
     if 'cross-validation' in to_run:
         print("  Running cross-validation...")
         stage_cross_validation(config, framework, segments=segments, output_dir=output_dir)
-        print(f"  cross_validation_labels.jsonl written")
+        print(f"  cross-validation overlay written to qra.db")
 
     print("\nClassification overlay(s) written.")
 
@@ -2061,6 +2044,162 @@ def _prompt_yes_no_simple(label: str, default: bool = True) -> bool:
 # Main
 # =========================================================================
 
+def _gnn_ballot_preflight(output_dir: str, *, force: bool = False) -> None:
+    """Warn (or abort unless ``force``) when a project lacks multi-run LLM ballots.
+
+    The GNN learns its consensus signal from per-segment rater ballots
+    (``rater_votes``); a single-run LLM project trains on one-hot labels and the
+    reliability gate κ becomes unreliable.  Never blocks training on a pre-flight
+    error (degrades to a no-op).
+    """
+    try:
+        import pandas as _pd
+        from process import segments_io as _sio
+        from process import classifications_io as _cio
+        from gnn_layer.soft_labels import ballot_coverage
+        segments = _sio.load_segments_for_stage(output_dir, apply=())
+        by_id = {s.segment_id: s for s in segments}
+        _cio.apply_overlays(output_dir, by_id, keys=('theme',))
+        df = _pd.DataFrame([{'speaker': s.speaker, 'segment_id': s.segment_id,
+                             'rater_votes': getattr(s, 'rater_votes', None)} for s in segments])
+        cov = ballot_coverage(df)
+    except Exception:
+        return
+    if cov['n_participant'] == 0 or cov['multirun_fraction'] >= 0.5:
+        return
+    pct = round(100 * cov['multirun_fraction'])
+    print(
+        "\nWARNING: this project's VAAMR labels look single-run\n"
+        f"  (only {pct}% of participant segments carry multi-run ballots).\n"
+        "  The GNN learns its consensus signal from per-segment rater ballots\n"
+        "  (rater_votes); without >=2 runs it trains on one-hot labels only,\n"
+        "  yielding a weak signal and an unreliable reliability gate.\n"
+        "  Recommended: re-run VAAMR with n_runs >= 3 first, e.g.\n"
+        "      qra classify --what vaamr --fresh\n"
+    )
+    if force:
+        print("  (--force-ballots given; proceeding with degraded targets.)")
+        return
+    resp = input("  Proceed anyway with degraded targets? [y/N]: ").strip().lower()
+    if resp not in ('y', 'yes'):
+        print("Aborted. (Pass --force-ballots to skip this check.)")
+        sys.exit(0)
+
+
+def cmd_gnn_train(args):
+    """qra gnn train — train the graph, run the reliability gate, write GNN reports.
+
+    Force-enables the GNN layer, so it also works on a project that previously ran
+    only LLM consensus (this is how you ADD the GNN to such a project).
+    """
+    from analysis.runner import run_analysis
+    from gnn_layer import validation as _val
+
+    output_dir = args.output_dir
+    if not os.path.isdir(output_dir):
+        print(f"Error: output directory not found: {output_dir}")
+        sys.exit(1)
+
+    _gnn_ballot_preflight(output_dir, force=getattr(args, 'force_ballots', False))
+
+    print("\nQRA GNN TRAIN  (graph + reliability gate + reports)")
+    print(f"  Output: {output_dir}")
+    run_analysis(output_dir, verbose=True, force_gnn=True)
+    print()
+    print(_val.format_gate_verdict(_val.read_gate_verdict(output_dir), output_dir))
+
+
+def cmd_gnn_classify(args):
+    """qra gnn classify — LLM-free scale-mode classification with the trained graph."""
+    import pandas as _pd
+    from process import segments_io as _sio
+    from process import classifications_io as _cio
+    from gnn_layer.runner import run_gnn_classify
+
+    output_dir = args.output_dir
+    sessions = _sio.list_segmented_sessions(output_dir)
+    if not sessions:
+        print(f"Error: no frozen segments in {output_dir}. Run `qra ingest` first.")
+        sys.exit(1)
+
+    config = _build_config(args)
+    framework = _load_framework(getattr(args, 'framework', None))
+
+    segments = _sio.load_segments_for_stage(output_dir, apply=())
+    by_id = {s.segment_id: s for s in segments}
+    _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv', 'gnn'))
+    df_all = _pd.DataFrame([{
+        'segment_id': s.segment_id, 'text': s.text, 'speaker': s.speaker,
+        'session_id': s.session_id,
+        'start_time_ms': s.start_time_ms, 'end_time_ms': s.end_time_ms,
+        'final_label': s.final_label, 'primary_stage': s.primary_stage,
+        'purer_primary': getattr(s, 'purer_primary', None),
+    } for s in segments])
+
+    print("\nQRA GNN CLASSIFY  (graph-only, no LLM calls)")
+    print(f"  Output: {output_dir}")
+    if not config.gnn_layer.enabled:
+        print("  Note: gnn_layer.enabled is False in config; using the existing checkpoint anyway.")
+    res = run_gnn_classify(df_all, output_dir, framework=framework,
+                           config=config.gnn_layer, verbose=True,
+                           only_unlabeled=not getattr(args, 'all_segments', False))
+    print(f"  status: {res['status']}; classified {res.get('n_classified', 0)} segment(s)")
+    if not getattr(args, 'no_downstream', False):
+        print("\nRunning downstream pipeline (assemble + analyze)...")
+        cmd_assemble(args)
+        cmd_analyze(args)
+
+
+def cmd_gnn_status(args):
+    """qra gnn status — print the GNN reliability-gate verdict (kappa vs LLM)."""
+    from gnn_layer import validation as _val
+    output_dir = args.output_dir
+    verdict = _val.read_gate_verdict(output_dir)
+    if getattr(args, 'json', False):
+        print(json.dumps(verdict, indent=2))
+        return
+    print(_val.format_gate_verdict(verdict, output_dir))
+
+
+def cmd_migrate(args):
+    """qra migrate — import a legacy JSONL project into qra.db (preview by default)."""
+    from process import db as _db
+    from process import legacy_migration as _lm
+
+    output_dir = args.output_dir
+    if not os.path.isdir(output_dir):
+        print(f"Error: output directory not found: {output_dir}")
+        sys.exit(1)
+    if _db.db_exists(output_dir):
+        print(f"qra.db already present in {output_dir} — nothing to migrate.")
+        return
+    if not _lm.is_jsonl_project(output_dir):
+        print(f"No legacy JSONL pipeline files found in {output_dir} — nothing to migrate.")
+        return
+
+    def _summary(c):
+        ov = ', '.join(f"{k}:{n}" for k, n in sorted(c['overlays'].items())) or 'none'
+        return (f"  segments:    {c['segments']} across {c['sessions']} session(s)\n"
+                f"  overlays:    {ov}\n"
+                f"  manifest:    {c['manifest_keys']} key(s)\n"
+                f"  testsets:    {c['testset_worksheets']} worksheet(s)\n"
+                f"  cv testsets: {c['cv_testsets']}")
+
+    if not getattr(args, 'run', False):
+        counts = _lm.preview_counts(output_dir)
+        print(f"\nPreview — legacy JSONL project detected in {output_dir}:")
+        print(_summary(counts))
+        print("\nRun `qra migrate -o <dir> --run` to import it into qra.db")
+        print("(non-destructive; originals are relocated to <dir>/_legacy_files/).")
+        return
+
+    print(f"\nMigrating legacy JSONL -> qra.db in {output_dir} ...")
+    result = _lm.migrate_jsonl_to_sqlite(output_dir)
+    print("Done. Imported:")
+    print(_summary(result))
+    print(f"Originals relocated to {os.path.join(output_dir, '_legacy_files')}/")
+
+
 def _build_parser() -> tuple:
     """Build and return the top-level ArgumentParser (extracted for testability)."""
     parser = argparse.ArgumentParser(
@@ -2092,6 +2231,20 @@ Examples:
   # Re-classify everything with new models (no config file needed):
   python qra.py classify --what vaamr --backend lmstudio --model <m> -o ./data/output/
   python qra.py assemble -o ./data/output/
+
+  # Re-classify a framework FROM SCRATCH (clears its checkpoints + overlay first):
+  python qra.py classify --what vaamr --fresh -o ./data/output/
+  # Re-segment every session from scratch:
+  python qra.py ingest --fresh -o ./data/output/
+
+  # GNN consensus layer (modular — add the GNN to an LLM-only project, then scale):
+  python qra.py gnn train -o ./data/output/      # train graph + run the reliability gate
+  python qra.py gnn status -o ./data/output/     # ready for LLM-free scaling? (kappa vs LLM)
+  python qra.py gnn classify -o ./data/output/   # LLM-free label new/unlabeled segments
+
+  # Import a legacy (pre-SQLite, JSONL-on-disk) project into qra.db
+  python qra.py migrate -o ./data/output/        # preview what would be imported
+  python qra.py migrate -o ./data/output/ --run  # perform the migration
 
   # Testset management
   python qra.py testset create -o ./data/output/ --kind purer --name purer_irr_1
@@ -2129,6 +2282,8 @@ Examples:
                                help='Force re-segmentation of one session')
     ingest_parser.add_argument('--reingest-all', action='store_true',
                                help='Force re-segmentation of all sessions')
+    ingest_parser.add_argument('--fresh', '--from-scratch', dest='fresh', action='store_true',
+                               help='Re-segment every session from scratch (alias for --reingest-all)')
     ingest_parser.add_argument('--no-text-anonymization', action='store_true',
                                help='Disable PHI name scrubbing during ingestion')
     # Accept (and ignore) extra common args so existing configs work
@@ -2174,6 +2329,12 @@ Examples:
         action='store_true',
         help='Skip automatic assemble → testset refresh → analyze after classification.',
     )
+    classify_parser.add_argument(
+        '--fresh', '--from-scratch', dest='fresh', action='store_true',
+        help='Re-classify from scratch: clear the targeted framework\'s LLM '
+             'checkpoints and overlay before running (scope follows --what). '
+             'Without this, classification resumes from existing checkpoints.',
+    )
 
     # ---- assemble (Phase 3) ----
     assemble_parser = subparsers.add_parser(
@@ -2214,7 +2375,7 @@ Examples:
         description=(
             'Reads master_segments.csv and theme_definitions.json from OUTPUT_DIR\n'
             'and produces per-session, per-participant, per-construct, and longitudinal\n'
-            'reports in OUTPUT_DIR/reports/analysis/.'
+            'reports in OUTPUT_DIR/06_reports/ (and graph-ready data in 03_analysis_data/).'
         ),
     )
     analyze_parser.add_argument(
@@ -2222,6 +2383,8 @@ Examples:
         required=True,
         help='Path to pipeline output directory containing master_segments.csv',
     )
+    analyze_parser.add_argument('--config', '-c', default=None, help='Config JSON path')
+    analyze_parser.add_argument('--framework', default=None, help='Framework preset or JSON path')
     _gnn_grp = analyze_parser.add_mutually_exclusive_group()
     _gnn_grp.add_argument(
         '--gnn', action='store_true',
@@ -2263,6 +2426,9 @@ Examples:
     _ts_refresh = testset_sub.add_parser('refresh', help='Refresh AI answer key(s)')
     _ts_refresh.add_argument('--output-dir', '-o', required=True)
     _ts_refresh.add_argument('--framework', default=None)
+    _ts_refresh.add_argument('--all', action='store_true',
+                             help='Refresh all testsets (the default behavior; '
+                                  'accepted for symmetry with `cv refresh --all`)')
     _ts_refresh.add_argument('--force', '--yes', '-y', dest='force', action='store_true',
                              help="Regenerate an AI key even if a segment's text no longer "
                                   "matches the frozen human worksheet (--yes is a deprecated alias)")
@@ -2401,11 +2567,68 @@ Examples:
     edit_anon_parser.add_argument('--yes', '-y', action='store_true',
                                   help='Skip interactive confirmation prompt')
 
-    return parser, testset_parser, cv_parser
+    # ---- gnn (subcommand group) ----
+    gnn_parser = subparsers.add_parser(
+        'gnn',
+        help='GNN consensus layer: train / classify (LLM-free) / status',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Run the GNN representation-and-consensus layer as modular steps:\n\n'
+            '  gnn train     Train the graph, run the reliability gate, and write\n'
+            '                GNN reports + the consensus overlay. Works on a project\n'
+            '                that previously ran only LLM consensus (adds the GNN).\n'
+            '  gnn classify  LLM-free scale-mode classification of new/unlabeled\n'
+            '                segments with the already-trained graph (no LLM calls).\n'
+            '  gnn status    Print the reliability-gate verdict (kappa vs LLM;\n'
+            '                "ready for LLM-free scaling?").\n'
+        ),
+    )
+    gnn_sub = gnn_parser.add_subparsers(dest='gnn_command')
+
+    _gnn_train = gnn_sub.add_parser(
+        'train', help='Train the graph + reliability gate + reports (force-enables the GNN)')
+    _gnn_train.add_argument('--output-dir', '-o', required=True)
+    _gnn_train.add_argument('--config', '-c', default=None)
+    _gnn_train.add_argument('--force-ballots', action='store_true',
+                            help='Skip the multi-run-ballot pre-flight check')
+
+    _gnn_classify = gnn_sub.add_parser(
+        'classify', help='LLM-free scale-mode classification with the trained graph')
+    _gnn_classify.add_argument('--output-dir', '-o', required=True)
+    _gnn_classify.add_argument('--config', '-c', default=None)
+    _gnn_classify.add_argument('--framework', default=None)
+    _gnn_classify.add_argument('--all-segments', action='store_true',
+                               help='(Re)label every segment, not only those lacking an LLM label')
+    _gnn_classify.add_argument('--no-downstream', action='store_true',
+                               help='Skip the automatic assemble + analyze afterward')
+
+    _gnn_status = gnn_sub.add_parser(
+        'status', help='Print the reliability-gate verdict (kappa vs LLM; ready for scaling?)')
+    _gnn_status.add_argument('--output-dir', '-o', required=True)
+    _gnn_status.add_argument('--json', action='store_true', help='Emit the raw verdict JSON')
+
+    # ---- migrate ----
+    migrate_parser = subparsers.add_parser(
+        'migrate',
+        help='Import a legacy JSONL project into qra.db (preview by default)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Import a pre-SQLite (JSONL-on-disk) project into the per-project qra.db\n'
+            'store. Preview by default; pass --run to perform it. Non-destructive:\n'
+            'originals are relocated to <output-dir>/_legacy_files/.\n\n'
+            'Auto-runs on the first `qra ingest`/`qra run` of a legacy project too;\n'
+            'this command makes it explicit and previewable.'
+        ),
+    )
+    migrate_parser.add_argument('--output-dir', '-o', required=True)
+    migrate_parser.add_argument('--run', action='store_true',
+                                help='Perform the migration (default: non-destructive preview)')
+
+    return parser, testset_parser, cv_parser, gnn_parser
 
 
 def main():
-    parser, testset_parser, cv_parser = _build_parser()
+    parser, testset_parser, cv_parser, gnn_parser = _build_parser()
     args = parser.parse_args()
 
     if args.command is None:
@@ -2448,6 +2671,17 @@ def main():
                 cmd_cv_list(args)
             else:
                 cv_parser.print_help()
+        elif args.command == 'gnn':
+            if getattr(args, 'gnn_command', None) == 'train':
+                cmd_gnn_train(args)
+            elif args.gnn_command == 'classify':
+                cmd_gnn_classify(args)
+            elif args.gnn_command == 'status':
+                cmd_gnn_status(args)
+            else:
+                gnn_parser.print_help()
+        elif args.command == 'migrate':
+            cmd_migrate(args)
         elif args.command == 'reclassify-run':
             cmd_reclassify_run(args)
         elif args.command == 'apply-anonymization':

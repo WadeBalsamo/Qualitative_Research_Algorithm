@@ -491,6 +491,20 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
     if df_all is not None and _gnn_cfg is not None and _gnn_enabled:
         try:
             from gnn_layer.runner import run_gnn_analysis
+            # Multi-run-ballot pre-flight: the GNN's consensus targets come from
+            # per-segment rater ballots; a single-run LLM project trains on one-hot
+            # labels and the gate κ is unreliable. Warn (non-blocking) here; the
+            # dedicated `qra gnn train` path can hard-stop instead.
+            try:
+                from gnn_layer.soft_labels import ballot_coverage
+                _cov = ballot_coverage(df_all)
+                if _cov['n_participant'] and _cov['multirun_fraction'] < 0.5:
+                    log(f"[11/8] GNN: only {round(100 * _cov['multirun_fraction'])}% of "
+                        "participant segments carry multi-run LLM ballots — weak training "
+                        "signal; the reliability gate κ may be optimistic/unreliable "
+                        "(re-run VAAMR with n_runs >= 3 for a trustworthy gate).")
+            except Exception:
+                pass
             log("[11/8] Running GNN representation-and-discovery layer...")
             gnn_result = run_gnn_analysis(
                 df_all, output_dir, framework=framework, config=_gnn_cfg, llm_client=llm_client,
