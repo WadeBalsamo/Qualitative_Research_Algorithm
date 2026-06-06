@@ -55,25 +55,33 @@ class TestCreateFrozenContentValidityTestset(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_creates_all_artifacts_for_vaamr(self):
-        from process.assembly.content_validity import create_frozen_content_validity_testset
+        from process.assembly.content_validity import (
+            create_frozen_content_validity_testset, read_cv_manifest, read_cv_items,
+        )
         framework = _make_mini_framework()
         create_frozen_content_validity_testset(
             framework, self.tmpdir, name='cv_vaamr_v1', kind='vaamr',
         )
-        self.assertTrue(os.path.isfile(_paths.cv_testset_manifest_path(self.tmpdir, 'cv_vaamr_v1')))
-        self.assertTrue(os.path.isfile(_paths.cv_testset_items_path(self.tmpdir, 'cv_vaamr_v1')))
+        # manifest + items now live in qra.db, not manifest.json / items.jsonl
+        self.assertIsNotNone(read_cv_manifest(self.tmpdir, 'cv_vaamr_v1'))
+        self.assertTrue(read_cv_items(self.tmpdir, 'cv_vaamr_v1'))
+        # the .txt human-facing artifacts stay on disk
         self.assertTrue(os.path.isfile(_paths.cv_testset_human_worksheet_path(self.tmpdir, 'cv_vaamr_v1')))
         self.assertTrue(os.path.isfile(_paths.cv_testset_definition_key_path(self.tmpdir, 'cv_vaamr_v1')))
         self.assertTrue(os.path.isfile(_paths.cv_testset_answer_key_path(self.tmpdir, 'cv_vaamr_v1')))
 
     def test_creates_all_artifacts_for_purer(self):
-        from process.assembly.content_validity import create_frozen_content_validity_testset
+        from process.assembly.content_validity import (
+            create_frozen_content_validity_testset, read_cv_manifest, read_cv_items,
+        )
         framework = _make_mini_framework(name='PURER')
         create_frozen_content_validity_testset(
             framework, self.tmpdir, name='cv_purer_v1', kind='purer',
         )
-        self.assertTrue(os.path.isfile(_paths.cv_testset_manifest_path(self.tmpdir, 'cv_purer_v1')))
-        self.assertTrue(os.path.isfile(_paths.cv_testset_items_path(self.tmpdir, 'cv_purer_v1')))
+        # manifest + items now live in qra.db, not manifest.json / items.jsonl
+        self.assertIsNotNone(read_cv_manifest(self.tmpdir, 'cv_purer_v1'))
+        self.assertTrue(read_cv_items(self.tmpdir, 'cv_purer_v1'))
+        # the .txt human-facing artifacts stay on disk
         self.assertTrue(os.path.isfile(_paths.cv_testset_human_worksheet_path(self.tmpdir, 'cv_purer_v1')))
         self.assertTrue(os.path.isfile(_paths.cv_testset_definition_key_path(self.tmpdir, 'cv_purer_v1')))
         self.assertTrue(os.path.isfile(_paths.cv_testset_answer_key_path(self.tmpdir, 'cv_purer_v1')))
@@ -104,13 +112,14 @@ class TestCreateFrozenContentValidityTestset(unittest.TestCase):
         self.assertNotEqual(os.path.getmtime(ws_path), mtime_before)
 
     def test_manifest_has_required_fields(self):
-        from process.assembly.content_validity import create_frozen_content_validity_testset
+        from process.assembly.content_validity import (
+            create_frozen_content_validity_testset, read_cv_manifest,
+        )
         framework = _make_mini_framework()
         create_frozen_content_validity_testset(
             framework, self.tmpdir, name='cv_vaamr_v1', kind='vaamr',
         )
-        with open(_paths.cv_testset_manifest_path(self.tmpdir, 'cv_vaamr_v1')) as f:
-            m = json.load(f)
+        m = read_cv_manifest(self.tmpdir, 'cv_vaamr_v1')
         self.assertEqual(m['kind'], 'vaamr')
         self.assertIn('framework', m)
         self.assertEqual(m['framework']['name'], 'TESTFW')
@@ -119,16 +128,14 @@ class TestCreateFrozenContentValidityTestset(unittest.TestCase):
         self.assertIn('created_at', m)
 
     def test_items_jsonl_has_correct_fields(self):
-        from process.assembly.content_validity import create_frozen_content_validity_testset
+        from process.assembly.content_validity import (
+            create_frozen_content_validity_testset, read_cv_items,
+        )
         framework = _make_mini_framework(n_themes=2)  # 2 themes × 3 tiers × 1 utterance = 6 items
         create_frozen_content_validity_testset(
             framework, self.tmpdir, name='cv_vaamr_v1', kind='vaamr',
         )
-        items = []
-        with open(_paths.cv_testset_items_path(self.tmpdir, 'cv_vaamr_v1')) as f:
-            for line in f:
-                if line.strip():
-                    items.append(json.loads(line))
+        items = read_cv_items(self.tmpdir, 'cv_vaamr_v1')
         self.assertEqual(len(items), 6)  # 2 themes × 3 utterances each
         required_fields = {'id', 'text', 'expected_stage', 'difficulty', 'source_field', 'content_sha256'}
         for item in items:
@@ -199,32 +206,57 @@ class TestRefreshCvAnswerKey(unittest.TestCase):
         self.assertNotEqual(os.path.getmtime(ai_path), mtime_before)
 
     def test_refresh_does_not_touch_frozen_files(self):
-        from process.assembly.content_validity import refresh_cv_answer_key
+        # The frozen things are now the .txt worksheet/definition key on disk
+        # plus the cv_testsets / cv_testset_items DB rows; refresh must only
+        # rewrite AI_answer_key.txt.
+        from process.assembly.content_validity import refresh_cv_answer_key, read_cv_manifest
+        from process import db
         ws_path = _paths.cv_testset_human_worksheet_path(self.tmpdir, 'cv_vaamr_v1')
         dk_path = _paths.cv_testset_definition_key_path(self.tmpdir, 'cv_vaamr_v1')
-        manifest_path = _paths.cv_testset_manifest_path(self.tmpdir, 'cv_vaamr_v1')
+        ai_path = _paths.cv_testset_answer_key_path(self.tmpdir, 'cv_vaamr_v1')
         ws_mtime = os.path.getmtime(ws_path)
         dk_mtime = os.path.getmtime(dk_path)
-        manifest_mtime = os.path.getmtime(manifest_path)
+        ai_mtime = os.path.getmtime(ai_path)
+        manifest_before = read_cv_manifest(self.tmpdir, 'cv_vaamr_v1')
+        with db.open_db(self.tmpdir) as c:
+            created_at_before = c.execute(
+                "SELECT created_at FROM cv_testsets WHERE name = ?",
+                ('cv_vaamr_v1',),
+            ).fetchone()['created_at']
         time.sleep(0.05)
         refresh_cv_answer_key(self.tmpdir, 'cv_vaamr_v1', None, self.framework)
+        # Frozen .txt artifacts untouched
         self.assertEqual(os.path.getmtime(ws_path), ws_mtime)
         self.assertEqual(os.path.getmtime(dk_path), dk_mtime)
-        self.assertEqual(os.path.getmtime(manifest_path), manifest_mtime)
+        # AI answer key rewritten
+        self.assertNotEqual(os.path.getmtime(ai_path), ai_mtime)
+        # Frozen DB rows (manifest + created_at) untouched
+        self.assertEqual(read_cv_manifest(self.tmpdir, 'cv_vaamr_v1'), manifest_before)
+        with db.open_db(self.tmpdir) as c:
+            created_at_after = c.execute(
+                "SELECT created_at FROM cv_testsets WHERE name = ?",
+                ('cv_vaamr_v1',),
+            ).fetchone()['created_at']
+        self.assertEqual(created_at_after, created_at_before)
 
     def test_refresh_detects_item_drift(self):
-        """If an item's text changes in items.jsonl, refresh should raise FrozenArtifactError."""
+        """If an item's text drifts from its stored content_sha256, refresh should
+        raise FrozenArtifactError."""
         from process.assembly.content_validity import refresh_cv_answer_key
-        # Tamper with items.jsonl — change one item's text
-        items_path = _paths.cv_testset_items_path(self.tmpdir, 'cv_vaamr_v1')
-        with open(items_path, 'r') as f:
-            lines = f.readlines()
-        # Modify first item's text
-        first = json.loads(lines[0])
-        first['text'] = 'TAMPERED TEXT THAT IS DIFFERENT'
-        lines[0] = json.dumps(first) + '\n'
-        with open(items_path, 'w') as f:
-            f.writelines(lines)
+        from process import db
+        # Tamper with the stored item text in the DB — changing text but NOT
+        # content_sha256, so the SHA check detects drift.
+        with db.open_db(self.tmpdir) as c:
+            first_id = c.execute(
+                "SELECT item_id FROM cv_testset_items WHERE testset_name = ? "
+                "ORDER BY ord LIMIT 1",
+                ('cv_vaamr_v1',),
+            ).fetchone()['item_id']
+            c.execute(
+                "UPDATE cv_testset_items SET text = ? "
+                "WHERE testset_name = ? AND item_id = ?",
+                ('TAMPERED TEXT THAT IS DIFFERENT', 'cv_vaamr_v1', first_id),
+            )
         with self.assertRaises(FrozenArtifactError):
             refresh_cv_answer_key(self.tmpdir, 'cv_vaamr_v1', None, self.framework)
 
@@ -276,7 +308,9 @@ class TestGenerateOrRefreshCVCoordinator(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_creates_on_first_call(self):
-        from process.assembly.content_validity import generate_or_refresh_content_validity_testsets
+        from process.assembly.content_validity import (
+            generate_or_refresh_content_validity_testsets, read_cv_manifest,
+        )
         from process.config import ContentValidityConfig, ContentValiditySpec
         fw = _make_mini_framework()
         cv_cfg = ContentValidityConfig(
@@ -291,7 +325,7 @@ class TestGenerateOrRefreshCVCoordinator(unittest.TestCase):
             theme_classification_cfg=None,
         )
         self.assertEqual(len(dirs), 1)
-        self.assertTrue(os.path.isfile(_paths.cv_testset_manifest_path(self.tmpdir, 'cv_vaamr_v1')))
+        self.assertIsNotNone(read_cv_manifest(self.tmpdir, 'cv_vaamr_v1'))
 
     def test_refreshes_on_second_call(self):
         from process.assembly.content_validity import generate_or_refresh_content_validity_testsets
@@ -315,7 +349,9 @@ class TestGenerateOrRefreshCVCoordinator(unittest.TestCase):
         self.assertEqual(os.path.getmtime(ws_path), ws_mtime)
 
     def test_creates_both_when_both_enabled(self):
-        from process.assembly.content_validity import generate_or_refresh_content_validity_testsets
+        from process.assembly.content_validity import (
+            generate_or_refresh_content_validity_testsets, read_cv_manifest,
+        )
         from process.config import ContentValidityConfig, ContentValiditySpec
         fw_vaamr = _make_mini_framework(name='VAAMR')
         fw_purer = _make_mini_framework(name='PURER')
@@ -329,8 +365,8 @@ class TestGenerateOrRefreshCVCoordinator(unittest.TestCase):
             theme_classification_cfg=None,
         )
         self.assertEqual(len(dirs), 2)
-        self.assertTrue(os.path.isfile(_paths.cv_testset_manifest_path(self.tmpdir, 'cv_vaamr_v1')))
-        self.assertTrue(os.path.isfile(_paths.cv_testset_manifest_path(self.tmpdir, 'cv_purer_v1')))
+        self.assertIsNotNone(read_cv_manifest(self.tmpdir, 'cv_vaamr_v1'))
+        self.assertIsNotNone(read_cv_manifest(self.tmpdir, 'cv_purer_v1'))
 
     def test_any_enabled_false_when_both_disabled(self):
         from process.config import ContentValidityConfig, ContentValiditySpec

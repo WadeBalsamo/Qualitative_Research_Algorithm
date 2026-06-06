@@ -9,19 +9,20 @@ utterances in codebook codes yet).
 
 On-disk layout:
   04_validation/content_validity/<name>/
-    manifest.json        (frozen)
-    items.jsonl          (frozen)
     human_worksheet.txt  (frozen)
     definition_key.txt   (frozen)
     AI_answer_key.txt    (refreshable)
+
+The frozen testset metadata + items (formerly manifest.json + items.jsonl)
+now live in the project's qra.db (cv_testsets / cv_testset_items tables).
 """
 
 import datetime
-import json
 import os
 import textwrap
 from typing import Dict, List, Optional
 
+from process import db
 from process import output_paths as _paths
 from process._freeze import FrozenArtifactError, sha256_text, write_frozen
 
@@ -42,9 +43,11 @@ def create_frozen_content_validity_testset(
     force: bool = False,
 ) -> str:
     """
-    Build items from framework exemplar/subtle/adversarial utterances, then write:
-      manifest.json, items.jsonl, human_worksheet.txt, definition_key.txt  (frozen)
-      AI_answer_key.txt                                                      (refreshable)
+    Build items from framework exemplar/subtle/adversarial utterances, then:
+      - persist the testset metadata + items to qra.db
+        (cv_testsets / cv_testset_items)                                     (frozen)
+      - write human_worksheet.txt, definition_key.txt                        (frozen)
+      - write AI_answer_key.txt                                              (refreshable)
 
     kind must be 'vaamr' or 'purer'. Raises NotImplementedError for 'codebook'
     (no exemplar utterances in codebook codes yet).
@@ -59,40 +62,47 @@ def create_frozen_content_validity_testset(
             "Populate CodeDefinition.exemplar_utterances first."
         )
 
-    ws_path = _paths.cv_testset_human_worksheet_path(run_dir, name)
-    if not force and os.path.exists(ws_path):
-        raise FrozenArtifactError(
-            f"Content-validity testset {name!r} already exists at {ws_path}. "
-            "Pass force=True to overwrite."
-        )
+    with db.open_db(run_dir) as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM cv_testsets WHERE name = ?", (name,)
+        ).fetchone() is not None
+        if exists and not force:
+            raise FrozenArtifactError(
+                f"Content-validity testset {name!r} already exists. "
+                "Pass force=True to overwrite."
+            )
 
     items = _enumerate_items(framework)
     testset_dir = _paths.cv_testset_dir(run_dir, name)
     os.makedirs(testset_dir, exist_ok=True)
 
     fw_name = getattr(framework, 'name', kind)
-    fw_version = getattr(framework, 'version', '1')
+    fw_version = str(getattr(framework, 'version', '1'))
     now_iso = datetime.datetime.utcnow().isoformat() + 'Z'
 
-    manifest = {
-        'kind': kind,
-        'name': name,
-        'framework': {'name': fw_name, 'version': fw_version},
-        'item_ids': [item['id'] for item in items],
-        'content_sha256': {item['id']: sha256_text(item['text']) for item in items},
-        'created_at': now_iso,
-    }
+    with db.open_db(run_dir) as conn:
+        if force:
+            conn.execute(
+                "DELETE FROM cv_testset_items WHERE testset_name = ?", (name,)
+            )
+            conn.execute("DELETE FROM cv_testsets WHERE name = ?", (name,))
+        conn.execute(
+            "INSERT INTO cv_testsets "
+            "(name, kind, framework_name, framework_version, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, kind, fw_name, fw_version, now_iso),
+        )
+        for i, item in enumerate(items):
+            conn.execute(
+                "INSERT INTO cv_testset_items "
+                "(testset_name, item_id, ord, text, expected_stage, "
+                "difficulty, source_field, content_sha256) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (name, item['id'], i, item['text'], item['expected_stage'],
+                 item['difficulty'], item['source_field'], item['content_sha256']),
+            )
 
-    write_frozen(
-        _paths.cv_testset_manifest_path(run_dir, name),
-        lambda fh: json.dump(manifest, fh, indent=2),
-        force=force,
-    )
-    write_frozen(
-        _paths.cv_testset_items_path(run_dir, name),
-        lambda fh: _write_items_jsonl(fh, items),
-        force=force,
-    )
+    ws_path = _paths.cv_testset_human_worksheet_path(run_dir, name)
     write_frozen(
         ws_path,
         lambda fh: _write_cv_human_worksheet(fh, items, framework),
@@ -118,30 +128,50 @@ def refresh_cv_answer_key(
     """
     Re-emit AI_answer_key.txt for an existing content-validity testset.
 
-    Reads manifest and items.jsonl. Verifies each item's text SHA-256 against
-    the manifest (raises FrozenArtifactError if any item text has drifted).
-    Writes a new AI_answer_key.txt. Touches no frozen files.
+    Reads the testset metadata + items from qra.db. Verifies each item's text
+    SHA-256 against the stored content_sha256 (raises FrozenArtifactError if any
+    item text has drifted). Writes a new AI_answer_key.txt. Touches no frozen
+    files.
 
     Returns the path to the updated AI_answer_key.txt.
+    Raises FileNotFoundError if the testset does not exist in the DB.
     """
-    manifest_path = _paths.cv_testset_manifest_path(run_dir, name)
-    items_path = _paths.cv_testset_items_path(run_dir, name)
+    if not db.db_exists(run_dir):
+        raise FileNotFoundError(
+            f"Content-validity testset {name!r}: no project database found."
+        )
 
-    with open(manifest_path, encoding='utf-8') as fh:
-        manifest = json.load(fh)
+    with db.open_db(run_dir) as conn:
+        ts_row = conn.execute(
+            "SELECT 1 FROM cv_testsets WHERE name = ?", (name,)
+        ).fetchone()
+        if ts_row is None:
+            raise FileNotFoundError(
+                f"Content-validity testset {name!r} not found in project database."
+            )
+        rows = conn.execute(
+            "SELECT item_id, text, expected_stage, difficulty, source_field, "
+            "content_sha256 FROM cv_testset_items WHERE testset_name = ? "
+            "ORDER BY ord",
+            (name,),
+        ).fetchall()
 
-    stored_sha = manifest.get('content_sha256', {})
-    items = []
-    with open(items_path, encoding='utf-8') as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                items.append(json.loads(line))
+    items = [
+        {
+            'id': r['item_id'],
+            'text': r['text'],
+            'expected_stage': r['expected_stage'],
+            'difficulty': r['difficulty'],
+            'source_field': r['source_field'],
+            'content_sha256': r['content_sha256'],
+        }
+        for r in rows
+    ]
 
     drifted = []
     for item in items:
         item_id = item['id']
-        expected_sha = stored_sha.get(item_id, '')
+        expected_sha = item['content_sha256'] or ''
         if sha256_text(item['text']) != expected_sha:
             drifted.append(item_id)
 
@@ -158,36 +188,107 @@ def refresh_cv_answer_key(
 
 def list_content_validity_testsets(run_dir: str) -> List[dict]:
     """
-    Return one summary dict per content_validity/<name>/ folder.
+    Return one summary dict per content-validity testset in qra.db.
 
     Each dict has: name, kind, framework (name + version), n_items, created_at.
-    Returns empty list if no content_validity directory exists.
+    Returns empty list if no project database exists.
     """
-    cv_root = _paths.cv_testsets_dir(run_dir)
-    if not os.path.isdir(cv_root):
+    if not db.db_exists(run_dir):
         return []
 
     results = []
-    for entry in sorted(os.scandir(cv_root), key=lambda e: e.name):
-        if not entry.is_dir():
-            continue
-        manifest_path = os.path.join(entry.path, 'manifest.json')
-        if not os.path.isfile(manifest_path):
-            continue
-        try:
-            with open(manifest_path, encoding='utf-8') as fh:
-                m = json.load(fh)
+    with db.open_db(run_dir) as conn:
+        ts_rows = conn.execute(
+            "SELECT name, kind, framework_name, framework_version, created_at "
+            "FROM cv_testsets ORDER BY name"
+        ).fetchall()
+        for r in ts_rows:
+            n_items = conn.execute(
+                "SELECT COUNT(*) AS n FROM cv_testset_items WHERE testset_name = ?",
+                (r['name'],),
+            ).fetchone()['n']
             results.append({
-                'name': m.get('name', entry.name),
-                'kind': m.get('kind', '?'),
-                'framework': m.get('framework', {}),
-                'n_items': len(m.get('item_ids', [])),
-                'created_at': m.get('created_at', '?'),
+                'name': r['name'],
+                'kind': r['kind'],
+                'framework': {
+                    'name': r['framework_name'],
+                    'version': r['framework_version'],
+                },
+                'n_items': n_items,
+                'created_at': r['created_at'],
             })
-        except Exception:
-            continue
 
     return results
+
+
+def read_cv_manifest(run_dir: str, name: str) -> Optional[dict]:
+    """
+    Rebuild the legacy manifest.json shape for a content-validity testset from
+    the DB rows (for tests / back-compat).
+
+    Returns a dict with keys: kind, name, framework{name,version}, item_ids,
+    content_sha256{id:sha}, created_at — or None if the testset is absent.
+    """
+    if not db.db_exists(run_dir):
+        return None
+
+    with db.open_db(run_dir) as conn:
+        ts_row = conn.execute(
+            "SELECT name, kind, framework_name, framework_version, created_at "
+            "FROM cv_testsets WHERE name = ?",
+            (name,),
+        ).fetchone()
+        if ts_row is None:
+            return None
+        item_rows = conn.execute(
+            "SELECT item_id, content_sha256 FROM cv_testset_items "
+            "WHERE testset_name = ? ORDER BY ord",
+            (name,),
+        ).fetchall()
+
+    return {
+        'kind': ts_row['kind'],
+        'name': ts_row['name'],
+        'framework': {
+            'name': ts_row['framework_name'],
+            'version': ts_row['framework_version'],
+        },
+        'item_ids': [r['item_id'] for r in item_rows],
+        'content_sha256': {r['item_id']: r['content_sha256'] for r in item_rows},
+        'created_at': ts_row['created_at'],
+    }
+
+
+def read_cv_items(run_dir: str, name: str) -> List[dict]:
+    """
+    Return the content-validity item dicts for a testset (for tests /
+    back-compat), each with keys
+    {id,text,expected_stage,difficulty,source_field,content_sha256}.
+
+    Returns [] if the project DB or testset is absent.
+    """
+    if not db.db_exists(run_dir):
+        return []
+
+    with db.open_db(run_dir) as conn:
+        rows = conn.execute(
+            "SELECT item_id, text, expected_stage, difficulty, source_field, "
+            "content_sha256 FROM cv_testset_items WHERE testset_name = ? "
+            "ORDER BY ord",
+            (name,),
+        ).fetchall()
+
+    return [
+        {
+            'id': r['item_id'],
+            'text': r['text'],
+            'expected_stage': r['expected_stage'],
+            'difficulty': r['difficulty'],
+            'source_field': r['source_field'],
+            'content_sha256': r['content_sha256'],
+        }
+        for r in rows
+    ]
 
 
 def generate_or_refresh_content_validity_testsets(
@@ -225,9 +326,14 @@ def generate_or_refresh_content_validity_testsets(
             continue
 
         name = spec.name
-        manifest_path = _paths.cv_testset_manifest_path(run_dir, name)
+        exists = False
+        if db.db_exists(run_dir):
+            with db.open_db(run_dir) as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM cv_testsets WHERE name = ?", (name,)
+                ).fetchone() is not None
 
-        if os.path.isfile(manifest_path):
+        if exists:
             refresh_cv_answer_key(run_dir, name, theme_classification_cfg, framework)
         elif create_missing:
             create_frozen_content_validity_testset(
@@ -272,11 +378,6 @@ def _enumerate_items(framework) -> List[dict]:
                 })
                 item_idx += 1
     return items
-
-
-def _write_items_jsonl(fh, items: List[dict]) -> None:
-    for item in items:
-        fh.write(json.dumps(item) + '\n')
 
 
 def _write_cv_human_worksheet(fh, items: List[dict], framework) -> None:

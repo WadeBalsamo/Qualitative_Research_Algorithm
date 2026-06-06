@@ -889,8 +889,7 @@ class TestOverlayIOBehavior(unittest.TestCase):
 
         cio.write_theme_overlay(self.tmpdir, segs)
 
-        with open(cio.overlay_path(self.tmpdir, 'theme')) as f:
-            ids = [json.loads(line)['segment_id'] for line in f if line.strip()]
+        ids = [r['segment_id'] for r in cio.read_overlay(self.tmpdir, 'theme')]
         self.assertEqual(ids, sorted(ids))
 
     def test_apply_missing_overlay_is_noop(self):
@@ -1102,8 +1101,10 @@ class TestStageFunctionsWithPreClassifiedSegments(unittest.TestCase):
                                        output_dir=self.tmpdir)
 
         from process import classifications_io as cio
-        overlay = cio.overlay_path(self.tmpdir, 'theme')
-        self.assertTrue(os.path.isfile(overlay))
+        self.assertTrue(cio.overlay_exists(self.tmpdir, 'theme'))
+        rows = cio.read_overlay(self.tmpdir, 'theme')
+        self.assertEqual([r['segment_id'] for r in rows], ['seg_001'])
+        self.assertEqual(rows[0]['primary_stage'], 3)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].primary_stage, 3)
 
@@ -1120,8 +1121,10 @@ class TestStageFunctionsWithPreClassifiedSegments(unittest.TestCase):
                                        output_dir=self.tmpdir)
 
         from process import classifications_io as cio
-        overlay = cio.overlay_path(self.tmpdir, 'purer')
-        self.assertTrue(os.path.isfile(overlay))
+        self.assertTrue(cio.overlay_exists(self.tmpdir, 'purer'))
+        rows = cio.read_overlay(self.tmpdir, 'purer')
+        self.assertEqual([r['segment_id'] for r in rows], ['th_001'])
+        self.assertEqual(rows[0]['purer_primary'], 1)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].purer_primary, 1)
 
@@ -1137,8 +1140,10 @@ class TestStageFunctionsWithPreClassifiedSegments(unittest.TestCase):
                                           output_dir=self.tmpdir)
 
         from process import classifications_io as cio
-        overlay = cio.overlay_path(self.tmpdir, 'codebook')
-        self.assertTrue(os.path.isfile(overlay))
+        self.assertTrue(cio.overlay_exists(self.tmpdir, 'codebook'))
+        rows = cio.read_overlay(self.tmpdir, 'codebook')
+        self.assertEqual([r['segment_id'] for r in rows], ['seg_002'])
+        self.assertEqual(rows[0]['codebook_labels_ensemble'], ['VA.1', 'AT.2'])
 
     def test_stage_assemble_returns_dataframe(self):
         """stage_assemble with config=None returns pd.DataFrame."""
@@ -1185,8 +1190,8 @@ class TestStageFunctionsWithPreClassifiedSegments(unittest.TestCase):
                                          output_dir=self.tmpdir)
 
         from process import classifications_io as cio
-        overlay = cio.overlay_path(self.tmpdir, 'cv')
-        self.assertTrue(os.path.isfile(overlay))
+        self.assertTrue(cio.overlay_exists(self.tmpdir, 'cv'))
+        self.assertGreater(len(cio.read_overlay(self.tmpdir, 'cv')), 0)
         self.assertEqual(len(result), 1)
 
 

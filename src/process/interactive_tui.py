@@ -120,30 +120,32 @@ def _detect_state(output_dir: str) -> dict:
     """
     Return a dict describing what exists in `output_dir`:
       is_legacy        bool  master_segments.jsonl but no 01_transcripts/segmented/
-      has_segments     bool  frozen per-session segments exist
-      has_theme        bool  02_meta/classifications/theme_labels.jsonl exists
-      has_purer        bool  02_meta/classifications/purer_labels.jsonl exists
-      has_codebook     bool  02_meta/classifications/codebook_labels.jsonl exists
-      has_master       bool  master_segments*.jsonl exists
+      has_segments     bool  frozen per-session segments exist (SQLite-backed)
+      has_theme        bool  theme overlay exists in qra.db (SQLite-backed)
+      has_purer        bool  purer overlay exists in qra.db (SQLite-backed)
+      has_codebook     bool  codebook overlay exists in qra.db (SQLite-backed)
+      has_master       bool  master_segments*.csv exists
       has_testsets     list  names of frozen testsets in 04_validation/testsets/
       has_cv_testsets  list  names of content-validity testsets
       has_analysis     bool  03_analysis_data/ non-empty
       config_path      str|None  path to qra_config.json if found
     """
     from . import output_paths as _paths
+    from . import segments_io
+    from . import classifications_io
     from .legacy_migration import is_legacy_project
     import glob
 
     def _dir_non_empty(p: str) -> bool:
         return os.path.isdir(p) and bool(os.listdir(p))
 
-    has_segments = _dir_non_empty(_paths.segmented_sessions_dir(output_dir))
-    has_theme = os.path.isfile(_paths.classification_overlay_path(output_dir, 'theme'))
-    has_purer = os.path.isfile(_paths.classification_overlay_path(output_dir, 'purer'))
-    has_codebook = os.path.isfile(_paths.classification_overlay_path(output_dir, 'codebook'))
+    has_segments = bool(segments_io.list_segmented_sessions(output_dir))
+    has_theme = classifications_io.overlay_exists(output_dir, 'theme')
+    has_purer = classifications_io.overlay_exists(output_dir, 'purer')
+    has_codebook = classifications_io.overlay_exists(output_dir, 'codebook')
 
     ms_dir = _paths.master_segments_dir(output_dir)
-    has_master = bool(glob.glob(os.path.join(ms_dir, 'master_segments*.jsonl')))
+    has_master = bool(glob.glob(os.path.join(ms_dir, 'master_segments*.csv')))
 
     # Testsets — flat numbered worksheets
     import re as _re
@@ -157,13 +159,14 @@ def _detect_state(output_dir: str) -> dict:
                 has_testsets.append(int(m.group(1)))
 
     # Content-validity testsets
-    cv_dir = _paths.cv_testsets_dir(output_dir)
     has_cv_testsets: list = []
-    if os.path.isdir(cv_dir):
-        for name in sorted(os.listdir(cv_dir)):
-            manifest = os.path.join(cv_dir, name, 'manifest.json')
-            if os.path.isfile(manifest):
-                has_cv_testsets.append(name)
+    try:
+        from .assembly.content_validity import list_content_validity_testsets
+        has_cv_testsets = sorted(
+            t['name'] for t in list_content_validity_testsets(output_dir)
+        )
+    except Exception:
+        has_cv_testsets = []
 
     has_analysis = _dir_non_empty(_paths.analysis_data_dir(output_dir))
     gnn_status = _gnn_status(output_dir)

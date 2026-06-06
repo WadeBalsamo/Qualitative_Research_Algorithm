@@ -334,13 +334,15 @@ class TestConfidenceTiering(unittest.TestCase):
         self.assertEqual(tiers['pl'], 'low')
 
 
-class TestDualOutputFiles(unittest.TestCase):
-    """assemble_master_dataset writes both .jsonl and .csv, and rows roundtrip."""
+class TestCsvOutput(unittest.TestCase):
+    """assemble_master_dataset writes a single CSV to output_path, and rows roundtrip."""
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.jsonl_path = os.path.join(self.tmpdir, 'master_segments.jsonl')
+        # assemble_master_dataset now writes ONLY a CSV to the output_path passed.
         self.csv_path = os.path.join(self.tmpdir, 'master_segments.csv')
+        # The JSONL artifact is no longer written; track its path to assert absence.
+        self.jsonl_path = os.path.join(self.tmpdir, 'master_segments.jsonl')
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -352,65 +354,66 @@ class TestDualOutputFiles(unittest.TestCase):
         return [p, t]
 
     def test_jsonl_file_written(self):
-        assemble_master_dataset(self._build_segments(), self.jsonl_path)
-        self.assertTrue(os.path.isfile(self.jsonl_path),
-                        'master_segments.jsonl was not created')
+        # The legacy JSONL artifact is no longer written; only the CSV at output_path is.
+        assemble_master_dataset(self._build_segments(), self.csv_path)
+        self.assertFalse(os.path.isfile(self.jsonl_path),
+                         'master_segments.jsonl should no longer be created')
 
     def test_csv_file_written(self):
-        assemble_master_dataset(self._build_segments(), self.jsonl_path)
+        assemble_master_dataset(self._build_segments(), self.csv_path)
         self.assertTrue(os.path.isfile(self.csv_path),
                         'master_segments.csv was not created')
+        # The legacy JSONL artifact must NOT be written.
+        self.assertFalse(os.path.isfile(self.jsonl_path),
+                         'master_segments.jsonl should no longer be created')
 
     def test_jsonl_roundtrip_segment_ids(self):
-        assemble_master_dataset(self._build_segments(), self.jsonl_path)
-        ids = []
-        with open(self.jsonl_path, encoding='utf-8') as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    ids.append(json.loads(line)['segment_id'])
+        import pandas as pd
+        assemble_master_dataset(self._build_segments(), self.csv_path)
+        df = pd.read_csv(self.csv_path)
+        ids = df['segment_id'].tolist()
         self.assertIn('p1', ids)
         self.assertIn('t1', ids)
 
     def test_csv_roundtrip_segment_ids(self):
         import pandas as pd
-        assemble_master_dataset(self._build_segments(), self.jsonl_path)
+        assemble_master_dataset(self._build_segments(), self.csv_path)
         df = pd.read_csv(self.csv_path)
         self.assertIn('p1', df['segment_id'].tolist())
         self.assertIn('t1', df['segment_id'].tolist())
 
     def test_jsonl_contains_final_label(self):
-        assemble_master_dataset(self._build_segments(), self.jsonl_path)
-        records = {}
-        with open(self.jsonl_path, encoding='utf-8') as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    rec = json.loads(line)
-                    records[rec['segment_id']] = rec
-        self.assertEqual(records['p1']['final_label'], 2)
-        self.assertEqual(records['p1']['final_label_source'], 'llm_zero_shot')
-        self.assertEqual(records['t1']['purer_final'], 1)
+        import pandas as pd
+        assemble_master_dataset(self._build_segments(), self.csv_path)
+        df = pd.read_csv(self.csv_path).set_index('segment_id')
+        self.assertEqual(df.loc['p1', 'final_label'], 2)
+        self.assertEqual(df.loc['p1', 'final_label_source'], 'llm_zero_shot')
+        self.assertEqual(df.loc['t1', 'purer_final'], 1)
 
     def test_returned_dataframe_matches_jsonl_row_count(self):
+        import pandas as pd
         segs = self._build_segments()
-        df = assemble_master_dataset(segs, self.jsonl_path)
-        lines = [l for l in open(self.jsonl_path) if l.strip()]
-        self.assertEqual(len(df), len(lines))
+        df = assemble_master_dataset(segs, self.csv_path)
+        csv_df = pd.read_csv(self.csv_path)
+        self.assertEqual(len(df), len(csv_df))
         self.assertEqual(len(df), len(segs))
 
     def test_empty_segment_list_produces_empty_files(self):
-        df = assemble_master_dataset([], self.jsonl_path)
-        self.assertTrue(os.path.isfile(self.jsonl_path))
+        import pandas as pd
+        df = assemble_master_dataset([], self.csv_path)
         self.assertTrue(os.path.isfile(self.csv_path))
         self.assertEqual(len(df), 0)
-        lines = [l for l in open(self.jsonl_path) if l.strip()]
-        self.assertEqual(len(lines), 0)
+        # Empty input -> headers-only / empty CSV (no data rows).
+        try:
+            csv_df = pd.read_csv(self.csv_path)
+        except pd.errors.EmptyDataError:
+            csv_df = pd.DataFrame()
+        self.assertEqual(len(csv_df), 0)
 
     def test_required_columns_present(self):
         """All expected output columns exist in the returned DataFrame."""
         segs = self._build_segments()
-        df = assemble_master_dataset(segs, self.jsonl_path)
+        df = assemble_master_dataset(segs, self.csv_path)
         required = [
             'segment_id', 'speaker', 'text',
             'primary_stage', 'purer_primary',

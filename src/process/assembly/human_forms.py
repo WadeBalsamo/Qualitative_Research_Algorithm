@@ -1,12 +1,12 @@
 """Export functions for validation test sets and review forms."""
 
-import json
 import os
 import textwrap
 from collections import defaultdict
 from typing import Dict, List, Optional
 
 from classification_tools.data_structures import Segment
+from .. import db
 from .. import output_paths as _paths
 from .._freeze import FrozenArtifactError, write_frozen
 from ._shared import _ms_to_hms, _fmt_conf, _theme_name_from
@@ -649,8 +649,8 @@ def create_frozen_testset(
         )
         _write_ai_testset(segs, framework, ai_path, set_index, n_sets, codebook_enabled)
 
-    # Write per-segment content SHA sidecar for drift detection on future refreshes
-    _write_testset_meta(run_dir, n, segs)
+    # Record per-segment content SHA in SQLite for drift detection on future refreshes
+    _write_testset_meta(run_dir, n, segs, kind=kind)
 
     return human_path
 
@@ -711,12 +711,18 @@ def refresh_testset_answer_key(
             f"{missing[:5]}" + (" (and more)" if len(missing) > 5 else "")
         )
 
-    # Validate segment content has not changed since testset was created
-    meta_path = _paths.testset_meta_path(run_dir, n)
-    if os.path.isfile(meta_path):
-        with open(meta_path, encoding='utf-8') as fh:
-            meta = json.load(fh)
-        by_key = {(e['session_id'], e['seg_num']): e['sha256'] for e in meta['segments']}
+    # Validate segment content has not changed since testset was created.
+    # Drift baseline comes from the testset_items table (was testset_meta/*.meta.json).
+    by_key: Dict[tuple, Optional[str]] = {}
+    if db.db_exists(run_dir):
+        with db.open_db(run_dir) as conn:
+            rows = conn.execute(
+                "SELECT session_id, seg_num, sha256 FROM testset_items "
+                "WHERE worksheet_n = ?",
+                (n,),
+            ).fetchall()
+        by_key = {(r['session_id'], r['seg_num']): r['sha256'] for r in rows}
+    if by_key:
         changed = []
         for seg in segs:
             key = (seg.session_id, seg.segment_index + 1)
@@ -791,12 +797,29 @@ _HEADER_RE = _re_module.compile(
 
 
 def _worksheet_is_legacy_import(meta_path: str) -> bool:
-    """True if a worksheet's .meta.json marks it as an imported legacy (validated) testset."""
-    try:
-        with open(meta_path, encoding='utf-8') as fh:
-            return bool(json.load(fh).get('legacy_import'))
-    except (OSError, ValueError):
+    """True if worksheet #N is an imported legacy (validated) testset.
+
+    Callers pass the legacy .meta.json path string (which no longer exists on
+    disk). We parse the worksheet number N out of the filename and read the
+    legacy_import flag from the testset_worksheets table. No DB / no row -> False.
+    """
+    import re as _re
+
+    m = _re.search(r'testset_worksheet_(\d+)', os.path.basename(meta_path))
+    if not m:
         return False
+    n = int(m.group(1))
+
+    # run_dir is three levels up: <run_dir>/02_meta/testset_meta/<file>.meta.json
+    run_dir = os.path.dirname(os.path.dirname(os.path.dirname(meta_path)))
+    if not run_dir or not db.db_exists(run_dir):
+        return False
+    with db.open_db(run_dir) as conn:
+        row = conn.execute(
+            "SELECT legacy_import FROM testset_worksheets WHERE worksheet_n = ?",
+            (n,),
+        ).fetchone()
+    return bool(row['legacy_import']) if row is not None else False
 
 
 def _sync_worksheet_header(path: str, n: int, n_total: int) -> None:
@@ -829,21 +852,77 @@ def _collect_used_segment_ids(run_dir: str) -> set:
     return used
 
 
-def _write_testset_meta(run_dir: str, n: int, segs: List[Segment]) -> None:
-    """Write per-segment SHA256 sidecar for human worksheet #n (under 02_meta)."""
+def _write_testset_meta(
+    run_dir: str, n: int, segs: List[Segment], kind: str = 'vaamr'
+) -> None:
+    """Record per-segment SHA256 metadata for human worksheet #n in SQLite.
+
+    Replaces the old testset_meta/*.meta.json sidecar: writes one
+    testset_worksheets row (frozen, not a legacy import) and one
+    testset_items row per segment within a single transaction.
+    """
+    import datetime as _dt
     import hashlib
-    meta = {'segments': [
-        {
-            'session_id': s.session_id,
-            'seg_num': s.segment_index + 1,
-            'sha256': hashlib.sha256(s.text.encode()).hexdigest(),
-        }
-        for s in segs
-    ]}
-    meta_path = _paths.testset_meta_path(run_dir, n)
-    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
-    with open(meta_path, 'w', encoding='utf-8') as fh:
-        json.dump(meta, fh, indent=2)
+
+    created_at = _dt.datetime.utcnow().isoformat() + 'Z'
+    with db.open_db(run_dir) as conn:
+        # Replace any existing rows for this worksheet number.
+        conn.execute("DELETE FROM testset_items WHERE worksheet_n = ?", (n,))
+        conn.execute("DELETE FROM testset_worksheets WHERE worksheet_n = ?", (n,))
+        conn.execute(
+            "INSERT INTO testset_worksheets "
+            "(worksheet_n, kind, name, created_at, n_items, params_hash, "
+            " frozen, legacy_import) "
+            "VALUES (?, ?, NULL, ?, ?, NULL, 1, 0)",
+            (n, kind, created_at, len(segs)),
+        )
+        conn.executemany(
+            "INSERT INTO testset_items "
+            "(worksheet_n, item_num, session_id, seg_num, sha256) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (
+                    n,
+                    i,
+                    s.session_id,
+                    s.segment_index + 1,
+                    hashlib.sha256(s.text.encode()).hexdigest(),
+                )
+                for i, s in enumerate(segs, start=1)
+            ],
+        )
+
+
+def read_testset_meta(run_dir: str, n: int) -> dict:
+    """Reconstruct the old testset_meta shape for worksheet #n from SQLite.
+
+    Returns {'segments': [{'session_id','seg_num','sha256'}, ...],
+             'legacy_import': bool}, with segments ordered by item_num.
+    Returns {'segments': [], 'legacy_import': False} if absent.
+    """
+    if not db.db_exists(run_dir):
+        return {'segments': [], 'legacy_import': False}
+    with db.open_db(run_dir) as conn:
+        ws = conn.execute(
+            "SELECT legacy_import FROM testset_worksheets WHERE worksheet_n = ?",
+            (n,),
+        ).fetchone()
+        items = conn.execute(
+            "SELECT session_id, seg_num, sha256 FROM testset_items "
+            "WHERE worksheet_n = ? ORDER BY item_num",
+            (n,),
+        ).fetchall()
+    return {
+        'segments': [
+            {
+                'session_id': r['session_id'],
+                'seg_num': r['seg_num'],
+                'sha256': r['sha256'],
+            }
+            for r in items
+        ],
+        'legacy_import': bool(ws['legacy_import']) if ws is not None else False,
+    }
 
 
 # Phase 1 back-compat — remove with legacy_migration.py

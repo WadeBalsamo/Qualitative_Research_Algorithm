@@ -136,17 +136,16 @@ class TestThemeOverlayRoundtrip(unittest.TestCase):
     def test_overlay_file_exists_after_write(self):
         from process import classifications_io as cio
         seg = self._make_classified_seg('seg_001', 1)
-        path = cio.write_theme_overlay(self.tmpdir, [seg])
-        self.assertTrue(os.path.isfile(path))
+        cio.write_theme_overlay(self.tmpdir, [seg])
+        self.assertTrue(cio.overlay_exists(self.tmpdir, 'theme'))
 
     def test_overlay_is_valid_jsonl(self):
         from process import classifications_io as cio
         seg = self._make_classified_seg('seg_001', 1)
         cio.write_theme_overlay(self.tmpdir, [seg])
-        with open(cio.overlay_path(self.tmpdir, 'theme'), encoding='utf-8') as fh:
-            lines = [ln for ln in fh if ln.strip()]
-        self.assertEqual(len(lines), 1)
-        rec = json.loads(lines[0])
+        recs = cio.read_overlay(self.tmpdir, 'theme')
+        self.assertEqual(len(recs), 1)
+        rec = recs[0]
         self.assertIn('segment_id', rec)
         self.assertEqual(rec['segment_id'], 'seg_001')
         self.assertEqual(rec['primary_stage'], 1)
@@ -159,8 +158,7 @@ class TestThemeOverlayRoundtrip(unittest.TestCase):
             self._make_classified_seg('seg_002', 1),
         ]
         cio.write_theme_overlay(self.tmpdir, segs)
-        with open(cio.overlay_path(self.tmpdir, 'theme'), encoding='utf-8') as fh:
-            ids = [json.loads(ln)['segment_id'] for ln in fh if ln.strip()]
+        ids = [r['segment_id'] for r in cio.read_overlay(self.tmpdir, 'theme')]
         self.assertEqual(ids, sorted(ids))
 
     def test_apply_missing_overlay_returns_zero(self):
@@ -222,8 +220,7 @@ class TestPurerOverlayRoundtrip(unittest.TestCase):
             self._make_purer_seg('th_001', 1),
         ]
         cio.write_purer_overlay(self.tmpdir, segs)
-        with open(cio.overlay_path(self.tmpdir, 'purer'), encoding='utf-8') as fh:
-            ids = [json.loads(ln)['segment_id'] for ln in fh if ln.strip()]
+        ids = [r['segment_id'] for r in cio.read_overlay(self.tmpdir, 'purer')]
         self.assertEqual(ids, sorted(ids))
 
 
@@ -283,7 +280,7 @@ class TestCrossValidationOverlay(unittest.TestCase):
         seg = _make_segment('seg_001')
         # CV overlay fields don't map to Segment; file is written but apply is no-op
         cio.write_cross_validation_overlay(self.tmpdir, [seg])
-        self.assertTrue(os.path.isfile(cio.overlay_path(self.tmpdir, 'cv')))
+        self.assertTrue(cio.overlay_exists(self.tmpdir, 'cv'))
 
     def test_apply_cv_overlay_missing_returns_zero(self):
         from process import classifications_io as cio
