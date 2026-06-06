@@ -868,6 +868,17 @@ def cmd_ingest(args):
     config = _build_config(args)
     config.output_dir = output_dir
 
+    if getattr(args, 'therapist_only', False):
+        from process.orchestrator import stage_resegment_therapist
+        print(f"\nQRA INGEST (therapist-only re-segmentation)")
+        print(f"  Output: {output_dir}")
+        r = stage_resegment_therapist(config, output_dir)
+        print(f"\nDone. Re-segmented {r.get('sessions', 0)} session(s).")
+        print(f"  Therapist segments: {r.get('old_therapist', 0)} -> {r.get('new_therapist', 0)}")
+        print(f"  Participant segments preserved: {r.get('participant_preserved', 0)}")
+        print("Run `qra classify --what purer`, then `qra assemble` to rebuild master_segments.")
+        return
+
     force_reingest = getattr(args, 'reingest', None)
     force_reingest_all = getattr(args, 'reingest_all', False) or getattr(args, 'fresh', False)
 
@@ -2018,6 +2029,9 @@ Examples:
                                help='Re-segment every session from scratch (alias for --reingest-all)')
     ingest_parser.add_argument('--no-text-anonymization', action='store_true',
                                help='Disable PHI name scrubbing during ingestion')
+    ingest_parser.add_argument('--therapist-only', action='store_true',
+                               help='Re-segment ONLY therapist (PURER) content, preserving '
+                                    'participant VAAMR segments + frozen testsets')
     # Accept (and ignore) extra common args so existing configs work
     for _a in ('--backend', '--model', '--api-key', '--trial-id'):
         try:

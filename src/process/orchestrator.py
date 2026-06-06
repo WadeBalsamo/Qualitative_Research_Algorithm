@@ -587,6 +587,67 @@ def _theme_llm_classify(config, framework, segments, output_dir, observer):
     plog.close_llm_log()
 
 
+def _build_turn_exchange_context(target_seg, from_item, to_item, sibling_items,
+                                 sorted_segs, preceding_anchor_index,
+                                 *, window_size, max_words):
+    """Build an 'idea-complete' context_block string for a single therapist turn.
+
+    Lays out the exchange around *target_seg* so the model can classify one
+    therapist turn within its complete surrounding dialogue: brief preceding
+    context, the nearest preceding participant turn (*from_item*), the local
+    window of sibling therapist turns (*sibling_items*, with the target
+    demarcated), and the nearest following participant turn (*to_item*).  The
+    essential exchange is never truncated; only the preceding preamble is
+    squeezed to fit *max_words*.
+    """
+    header = (
+        "FULL EXCHANGE FOR CONTEXT — classify ONLY the demarcated THERAPIST "
+        "RESPONSE shown below:"
+    )
+
+    # Essential exchange — ALWAYS kept in full (the target turn must never be
+    # truncated away): opening participant, sibling therapist turns (with the
+    # target demarcated), and the next participant turn.
+    exchange_parts = []
+    if from_item is not None:
+        from_text = (getattr(from_item, 'text', '') or '').strip()
+        exchange_parts.append(f"PARTICIPANT (opening): {from_text}")
+
+    target_id = getattr(target_seg, 'segment_id', None)
+    for t in sibling_items:
+        t_text = (getattr(t, 'text', '') or '').strip()
+        if getattr(t, 'segment_id', None) == target_id:
+            exchange_parts.append(
+                ">>> THERAPIST TURN TO CLASSIFY (this is the THERAPIST RESPONSE "
+                f"below) >>>: {t_text}"
+            )
+        else:
+            exchange_parts.append(f"THERAPIST: {t_text}")
+
+    if to_item is not None:
+        to_text = (getattr(to_item, 'text', '') or '').strip()
+        exchange_parts.append(f"PARTICIPANT (next): {to_text}")
+    exchange_block = '\n'.join(exchange_parts)
+
+    # Preceding context only gets the budget left over after the (protected)
+    # header + exchange, so a long preamble can never crowd out the target turn.
+    used = len(header.split()) + len(exchange_block.split())
+    preceding_budget = max(0, max_words - used)
+    preceding = ''
+    if preceding_budget > 0 and preceding_anchor_index is not None and preceding_anchor_index >= 0:
+        preceding = _build_context_block_for_purer(
+            sorted_segs, preceding_anchor_index,
+            window_size=window_size, max_words=preceding_budget,
+        )
+
+    parts = [header]
+    if preceding and preceding.strip():
+        parts.append("PRECEDING CONTEXT:")
+        parts.append(preceding.strip())
+    parts.append(exchange_block)
+    return '\n'.join(parts)
+
+
 def _purer_llm_classify(config, segments, output_dir, observer):
     """Run PURER cue-unit classification in-place on therapist segments.
 
@@ -633,6 +694,7 @@ def _purer_llm_classify(config, segments, output_dir, observer):
     max_ctx_words = getattr(purer_cue, 'max_context_words', 1000)
     ctx_window = getattr(purer_cfg, 'context_window_segments', 6)
     max_cue_words = getattr(purer_cue, 'max_cue_words', 300)
+    classification_unit = getattr(purer_cue, 'classification_unit', 'turn')
 
     from .cue_blocks import (
         cue_blocks_from_segments as _cue_blocks_from_segments,
@@ -687,6 +749,59 @@ def _purer_llm_classify(config, segments, output_dir, observer):
 
     cue_units: list = []
 
+    if classification_unit == 'turn':
+        # ------------------------------------------------------------------
+        # Turn-level: classify EVERY therapist turn within its surrounding
+        # exchange — the nearest bracketing participant turns plus a local
+        # window (±ctx_window) of sibling therapist turns.  Full coverage,
+        # independent of cue-block windowing (which only spans staged
+        # participant pairs and leaves most turns uncovered).  Non-therapeutic
+        # turns (logistics, lecture) are expected to receive an ABSTAIN.
+        # ------------------------------------------------------------------
+        from collections import defaultdict as _dd
+        _by_sess = _dd(list)
+        for _gidx, _s in enumerate(sorted_segs):
+            _by_sess[_s.session_id].append((_gidx, _s))
+        _W = max(1, int(ctx_window))
+        for _sid, _items in _by_sess.items():
+            _n = len(_items)
+            for _pos in range(_n):
+                _gidx, _seg = _items[_pos]
+                if _seg.speaker != 'therapist' or not (_seg.text or '').strip():
+                    continue
+                # nearest preceding / following participant (within session)
+                _from_item = None; _from_pos = -1
+                for _p in range(_pos - 1, -1, -1):
+                    if _items[_p][1].speaker == 'participant':
+                        _from_item = _items[_p][1]; _from_pos = _p; break
+                _to_item = None; _to_pos = _n
+                for _q in range(_pos + 1, _n):
+                    if _items[_q][1].speaker == 'participant':
+                        _to_item = _items[_q][1]; _to_pos = _q; break
+                # local window of sibling therapist turns around the target,
+                # bounded to the inter-participant gap
+                _lo = max(_from_pos + 1, _pos - _W)
+                _hi = min(_to_pos, _pos + _W + 1)
+                _siblings = [_items[_k][1] for _k in range(_lo, _hi)
+                             if _items[_k][1].speaker == 'therapist'
+                             and (_items[_k][1].text or '').strip()]
+                _anchor = _items[_from_pos][0] if _from_pos >= 0 else _gidx
+                _turn_ctx = _build_turn_exchange_context(
+                    _seg, _from_item, _to_item, _siblings, sorted_segs, _anchor,
+                    window_size=ctx_window, max_words=max_ctx_words,
+                )
+                _add('n_blocks', 1, _sid)
+                _add('total_therapist_words', len((_seg.text or '').split()), _sid)
+                cue_units.append({
+                    'segment': _seg,
+                    'from_segment': _from_item,
+                    'to_segment': _to_item,
+                    'context_block': _turn_ctx,
+                    '_constituents': [_seg],
+                    '_session_id': _sid,
+                })
+        specs = []  # turn mode does not use cue-block specs below
+
     for spec in specs:
         if not spec.therapist_items:
             continue
@@ -712,6 +827,8 @@ def _purer_llm_classify(config, segments, output_dir, observer):
         # When skip_lessons is False, even long/lesson blocks are NOT skipped;
         # they fall through to the split-by-budget logic below, getting chunked
         # and labeled rather than dropped.  (1d: lesson chunking when skip is OFF)
+        # (Turn-level mode is handled in a dedicated full-coverage pass above and
+        #  never reaches this cue-block loop, which runs only for "cue_block".)
 
         exchange_ctx = (
             _build_context_block_for_purer(sorted_segs, from_idx, window_size=ctx_window,
@@ -1401,6 +1518,148 @@ def stage_ingest(
         pass
 
     return all_segments
+
+
+def stage_resegment_therapist(config, output_dir, observer=None) -> dict:
+    """Therapist-only re-segmentation that PRESERVES participant rows + testsets.
+
+    Re-extracts therapist (PURER cue) segments from the raw .vtt inputs using the
+    current ``extract_therapist_segments`` logic and REPLACES the therapist rows
+    in ``qra.db``'s ``segments`` table, while leaving every PARTICIPANT row
+    byte-identical (same ``segment_id`` AND ``segment_index``).  Participant rows
+    feed VAAMR and the (VAAMR-only) validation testsets, so keeping them untouched
+    preserves both the ``theme_labels`` overlay join and testset validity.
+
+    New therapist segments are assigned ``segment_index`` values ABOVE the max
+    existing index in the session (collision-free; participant indices unchanged);
+    cue-block construction re-derives order from ``start_time_ms``.
+
+    Returns ``{'sessions', 'old_therapist', 'new_therapist', 'participant_preserved'}``.
+    """
+    if observer is None:
+        observer = SilentObserver()
+
+    _od = _resolve_output_dir(output_dir, config)
+    meta_dir = _paths.meta_dir(_od)
+    inputs_dir = _paths.transcripts_diarized_dir(_od)
+
+    # --- Build a NON-embedding segmenter (mirrors stage_ingest's seg_config) ---
+    _existing_speaker_map, _use_unknown_prefix = _load_speaker_map(meta_dir, config)
+    sf = config.speaker_filter
+    excluded_speakers = sf.speakers if sf.mode == 'exclude' else []
+    seg_config = {
+        'embedding_model': config.segmentation.embedding_model,
+        'max_gap_seconds': getattr(config.segmentation, 'max_gap_seconds', 30.0),
+        'excluded_speakers': excluded_speakers,
+        'speaker_filter_mode': sf.mode,
+        'existing_speaker_map': _existing_speaker_map,
+        'use_unknown_prefix': _use_unknown_prefix,
+        'skip_embedding_model': True,  # therapist extraction needs no embeddings
+    }
+    segmenter = ConversationalSegmenter(seg_config)
+
+    _th_gap = getattr(getattr(config, 'purer_cue', None), 'therapist_max_gap_seconds', 120.0)
+
+    sessions = segments_io.list_segmented_sessions(_od)
+
+    n_sessions = 0
+    grand_old = grand_new = grand_part = 0
+
+    for sid in sessions:
+        vtt_path = os.path.join(inputs_dir, f'{sid}.vtt')
+        if not os.path.exists(vtt_path):
+            observer.on_stage_progress(
+                "Therapist Re-segmentation", f"[{sid}] no .vtt input found — skipped",
+            )
+            continue
+
+        existing = segments_io.read_session_segments(_od, sid)
+        if not existing:
+            continue
+        part_segs = [s for s in existing if s.speaker == 'participant']
+        old_th_ids = [s.segment_id for s in existing if s.speaker == 'therapist']
+        old_th_n = len(old_th_ids)
+        max_idx = max((s.segment_index for s in existing
+                       if s.segment_index is not None), default=-1)
+
+        # Metadata: pull trial_id from an existing row; derive the rest from the id.
+        _trial_id = next((s.trial_id for s in existing if s.trial_id), None) or config.trial_id
+        parsed = parse_session_id_metadata(sid)
+        metadata = {
+            'trial_id': _trial_id,
+            'session_id': sid,
+            'session_number': parsed['session_number'],
+            'cohort_id': parsed['cohort_id'],
+            'session_variant': parsed['session_variant'],
+            'source_file': vtt_path,
+        }
+
+        session_data = load_vtt_session(vtt_path)
+        new_th = segmenter.extract_therapist_segments(
+            session_data['sentences'], metadata, max_gap_seconds=_th_gap,
+        )
+
+        # Assign collision-free, time-ordered indices above the session's max.
+        new_th_sorted = sorted(new_th, key=lambda s: s.start_time_ms)
+        for k, seg in enumerate(new_th_sorted):
+            seg.segment_index = max_idx + 1 + k
+
+        # --- PHI text anonymization (MANDATORY) — mirror stage_ingest ----------
+        if new_th_sorted and getattr(config, 'anonymize_transcript_text', True):
+            _anon_map = dict(_existing_speaker_map)
+            for _orig, (_role, _anon_id) in segmenter.speaker_norm.speaker_map.items():
+                if _orig not in _anon_map:
+                    _anon_map[_orig] = (_role, _anon_id)
+            new_th_sorted, _anon_stats = _scrub_segments(
+                new_th_sorted,
+                _anon_map,
+                use_transformer=True,
+                confidence_threshold=getattr(config, 'anonymize_text_confidence_threshold', 0.6),
+                model_name=getattr(config, 'anonymize_text_model', 'obi/deid_roberta_i2b2'),
+            )
+
+        # --- Replace therapist rows in one atomic transaction -----------------
+        ts = datetime.datetime.utcnow().isoformat() + 'Z'
+        params_hash = 'therapist-resegment-v1'
+        new_total = len(part_segs) + len(new_th_sorted)
+        with segments_io.db.open_db(_od) as conn:
+            if old_th_ids:
+                _ph = ','.join('?' * len(old_th_ids))
+                conn.execute(
+                    f"DELETE FROM purer_labels WHERE segment_id IN ({_ph})",
+                    old_th_ids,
+                )
+            conn.execute(
+                "DELETE FROM segments WHERE session_id=? AND speaker='therapist'",
+                (sid,),
+            )
+            if new_th_sorted:
+                for seg in new_th_sorted:
+                    seg.total_segments_in_session = new_total
+                rows = [segments_io._seg_insert_row(seg, params_hash, ts)
+                        for seg in new_th_sorted]
+                conn.executemany(segments_io._INSERT_SEGMENT_SQL, rows)
+            conn.execute(
+                "UPDATE segments SET total_segments_in_session=? WHERE session_id=?",
+                (new_total, sid),
+            )
+
+        n_sessions += 1
+        grand_old += old_th_n
+        grand_new += len(new_th_sorted)
+        grand_part += len(part_segs)
+        observer.on_stage_progress(
+            "Therapist Re-segmentation",
+            f"[{sid}] participant={len(part_segs)} (preserved) | "
+            f"therapist: {old_th_n} -> {len(new_th_sorted)}",
+        )
+
+    return {
+        'sessions': n_sessions,
+        'old_therapist': grand_old,
+        'new_therapist': grand_new,
+        'participant_preserved': grand_part,
+    }
 
 
 def run_incremental_pipeline(
