@@ -241,6 +241,27 @@ The GNN layer is a pure-PyTorch GraphSAGE network (no torch-geometric) over a **
 
 > All GNN influence/community outputs are **directional, not causal** (n≈32, single-arm, unblinded, plus the elicitation confound — `methodology.md` §9.2/§9.4), and every discovery must pass human review before becoming primary evidence.
 
+### Inter-Rater Reliability Validation (`qra irr`)
+
+`process/irr_import.py`, `analysis/irr_analysis.py`
+
+The validation counterpart to the discovery layer. Researchers' blind coding of the frozen
+validation worksheets is imported once (`qra irr import`) and kept in `qra.db` as ground truth;
+`qra irr run` then compares it against the project's **current** machine labels (pulled live) across
+three families: **Human↔Human** (per test-set, primary + secondary; the reference band), **Human↔LLM**
+(consensus *and* each individual model), and **Human↔GNN** along two clearly-separated axes — the
+honest **held-out** prediction (out-of-fold, never trained on that segment's own LLM label → independent
+construct validity + the reliability gate) and the in-sample **distillation** overlay (the operational
+default; its LLM agreement is *distillation fidelity*, never reported as validity). All chance-corrected
+statistics come from **proven libraries** — Cohen's κ (scikit-learn), Fleiss' κ (statsmodels),
+Krippendorff's α (`krippendorff`, the headline statistic since it tolerates missing ballots). Outputs are
+a single report (`06_reports/06b_irr_report.txt`) plus, under `04_validation/irr/`, the stats
+(`irr_results.json`, `irr_pairwise.csv`), a ranked discrepancy list, confusion/agreement figures, and a
+**line-by-line per-test-set dossier** (`irr_items_testset_<n>.txt`) showing each item's text beside the
+human codes + reasoning, the LLM codes + justifications, the GNN held-out prediction, and the LLM↔GNN
+consensus. IRR regenerates automatically during `qra analyze` whenever the models or graph have changed.
+Full methodology: `methodology.md` §5.5.
+
 ---
 
 ## Pipeline Architecture
@@ -517,6 +538,11 @@ python qra.py testset list -o ./data/output/
 python qra.py cv create -o ./data/output/ --framework purer --name cv_purer_v1
 python qra.py cv refresh -o ./data/output/ --all
 python qra.py cv list -o ./data/output/
+
+# Inter-rater reliability (Human↔Human, Human↔LLM, Human↔GNN) — bare `qra irr` = TUI
+python qra.py irr import -o ./data/output/ --csv data/irr/human_coded_testsets.csv
+python qra.py irr run -o ./data/output/                     # pull live LLM+GNN, compute, write report
+python qra.py irr list -o ./data/output/
 
 # PHI / speaker anonymization curation
 python qra.py apply-anonymization -o ./data/output/        # retroactively scrub names from frozen text

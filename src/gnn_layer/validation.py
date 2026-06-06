@@ -41,6 +41,81 @@ RARE_STAGES = (3, 4)  # Metacognition, Reappraisal
 MIN_SUPPORT_FOR_FLOOR = 5
 
 
+HELDOUT_PREDICTIONS_FILENAME = 'gnn_heldout_predictions.csv'
+
+
+def write_heldout_predictions_csv(cv: dict, output_dir: str) -> str:
+    """Persist the cross-validated, OUT-OF-FOLD GNN predictions per segment_id.
+
+    These are predictions on segments the model did NOT train on (the example's
+    own LLM label was withheld), so they are the honest, non-circular GNN axis for
+    inter-rater-reliability comparison against the human codes. Written to
+    ``03_analysis_data/gnn/gnn_heldout_predictions.csv``.
+
+    ``cv`` is the dict returned by :func:`gnn_layer.train.crossval_predictions`;
+    confidence is taken from ``*_logits`` (softmax max) when present.
+    """
+    import numpy as np
+
+    def _conf_map(logit_key):
+        out = {}
+        for sid, logits in cv.get(logit_key, []) or []:
+            arr = np.asarray(logits, dtype=float)
+            e = np.exp(arr - arr.max())
+            out[str(sid)] = float((e / e.sum()).max())
+        return out
+
+    v_conf = _conf_map('vaamr_logits')
+    p_conf = _conf_map('purer_logits')
+    rows: Dict[str, dict] = {}
+    for sid, pred in (cv.get('vaamr') or []):
+        rows.setdefault(str(sid), {})['vaamr_pred'] = int(pred)
+        rows[str(sid)]['vaamr_conf'] = v_conf.get(str(sid))
+    for sid, pred in (cv.get('purer') or []):
+        rows.setdefault(str(sid), {})['purer_pred'] = int(pred)
+        rows[str(sid)]['purer_conf'] = p_conf.get(str(sid))
+
+    gnn_dir = _paths.gnn_data_dir(output_dir)
+    os.makedirs(gnn_dir, exist_ok=True)
+    path = os.path.join(gnn_dir, HELDOUT_PREDICTIONS_FILENAME)
+    with open(path, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['segment_id', 'gnn_vaamr_heldout_pred', 'gnn_vaamr_heldout_conf',
+                    'gnn_purer_heldout_pred', 'gnn_purer_heldout_conf'])
+        for sid in sorted(rows):
+            r = rows[sid]
+            w.writerow([sid, r.get('vaamr_pred', ''),
+                        '' if r.get('vaamr_conf') is None else f"{r['vaamr_conf']:.4f}",
+                        r.get('purer_pred', ''),
+                        '' if r.get('purer_conf') is None else f"{r['purer_conf']:.4f}"])
+    return path
+
+
+def read_heldout_predictions(output_dir: str) -> Dict[str, dict]:
+    """Read ``gnn_heldout_predictions.csv`` -> {segment_id: {vaamr_pred, vaamr_conf, ...}}.
+
+    Returns ``{}`` if the file is absent (GNN not trained / no held-out preds).
+    """
+    path = os.path.join(_paths.gnn_data_dir(output_dir), HELDOUT_PREDICTIONS_FILENAME)
+    if not os.path.isfile(path):
+        return {}
+    out: Dict[str, dict] = {}
+    with open(path, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            sid = row['segment_id']
+            def _i(v):
+                return int(v) if v not in ('', None) else None
+            def _f(v):
+                return float(v) if v not in ('', None) else None
+            out[sid] = {
+                'vaamr_pred': _i(row.get('gnn_vaamr_heldout_pred')),
+                'vaamr_conf': _f(row.get('gnn_vaamr_heldout_conf')),
+                'purer_pred': _i(row.get('gnn_purer_heldout_pred')),
+                'purer_conf': _f(row.get('gnn_purer_heldout_conf')),
+            }
+    return out
+
+
 def _per_class(pairs: List[Tuple[int, int]], names: Dict[int, str]) -> List[dict]:
     """Per-class support/recall/precision/binary-κ from (pred, ref) integer pairs."""
     rows = []

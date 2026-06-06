@@ -121,6 +121,18 @@ class ContentValidityConfig:
 
 
 @dataclass
+class InterRaterReliabilityConfig:
+    """Inter-rater reliability (IRR) reporting parameters.
+
+    IRR is a standalone, post-hoc analysis (``qra irr``); machine labels are
+    re-pulled live each run so the comparison always reflects the current model.
+    """
+    kappa_method: str = 'cohen'        # pairwise human↔human + human↔machine method label
+    agreement_target: float = 0.70     # Landis–Koch "substantial" floor flagged in the report
+    include_secondary: bool = True     # report the secondary-code agreement section
+
+
+@dataclass
 class ConfidenceTierConfig:
     """Configurable thresholds for confidence tier assignment."""
     high_consistency: int = 3
@@ -284,6 +296,7 @@ class PipelineConfig:
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     test_sets: TestSetsConfig = field(default_factory=TestSetsConfig)
     content_validity: ContentValidityConfig = field(default_factory=ContentValidityConfig)
+    inter_rater_reliability: InterRaterReliabilityConfig = field(default_factory=InterRaterReliabilityConfig)
     confidence_tiers: ConfidenceTierConfig = field(default_factory=ConfidenceTierConfig)
     therapist_cues: TherapistCueConfig = field(default_factory=TherapistCueConfig)
     purer_cue: PurerCueConfig = field(default_factory=PurerCueConfig)
@@ -363,6 +376,7 @@ class PipelineConfig:
             'gnn_layer': GnnLayerConfig,
             'superposition': SuperpositionConfig,
             'efficacy': EfficacyConfig,
+            'inter_rater_reliability': InterRaterReliabilityConfig,
         }
 
         kwargs = {}

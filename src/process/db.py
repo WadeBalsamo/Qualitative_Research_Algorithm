@@ -12,6 +12,7 @@ store for the pipeline:
   * classification provenance manifest     -> ``classification_manifest``
   * validation testset worksheets + items  -> ``testset_worksheets`` / ``testset_items``
   * content-validity testsets + items      -> ``cv_testsets`` / ``cv_testset_items``
+  * inter-rater reliability human codes    -> ``irr_testsets`` / ``irr_human_codes``
 
 All DDL lives here.  The per-table read/write logic lives in the modules that
 own each artifact (``segments_io``, ``classifications_io``, ``assembly/human_forms``,
@@ -60,8 +61,8 @@ def db_path(run_dir: str) -> str:
 # Schema (DDL)
 # ---------------------------------------------------------------------------
 
-# Twelve tables.  segment_id is the natural primary key joining the frozen
-# segments table to every per-segment overlay table.
+# segment_id is the natural primary key joining the frozen segments table to
+# every per-segment overlay table.
 _SCHEMA_STATEMENTS = (
     # -- migration / version tracking -------------------------------------
     """
@@ -248,6 +249,44 @@ _SCHEMA_STATEMENTS = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_cv_items_ts ON cv_testset_items (testset_name)",
+
+    # -- inter-rater reliability: imported test-sets --------------------------
+    #    One row per imported human-coded worksheet.  ``raters`` is the JSON
+    #    roster (ordered) that coded this worksheet; drives Human↔Human IRR.
+    """
+    CREATE TABLE IF NOT EXISTS irr_testsets (
+        worksheet_n INTEGER PRIMARY KEY,
+        name        TEXT,
+        raters      TEXT,    -- JSON array of rater ids | NULL
+        n_items     INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT    NOT NULL DEFAULT ''
+    )
+    """,
+
+    # -- inter-rater reliability: per-rater human codes ----------------------
+    #    Long format: one row per (worksheet, item, rater) for individual rater
+    #    ballots, plus one row per (worksheet, item) consensus with
+    #    is_consensus=1 and rater='__consensus__'.  ``primary``/``secondary`` are
+    #    VAAMR theme_ids (INTEGER), the ABSTAIN sentinel (-1 = "No code"), or NULL
+    #    (rater did not code that item / no secondary).  ``segment_id`` is the
+    #    resolved frozen-segment id (may be NULL if resolution failed).
+    """
+    CREATE TABLE IF NOT EXISTS irr_human_codes (
+        worksheet_n  INTEGER NOT NULL,
+        item_num     INTEGER NOT NULL,
+        segment_id   TEXT,
+        rater        TEXT    NOT NULL,
+        prim         INTEGER,
+        secondary    INTEGER,
+        is_consensus INTEGER NOT NULL DEFAULT 0,
+        source       TEXT,
+        notes        TEXT,
+        PRIMARY KEY (worksheet_n, item_num, rater),
+        FOREIGN KEY (worksheet_n) REFERENCES irr_testsets (worksheet_n) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_irr_codes_ws ON irr_human_codes (worksheet_n)",
+    "CREATE INDEX IF NOT EXISTS idx_irr_codes_seg ON irr_human_codes (segment_id)",
 )
 
 
