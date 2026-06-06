@@ -368,9 +368,11 @@ Running `python qra.py` with **no subcommand** launches the interactive TUI (see
 | `add-data` | Incrementally add new transcripts to an existing project (frozen segments/testsets untouched) |
 | `ingest` | Segment + freeze transcripts only (Stage 1) |
 | `classify` | Run classifiers only — `--what vaamr\|purer\|codebook\|cross-validation\|all` |
-| `assemble` | Join frozen segments and classification overlays into `master_segments` |
+| `assemble` | Join frozen segments and classification overlays into `master_segments.csv` |
 | `validate` | Refresh human/AI validation artifacts without re-classifying |
 | `analyze` | Post-hoc results analysis (`--gnn` / `--no-gnn` to force the GNN layer) |
+| `gnn train` / `classify` / `status` | GNN consensus layer: train + reliability gate / LLM-free scale-mode classify / κ verdict |
+| `migrate` | Import a legacy (pre-SQLite, JSONL) project into `qra.db` (preview by default; `--run` to perform) |
 | `reclassify-run` | Redo a single classification run (e.g. fix one run's model) |
 | `testset create` / `refresh` / `list` | Manage frozen validation test sets (`--kind vaamr\|purer\|codebook`) |
 | `cv create` / `refresh` / `list` | Manage content-validity test sets (`--framework vaamr\|purer`) |
@@ -388,8 +390,14 @@ python qra.py ingest -o ./output/ --reingest-all
 # Classify one layer without the automatic downstream assemble/analyze
 python qra.py classify -o ./output/ --what vaamr --no-downstream
 
-# LLM-free graph "scale mode" (after the GNN reliability gate passes)
-python qra.py classify -o ./output/ --backend gnn
+# Re-classify a framework / re-segment FROM SCRATCH (clear checkpoints + overlay first)
+python qra.py classify -o ./output/ --what vaamr --fresh
+python qra.py ingest   -o ./output/ --fresh
+
+# GNN consensus layer (modular): train + gate, check readiness, then scale LLM-free
+python qra.py gnn train  -o ./output/
+python qra.py gnn status -o ./output/
+python qra.py gnn classify -o ./output/        # LLM-free, only new/unlabeled segments
 
 # Force the GNN representation-and-discovery layer on/off at analyze-time
 python qra.py analyze -o ./output/ --gnn
