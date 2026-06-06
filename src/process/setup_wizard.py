@@ -54,7 +54,9 @@ _PRESET_SMALL = {
         '    Run 1: nvidia/nemotron-3-nano-4b  (primary)\n'
         '    Run 2: google/gemma-4-e2b\n'
         '    Run 3: qwen/qwen3-8b\n'
-        '  PURER classification   : nvidia/nemotron-3-nano-4b  (single-run)\n'
+        '  PURER classification   : 2-run rotation\n'
+        '    Run 1: nvidia/nemotron-3-nano-4b\n'
+        '    Run 2: google/gemma-4-e2b\n'
         '  Summarization model    : nvidia/nemotron-3-nano-4b\n'
         '  Framework              : VAAMR\n'
         '  Codebook classification: disabled'
@@ -62,6 +64,11 @@ _PRESET_SMALL = {
     'segmentation_embedding_model': 'all-MiniLM-L6-v2',
     'primary_model': 'nvidia/nemotron-3-nano-4b',
     'purer_model': 'nvidia/nemotron-3-nano-4b',
+    'purer_per_run_models': [
+        'nvidia/nemotron-3-nano-4b',
+        'google/gemma-4-e2b',
+    ],
+    'purer_n_runs': 2,
     'summarization_model': _DEFAULT_SUMMARIZATION_MODEL,
     'per_run_models': [
         'nvidia/nemotron-3-nano-4b',
@@ -507,16 +514,33 @@ class SetupWizard:
             if run_purer:
                 print("    PURER classification enabled.")
                 print()
-                print("    PURER cue options:")
-                print("    Long cue blocks are automatically split along therapist turn")
-                print("    boundaries into sub-cues before being sent to the LLM, so")
-                print("    over-long blocks are chunked and labeled rather than dropped.")
+                print("    PURER unit of analysis:")
+                print("    - turn       : classify each therapist TURN within its full")
+                print("                   surrounding exchange (the bracketing participant")
+                print("                   turns + any sibling therapist turns). Labels are")
+                print("                   per-turn, so an exchange can carry multiple moves.")
+                print("    - cue_block  : classify each cue-block (run of therapist turns")
+                print("                   between two participant turns) as a single unit;")
+                print("                   long blocks are split into fixed-length sub-cues.")
+                print()
+                unit = _prompt_yes_no(
+                    "    Classify PURER per therapist turn (recommended)?  "
+                    "(No = per cue-block)",
+                    True,
+                )
+                self.config_data.setdefault('purer_cue', {})
+                self.config_data['purer_cue']['classification_unit'] = (
+                    'turn' if unit else 'cue_block'
+                )
+                print(
+                    "    Unit of analysis: "
+                    + ('per therapist turn' if unit else 'per cue-block')
+                )
                 print()
                 skip_lessons = _prompt_yes_no(
                     "    Skip long didactic segments (lesson content, guided meditation scripts)?",
                     True,
                 )
-                self.config_data.setdefault('purer_cue', {})
                 self.config_data['purer_cue']['skip_lesson_content'] = skip_lessons
                 if skip_lessons:
                     max_lesson_words = _prompt_int(
@@ -524,11 +548,12 @@ class SetupWizard:
                     )
                     self.config_data['purer_cue']['max_lesson_words'] = max_lesson_words
                     print(f"    Cue blocks > {max_lesson_words} words will be skipped as lesson content.")
-                max_cue_words = _prompt_int(
-                    "    Max words per sub-cue (blocks above this are split into chunks)", 300
-                )
-                self.config_data['purer_cue']['max_cue_words'] = max_cue_words
-                print(f"    Sub-cue word budget: {max_cue_words} words per chunk.")
+                if not unit:
+                    max_cue_words = _prompt_int(
+                        "    Max words per sub-cue (blocks above this are split into chunks)", 300
+                    )
+                    self.config_data['purer_cue']['max_cue_words'] = max_cue_words
+                    print(f"    Sub-cue word budget: {max_cue_words} words per chunk.")
                 print("    Context: uses the same conversational context logic as VAAMR")
                 print("    classification, with a wider window (purer_classification")
                 print("    context_window_segments, default 6 vs 2 for participants).")
@@ -591,7 +616,9 @@ class SetupWizard:
         print()
 
         purer_model = preset.get('purer_model', preset['primary_model'])
-        print(f"    PURER classification model: {purer_model}  (single-run, n_runs=1)")
+        purer_per_run_models = preset.get('purer_per_run_models', [])
+        purer_n_runs = preset.get('purer_n_runs', 1)
+        print(f"    PURER classification model: {purer_model}  ({purer_n_runs}-run rotation)")
         print()
 
         lmstudio_url = _prompt("LM Studio server URL", 'http://10.0.0.58:1234/v1')
@@ -605,15 +632,15 @@ class SetupWizard:
             'per_run_models': preset['per_run_models'],
         }
         self.config_data['theme_classification'] = dict(classification_config)
-        # PURER uses a single NeMo model with n_runs=1 (no multi-run IRR needed)
+        # PURER uses a small NeMo-led rotation for lightweight interrater agreement.
         self.config_data['purer_classification'] = {
             'backend': 'lmstudio',
             'model': purer_model,
             'summarization_model': preset['summarization_model'],
             'lmstudio_base_url': lmstudio_url,
-            'n_runs': 1,
+            'n_runs': purer_n_runs,
             'temperature': preset['temperature'],
-            'per_run_models': [],
+            'per_run_models': purer_per_run_models,
         }
         print()
 
@@ -657,7 +684,7 @@ class SetupWizard:
         for i, m in enumerate(preset['per_run_models']):
             label = ' (primary)' if i == 0 else f' (checker {i})'
             print(f"      Run {i + 1}: {m}{label}")
-        print(f"    PURER model            : {purer_model}  (single-run, n_runs=1)")
+        print(f"    PURER model            : {purer_model}  ({preset.get('purer_n_runs', 1)}-run rotation)")
         print(f"    Summarization model    : {preset['summarization_model']}")
         print(f"    Codebook classification: disabled")
         print(f"    Confidence thresholds  : high ≥ 0.8, medium ≥ 0.6")

@@ -622,6 +622,39 @@ def _action_classify_purer(config, output_dir: str) -> None:
     _pause()
 
 
+def _action_resegment_purer(config, output_dir: str) -> None:
+    from .orchestrator import stage_resegment_therapist, SilentObserver
+    _section('Re-segment PURER / Therapist Content')
+    _info(
+        'Re-extracts therapist (PURER) segments and re-applies PHI scrubbing\n'
+        'WITHOUT touching participant VAAMR segments or frozen testsets.\n'
+        '\n'
+        'Run this before re-classifying PURER (e.g. after changing the\n'
+        'therapist gap threshold or the PURER unit of analysis).\n'
+        '\n'
+        'Participant VAAMR segments and frozen testsets are preserved.'
+    )
+    print()
+
+    gap = getattr(config.purer_cue, 'therapist_max_gap_seconds', None)
+    _info(f'Therapist max gap (seconds): {gap}')
+    print()
+
+    if not _confirm('Re-segment therapist (PURER) content now?'):
+        return
+    try:
+        r = stage_resegment_therapist(config, output_dir, observer=SilentObserver())
+        print()
+        _ok(f"Re-segmented {r.get('sessions', 0)} session(s).")
+        _info(f"Therapist segments: {r.get('old_therapist', 0)} → {r.get('new_therapist', 0)}")
+        _info(f"Participant segments preserved: {r.get('participant_preserved', 0)}")
+        _info('Participant VAAMR segments and frozen testsets were preserved.')
+        _info('Run "PURER Classification" next, then Assemble to rebuild master_segments.')
+    except Exception as _e:
+        _warn(f'Re-segmentation failed: {_e}')
+    _pause()
+
+
 def _action_assemble(config, output_dir: str, framework) -> None:
     from .orchestrator import stage_assemble
     _section('Stage 6 — Assemble Master Dataset')
@@ -1249,6 +1282,10 @@ def _existing_project_flow() -> None:
              'Segment transcripts and freeze them to qra.db (offers re-segment from scratch).'
              + ('  [LEGACY — run Migrate first if offered]' if state['is_legacy'] else ''),
              lambda: _action_ingest(config, output_dir)),
+            ('Re-segment PURER / therapist content (preserve VAAMR + testsets)',
+             'Re-extract therapist (PURER) segments and re-apply PHI scrubbing WITHOUT touching\n'
+             'participant VAAMR segments or frozen testsets. Run before re-classifying PURER.',
+             _need_segments(lambda: _action_resegment_purer(config, output_dir))),
             ('Add new transcripts (incremental)',
              'Segment + classify only NEW sessions, then re-assemble + re-analyze.\n'
              'Frozen segments and frozen testsets are untouched.',
