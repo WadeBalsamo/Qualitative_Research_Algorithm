@@ -98,7 +98,8 @@ class TestWriteGnnOverlay(unittest.TestCase):
     def test_write_creates_file_at_expected_path(self):
         seg = _gnn_seg('p1', vaamr_pred=2, vaamr_conf=0.9, label_source='gnn_trained')
         path = cio.write_gnn_overlay(self.run_dir, [seg])
-        self.assertTrue(os.path.isfile(path))
+        # Overlay now lives in qra.db; the returned path is a legacy descriptor.
+        self.assertTrue(cio.overlay_exists(self.run_dir, 'gnn'))
         self.assertTrue(path.endswith('gnn_labels.jsonl'))
         self.assertIn('02_meta', path)
         self.assertIn('classifications', path)
@@ -109,12 +110,9 @@ class TestWriteGnnOverlay(unittest.TestCase):
             _gnn_seg('t2', purer_pred=3, purer_conf=0.7, label_source='gnn_trained'),
         ]
         cio.write_gnn_overlay(self.run_dir, segs)
-        path = cio.overlay_path(self.run_dir, 'gnn')
-        with open(path, encoding='utf-8') as fh:
-            lines = [ln for ln in fh if ln.strip()]
-        self.assertEqual(len(lines), 2)
-        for ln in lines:
-            rec = json.loads(ln)
+        recs = cio.read_overlay(self.run_dir, 'gnn')
+        self.assertEqual(len(recs), 2)
+        for rec in recs:
             self.assertIn('segment_id', rec)
             # every GNN_OVERLAY_FIELD present as key
             for f in cio.GNN_OVERLAY_FIELDS:
@@ -122,11 +120,9 @@ class TestWriteGnnOverlay(unittest.TestCase):
 
     def test_write_empty_overlay_creates_empty_file(self):
         cio.write_gnn_overlay(self.run_dir, [])
-        path = cio.overlay_path(self.run_dir, 'gnn')
-        self.assertTrue(os.path.isfile(path))
-        with open(path, encoding='utf-8') as fh:
-            lines = [ln for ln in fh if ln.strip()]
-        self.assertEqual(len(lines), 0)
+        # No rows written → overlay reads back empty and is reported absent.
+        self.assertEqual(cio.read_overlay(self.run_dir, 'gnn'), [])
+        self.assertFalse(cio.overlay_exists(self.run_dir, 'gnn'))
 
     def test_write_records_sorted_by_segment_id(self):
         segs = [
@@ -135,9 +131,7 @@ class TestWriteGnnOverlay(unittest.TestCase):
             _gnn_seg('seg_002', vaamr_pred=2),
         ]
         cio.write_gnn_overlay(self.run_dir, segs)
-        path = cio.overlay_path(self.run_dir, 'gnn')
-        with open(path, encoding='utf-8') as fh:
-            ids = [json.loads(ln)['segment_id'] for ln in fh if ln.strip()]
+        ids = [r['segment_id'] for r in cio.read_overlay(self.run_dir, 'gnn')]
         self.assertEqual(ids, sorted(ids))
 
     def test_overlay_can_be_overwritten(self):
@@ -386,9 +380,7 @@ class TestMergeGnnOverlay(unittest.TestCase):
         """Post-merge JSONL remains sorted by segment_id."""
         cio.write_gnn_overlay(self.run_dir, [_gnn_seg('seg_003', vaamr_pred=0)])
         cio.merge_gnn_overlay(self.run_dir, [_gnn_seg('seg_001', vaamr_pred=1)])
-        path = cio.overlay_path(self.run_dir, 'gnn')
-        with open(path, encoding='utf-8') as fh:
-            ids = [json.loads(ln)['segment_id'] for ln in fh if ln.strip()]
+        ids = [r['segment_id'] for r in cio.read_overlay(self.run_dir, 'gnn')]
         self.assertEqual(ids, sorted(ids))
 
 

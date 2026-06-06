@@ -12,7 +12,7 @@ Stage 3b: Codebook Classification - Multi-label codebook classification using em
 Stage 3c: PURER Classification - Therapist cue-unit classification at the dialogue turn level
 Stage 4: Cross-Validation - Computes theme-code co-occurrence statistics
 Stage 5: Human Validation Set Export - Creates frozen human coding evaluation sets
-Stage 6: Dataset Assembly - Joins frozen segments with all overlays into master_segments.jsonl
+Stage 6: Dataset Assembly - Joins frozen segments with all overlays into master_segments.csv
 Stage 7: Report Generation - Produces coded transcripts, stats reports, and visualization data
 Stage 8: Analysis (optional) - Generates longitudinal summaries and figures
 
@@ -417,7 +417,7 @@ def stage_assemble(
     Dataset assembly stage.
 
     Joins frozen segments + all present overlays and writes
-    master_segments.{csv,jsonl}.  Returns the master pd.DataFrame.
+    master_segments.csv.  Returns the master pd.DataFrame.
     When segments=None, loads from disk.
     """
     import pandas as pd
@@ -440,7 +440,7 @@ def stage_assemble(
     _gnn_auth, _gate_ok = _gnn_promotion_flags(config, _od)
     master_df = assemble_master_dataset(
         segments,
-        os.path.join(_ms_dir, 'master_segments.jsonl'),
+        os.path.join(_ms_dir, 'master_segments.csv'),
         confidence_tiers=confidence_tiers,
         gnn_authoritative=_gnn_auth,
         gate_passed=_gate_ok,
@@ -1190,6 +1190,17 @@ def stage_ingest(
             "Transcript Ingestion and Segmentation",
             "Auto-migrated v2.5 project layout to v3 directory structure",
         )
+    if legacy_migration.is_jsonl_project(_od):
+        _res = legacy_migration.migrate_jsonl_to_sqlite(_od)
+        observer.on_stage_progress(
+            "Transcript Ingestion and Segmentation",
+            f"Migrated {_res['segments']} segments from JSONL to SQLite ({_res['sessions']} sessions)",
+        )
+    if legacy_migration.upgrade_config_file(_od):
+        observer.on_stage_progress(
+            "Transcript Ingestion and Segmentation",
+            "Upgraded qra_config.json with defaults for newly-added parameters",
+        )
 
     current_hash = segments_io.params_hash(config.segmentation)
 
@@ -1539,7 +1550,7 @@ def run_incremental_pipeline(
     _gnn_auth, _gate_ok = _gnn_promotion_flags(config, output_dir)
     master_df = assemble_master_dataset(
         all_segments,
-        os.path.join(_msdir, 'master_segments.jsonl'),
+        os.path.join(_msdir, 'master_segments.csv'),
         confidence_tiers=confidence_tier_config,
         gnn_authoritative=_gnn_auth,
         gate_passed=_gate_ok,
@@ -1835,7 +1846,7 @@ def run_full_pipeline(
     _gnn_auth, _gate_ok = _gnn_promotion_flags(config, output_dir)
     master_df = assemble_master_dataset(
         all_segments,
-        os.path.join(_msdir, 'master_segments.jsonl'),
+        os.path.join(_msdir, 'master_segments.csv'),
         confidence_tiers=confidence_tier_config,
         gnn_authoritative=_gnn_auth,
         gate_passed=_gate_ok,

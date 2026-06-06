@@ -18,7 +18,7 @@ The pipeline has 8 stages (+2 optional sub-stages), sequenced by process/orchest
 3c. PURER cue-block classification  (optional; therapist segments)
 4.  Cross-validation                (optional; VAAMR x VCE lift)
 5.  Human validation set            -> 04_validation/
-6.  Dataset assembly                -> 02_meta/training_data/master_segments.{jsonl,csv}
+6.  Dataset assembly                -> 02_meta/training_data/master_segments.csv
 7.  Report generation               -> 01_transcripts/coded/ + 04_validation/
 8.  Results analysis                (optional) -> 03_analysis_data/, 05_figures/, 06_reports/
 
@@ -37,14 +37,14 @@ run
   Output: Complete pipeline output in output-dir with all intermediate and final artifacts
   Generates:
     - 01_transcripts/ : segmented/<sid>/ (frozen) + coded/ transcripts
-    - 02_meta/ : config, classifications/ overlays, training_data/master_segments.{jsonl,csv}
+    - 02_meta/ : config, classifications/ overlays, training_data/master_segments.csv
     - 04_validation/ : worksheets, definition/answer keys, testsets/, content_validity/
     - 05_figures/ : PNG visualization figures
     - 06_reports/ : tiered human-readable text reports (00_* through 06_gnn/)
 
 analyze
   Run post-hoc analysis on existing pipeline output directory
-  Input: Existing output dir with 02_meta/training_data/master_segments.{jsonl,csv}
+  Input: Existing output dir with 02_meta/training_data/master_segments.csv
   Output:
     - 06_reports/ : tiered text reports — 00_executive_summary.txt, 01_outcomes/,
       02_mechanism/, 03_per_session/, 04_per_participant/, 05_per_stage/, 06_gnn/
@@ -70,7 +70,7 @@ classify
 assemble
   Stage 6: Join frozen segments with classification overlays into the master dataset
   Input: Frozen segments + classification overlays
-  Output: output_dir/02_meta/training_data/master_segments.{jsonl,csv} (integrated dataset)
+  Output: output_dir/02_meta/training_data/master_segments.csv (integrated dataset)
 
 add-data
   Incrementally segment + classify only NEW transcripts, then re-assemble and
@@ -472,13 +472,14 @@ def _flatten_wizard_config(data: dict) -> dict:
         if key in pipeline:
             result[key] = pipeline[key]
 
-    # Pass through sub-config dicts directly
-    for key in ('segmentation', 'speaker_filter', 'theme_classification', 'codebook_embedding',
-                'codebook_llm', 'codebook_ensemble', 'validation', 'confidence_tiers',
-                'test_sets', 'content_validity', 'purer_classification', 'purer_cue',
-                'therapist_cues', 'session_summaries', 'participant_summaries', 'gnn_layer'):
-        if key in data:
-            result[key] = data[key]
+    # Pass through every top-level sub-config dict directly, except the ones
+    # handled specially above ('pipeline') or consumed elsewhere ('framework',
+    # 'codebook'). This keeps upgraded configs forward-compatible: newly-added
+    # sub-config blocks (e.g. superposition, efficacy, gnn_layer) load fully
+    # without needing to be enumerated here.
+    for key, val in data.items():
+        if isinstance(val, dict) and key not in ('pipeline', 'framework', 'codebook'):
+            result[key] = val
 
     # Copy top-level keys that are already flat
     for key in ('resume_from', 'autoresearch_dir', 'run_purer_labeler',
@@ -1555,7 +1556,7 @@ def cmd_reclassify_run(args):
     # -- Re-assemble master dataset ----------------------------------------
     print("\nStep 2/5 — Assembling master dataset...")
     stage_assemble(config, output_dir=output_dir)
-    print(f"  master_segments.jsonl updated.")
+    print(f"  master_segments.csv updated.")
 
     # -- Refresh testset AI answer keys + CV testsets ----------------------
     # create_missing=False so we only refresh existing artifacts, not create new ones
@@ -1607,7 +1608,7 @@ def cmd_assemble(args):
 
     # Guard: at least one overlay must exist
     has_overlay = any(
-        os.path.isfile(_cio.overlay_path(output_dir, key))
+        _cio.overlay_exists(output_dir, key)
         for key in ('theme', 'purer', 'codebook', 'cv')
     )
     has_frozen = bool(_segments_io.list_segmented_sessions(output_dir))
@@ -1634,7 +1635,7 @@ def cmd_assemble(args):
     master_df = stage_assemble(config, output_dir=output_dir)
 
     ms_dir = _paths.master_segments_dir(output_dir)
-    print(f"  master_segments.jsonl: {len(master_df)} segments")
+    print(f"  master_segments.csv: {len(master_df)} segments")
     print(f"  Written to: {ms_dir}")
 
     # Refresh human forms, testsets, and CV answer keys (no new testset creation).
@@ -1952,21 +1953,21 @@ def cmd_cv_create(args):
 
 def cmd_cv_refresh(args):
     """qra cv refresh — refresh AI answer key(s) for content-validity testsets."""
-    from process.assembly.content_validity import refresh_cv_answer_key
-    from process import output_paths as _paths
+    from process.assembly.content_validity import (
+        refresh_cv_answer_key, list_content_validity_testsets,
+    )
 
-    cv_root = _paths.cv_testsets_dir(args.output_dir)
-    if not os.path.isdir(cv_root):
+    entries = list_content_validity_testsets(args.output_dir)
+    if not entries:
         print("No content-validity testsets found.")
         sys.exit(0)
+
+    kind_by_name = {e['name']: e.get('kind', 'vaamr') for e in entries}
 
     if getattr(args, 'name', None) and not args.all:
         names = [args.name]
     else:
-        names = sorted(
-            e.name for e in os.scandir(cv_root)
-            if e.is_dir() and os.path.isfile(os.path.join(e.path, 'manifest.json'))
-        )
+        names = sorted(kind_by_name)
 
     if not names:
         print("No content-validity testsets found.")
@@ -1987,10 +1988,7 @@ def cmd_cv_refresh(args):
         )
 
     for name in names:
-        mp = _paths.cv_testset_manifest_path(args.output_dir, name)
-        with open(mp) as f:
-            m = json.load(f)
-        kind = m.get('kind', 'vaamr')
+        kind = kind_by_name.get(name, 'vaamr')
         if kind == 'purer':
             from theme_framework.registry import load as _registry_load_fw
             framework = _registry_load_fw('purer')

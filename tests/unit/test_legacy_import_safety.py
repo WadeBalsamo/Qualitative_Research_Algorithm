@@ -435,53 +435,50 @@ class TestLegacySegmentMigration(unittest.TestCase):
 
     def test_migration_produces_per_session_files(self):
         from process.legacy_migration import migrate_legacy_segments
+        from process.segments_io import list_segmented_sessions, read_session_segments
         n = migrate_legacy_segments(self.tmpdir)
         self.assertEqual(n, 2)
+        segmented = list_segmented_sessions(self.tmpdir)
         for sid in ("c1s1", "c1s2"):
-            seg_path = os.path.join(
-                self.tmpdir, "01_transcripts", "segmented", sid, "segments.jsonl")
-            self.assertTrue(os.path.isfile(seg_path), f"Missing {seg_path}")
-            meta_path = os.path.join(
-                self.tmpdir, "01_transcripts", "segmented", sid, "segmentation_meta.json")
-            self.assertTrue(os.path.isfile(meta_path), f"Missing {meta_path}")
+            self.assertIn(sid, segmented, f"Missing frozen segments for {sid}")
+            self.assertGreater(len(read_session_segments(self.tmpdir, sid)), 0,
+                               f"No segments stored for {sid}")
 
     def test_migration_params_hash_is_legacy_sentinel(self):
         from process.legacy_migration import migrate_legacy_segments
+        from process import db
         migrate_legacy_segments(self.tmpdir)
         for sid in ("c1s1", "c1s2"):
-            meta_path = os.path.join(
-                self.tmpdir, "01_transcripts", "segmented", sid, "segmentation_meta.json")
-            with open(meta_path, encoding="utf-8") as f:
-                meta = json.load(f)
-            self.assertEqual(meta["params_hash"], "legacy-pre-modular")
+            with db.open_db(self.tmpdir) as conn:
+                row = conn.execute(
+                    "SELECT params_hash FROM segments WHERE session_id = ? LIMIT 1",
+                    (sid,)).fetchone()
+            self.assertEqual(row["params_hash"], "legacy-pre-modular")
 
     def test_migration_drops_classification_fields(self):
         from process.legacy_migration import migrate_legacy_segments
+        from process.segments_io import read_session_segments
         migrate_legacy_segments(self.tmpdir)
-        seg_path = os.path.join(
-            self.tmpdir, "01_transcripts", "segmented", "c1s1", "segments.jsonl")
-        with open(seg_path, encoding="utf-8") as f:
-            for line in f:
-                rec = json.loads(line.strip())
-                self.assertNotIn("primary_stage", rec)
-                self.assertNotIn("llm_confidence_primary", rec)
-                self.assertNotIn("llm_justification", rec)
-                self.assertNotIn("rater_votes", rec)
+        # Only raw-segmentation fields are persisted; classification fields stay
+        # at their dataclass defaults on read-back (never carried into the store).
+        for seg in read_session_segments(self.tmpdir, "c1s1"):
+            self.assertIsNone(seg.primary_stage)
+            self.assertIsNone(seg.llm_confidence_primary)
+            self.assertIsNone(seg.llm_justification)
+            self.assertIsNone(seg.rater_votes)
 
     def test_migration_segment_identity_preserved(self):
         from process.legacy_migration import migrate_legacy_segments
+        from process.segments_io import read_session_segments
         migrate_legacy_segments(self.tmpdir)
-        seg_path = os.path.join(
-            self.tmpdir, "01_transcripts", "segmented", "c1s1", "segments.jsonl")
-        with open(seg_path, encoding="utf-8") as f:
-            lines = [json.loads(l.strip()) for l in f if l.strip()]
-        self.assertEqual(len(lines), 2)
-        self.assertEqual(lines[0]["segment_id"], "c1s1_001")
-        self.assertEqual(lines[0]["text"], "Hello I am Diana")
-        self.assertEqual(lines[0]["segment_index"], 0)
-        self.assertEqual(lines[1]["segment_id"], "c1s1_002")
-        self.assertEqual(lines[1]["text"], "I have a lot of pain")
-        self.assertEqual(lines[1]["segment_index"], 1)
+        segs = read_session_segments(self.tmpdir, "c1s1")
+        self.assertEqual(len(segs), 2)
+        self.assertEqual(segs[0].segment_id, "c1s1_001")
+        self.assertEqual(segs[0].text, "Hello I am Diana")
+        self.assertEqual(segs[0].segment_index, 0)
+        self.assertEqual(segs[1].segment_id, "c1s1_002")
+        self.assertEqual(segs[1].text, "I have a lot of pain")
+        self.assertEqual(segs[1].segment_index, 1)
 
     def test_migration_idempotent(self):
         from process.legacy_migration import migrate_legacy_segments
@@ -492,13 +489,10 @@ class TestLegacySegmentMigration(unittest.TestCase):
 
     def test_migration_total_segment_count(self):
         from process.legacy_migration import migrate_legacy_segments
+        from process.segments_io import read_session_segments
         migrate_legacy_segments(self.tmpdir)
-        total = 0
-        for sid in ("c1s1", "c1s2"):
-            seg_path = os.path.join(
-                self.tmpdir, "01_transcripts", "segmented", sid, "segments.jsonl")
-            with open(seg_path, encoding="utf-8") as f:
-                total += sum(1 for l in f if l.strip())
+        total = sum(len(read_session_segments(self.tmpdir, sid))
+                    for sid in ("c1s1", "c1s2"))
         self.assertEqual(total, 4)
 
 
@@ -517,12 +511,10 @@ class TestSegmentationFreshness(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _make_segmented(self, session_id, params_hash):
-        seg_dir = os.path.join(self.tmpdir, "01_transcripts", "segmented", session_id)
-        os.makedirs(seg_dir, exist_ok=True)
-        with open(os.path.join(seg_dir, "segments.jsonl"), "w") as f:
-            f.write("{}")
-        with open(os.path.join(seg_dir, "segmentation_meta.json"), "w") as f:
-            json.dump({"params_hash": params_hash}, f)
+        from process.segments_io import write_session_segments
+        seg = _make_segment(session_id=session_id,
+                            segment_id=f"{session_id}_001", segment_index=0)
+        write_session_segments(self.tmpdir, session_id, [seg], params_hash, force=True)
 
     def test_legacy_pre_modular_is_always_fresh(self):
         self._make_segmented("c1s1", "legacy-pre-modular")
@@ -599,22 +591,16 @@ class TestSegmentReadBack(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _write_segments(self, session_id, segments):
-        from process._freeze import write_frozen
-        seg_dir = os.path.join(self.tmpdir, "01_transcripts", "segmented", session_id)
-        os.makedirs(seg_dir, exist_ok=True)
-        seg_path = os.path.join(seg_dir, "segments.jsonl")
-        raw_fields = ("segment_id", "trial_id", "participant_id", "session_id",
-                      "session_number", "cohort_id", "session_variant", "segment_index",
-                      "start_time_ms", "end_time_ms", "total_segments_in_session",
-                      "speaker", "text", "word_count", "speakers_in_segment", "session_file")
-        def _write(fh):
-            for seg in segments:
-                rec = {f: getattr(seg, f, None) for f in raw_fields}
-                fh.write(json.dumps(rec) + "\n")
-        write_frozen(seg_path, _write, force=True)
-        meta_path = os.path.join(seg_dir, "segmentation_meta.json")
-        with open(meta_path, "w") as f:
-            json.dump({"params_hash": "legacy-pre-modular"}, f)
+        from process.segments_io import write_session_segments
+        # write_session_segments persists only raw-segmentation fields (the DB
+        # equivalent of the old per-session segments.jsonl + segmentation_meta.json).
+        # The old per-session JSONL layout keyed segments by their containing
+        # directory; the SQLite store keys them by the segment's session_id
+        # column, so align the field with the session this helper writes under.
+        for seg in segments:
+            seg.session_id = session_id
+        write_session_segments(self.tmpdir, session_id, segments,
+                               "legacy-pre-modular", force=True)
 
     def test_roundtrip_text_identical(self):
         segs = [_make_segment(text="Original text exactly preserved")]
@@ -914,11 +900,11 @@ class TestOverlayIOSafety(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _read_overlay_lines(self, key):
-        path = os.path.join(self.tmpdir, "02_meta", "classifications", f"{key}_labels.jsonl")
-        if not os.path.isfile(path):
-            return []
-        with open(path, encoding="utf-8") as f:
-            return [json.loads(l.strip()) for l in f if l.strip()]
+        # Overlay records now live in SQLite; read_overlay returns them as dicts
+        # ({'segment_id', <fields>}) sorted by segment_id — same shape the old
+        # per-key JSONL rows had.
+        from process import classifications_io as cio
+        return cio.read_overlay(self.tmpdir, key)
 
     def test_theme_overlay_fields_exclude_core_identity(self):
         from process.classifications_io import THEME_OVERLAY_FIELDS
@@ -1227,7 +1213,11 @@ class TestEndToEndLegacyImport(unittest.TestCase):
         self._mkdirs("02_meta", "training_data")
         with open(os.path.join(self.tmpdir, "02_meta", "training_data", "master_segments.jsonl"), "w") as f:
             f.write(json.dumps({"segment_id": "test_001", "session_id": "test", "segment_index": 0, "text": "hello"}) + "\n")
+        # read_master_segments is now DB-backed (frozen segments + overlays); the
+        # legacy master_segments.jsonl must first be migrated into the SQLite store.
+        from process.legacy_migration import migrate_legacy_segments
         from process.segments_io import read_master_segments
+        migrate_legacy_segments(self.tmpdir)
         self.assertEqual(read_master_segments(self.tmpdir)[0].text, "hello")
 
 
