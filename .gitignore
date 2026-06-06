@@ -3,47 +3,47 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Test / build caches
+# Build / packaging artifacts
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Test / tooling caches
 .pytest_cache/
 .mypy_cache/
 .coverage
 htmlcov/
+.venv/
+
+# Local data, models, and pipeline output (never committed)
 context/
 data/
 models/
-MoveMORE-Partial-Dataset/
 output/
-data/output/
-#data/input/*
-data/*.vtt
-data/*
-__pycache__/
-.venv/
-wait_and_process.sh
-CLAUDE.md
-claw/
-.gitignore
-.claw/
-.sandbox-tmp/
-*/.sandbox-tmp/
-*/.sandbox-home/
-.sandbox-home/
-*/.claude
-*/__pycache__/
-.claude
-__pycache__/
-*.pyc
-__pycache__
-*:Zone.Identifier
+MoveMORE-Partial-Dataset/
 results/**/llm_results_status_*.txt
-.clawd-todos.json
+
+# Local research scratch / source material (not part of the published repo)
+references/
+plan.md
+wait_and_process.sh
 vamr_manuscript.txt
 varieties_of_contemplative_experience.txt
 MoveMORE_protocol.txt
-references/
-references/*
-plan.md
+
+# Editor / sandbox / tooling artifacts
+.claude
+*/.claude
+.claw/
+*/.claw
+.sandbox-home/
+*/.sandbox-home/
+.sandbox-tmp/
+*/.sandbox-tmp/
 .clawd-todos.json
+*:Zone.Identifier
+
 # QRA test artifacts
 tests/testrun-outputs/
 tests/unit_results.txt
