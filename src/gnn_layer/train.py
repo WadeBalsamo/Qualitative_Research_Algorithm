@@ -224,7 +224,8 @@ def _subset_targets(targets: dict, keep_v_pos, keep_p_pos) -> dict:
 
 
 def crossval_predictions(graph, targets: dict, config, n_vce: int = 0,
-                         return_conf: bool = False, return_logits: bool = False) -> dict:
+                         return_conf: bool = False, return_logits: bool = False,
+                         groups: Optional[Dict[str, "object"]] = None) -> dict:
     """Out-of-sample VAAMR/PURER predictions via k-fold cross-validation.
 
     For each fold, that fold's VAAMR and PURER target rows are masked from the
@@ -232,6 +233,14 @@ def crossval_predictions(graph, targets: dict, config, n_vce: int = 0,
     held-out nodes. The returned predictions are therefore on segments the model
     did NOT learn from — the basis for the reliability gate that decides when the
     graph can scale without LLMs. Per-fold seeds are deterministic.
+
+    ``groups``: optional ``{segment_id: group_key}`` map. When given AND
+    ``config.participant_grouped_cv`` is True, folds hold out WHOLE groups
+    (StratifiedGroupKFold by participant/session) instead of random segments — this
+    removes the transcript-graph leakage that inflates a random-k-fold κ (a held-out
+    segment's temporal/kNN neighbours otherwise include its own labelled
+    same-participant segments). ``None`` (or the flag off) → the legacy random k-fold,
+    so all existing callers are byte-compatible. See graph_experiments.md §4.5.
 
     Returns {'vaamr': [(segment_id, pred_int), ...], 'purer': [(segment_id, pred_int), ...]}.
     When ``return_conf=True`` each tuple is extended to (segment_id, pred_int, conf_float)
@@ -256,18 +265,47 @@ def crossval_predictions(graph, targets: dict, config, n_vce: int = 0,
 
     folds = int(getattr(config, 'validation_folds', 5) or 1)
     rng = np.random.default_rng(int(config.seed))
+    grouped = bool(groups) and bool(getattr(config, 'participant_grouped_cv', True))
 
-    def _make_folds(n):
+    def _node_groups(idx_t):
+        """Group key per labelled node (None if grouping off or any key missing)."""
+        if not grouped or idx_t is None or not int(idx_t.numel()):
+            return None
+        g = [groups.get(str(node_ids[int(idx_t[i])])) for i in range(int(idx_t.numel()))]
+        return g if all(x is not None for x in g) else None
+
+    v_groups = _node_groups(v_idx)
+    p_groups = _node_groups(p_idx)
+    v_y = (targets['contrast_label'].tolist()
+           if v_groups is not None and 'contrast_label' in targets else None)
+    p_y = (targets['purer_label'].tolist()
+           if p_groups is not None and 'purer_label' in targets else None)
+
+    def _make_folds(n, y=None, g=None):
         if n == 0:
             return []
+        # Participant/session-GROUPED folds (the honest default): hold out whole groups so a
+        # held-out node never shares a participant with a training node (no leakage).
+        if g is not None and len(set(g)) >= 2 and folds > 1:
+            k = min(folds, len(set(g)))
+            idx = np.arange(n).reshape(-1, 1)
+            for Splitter, kw in (('StratifiedGroupKFold', dict(shuffle=True, random_state=int(config.seed))),
+                                 ('GroupKFold', {})):
+                try:
+                    from sklearn import model_selection as _ms
+                    sp = getattr(_ms, Splitter)(n_splits=k, **kw)
+                    return [np.asarray(te, dtype=int) for _, te in sp.split(idx, y, g)]
+                except Exception:
+                    continue
+        # Legacy random k-fold (groups absent / flag off / degenerate group count).
         perm = rng.permutation(n)
         if folds <= 1:
             h = max(1, int(round(n * float(getattr(config, 'validation_holdout', 0.2)))))
             return [perm[:h]]  # single held-out fold
         return [f for f in np.array_split(perm, min(folds, n)) if len(f)]
 
-    v_folds = _make_folds(n_v)
-    p_folds = _make_folds(n_p)
+    v_folds = _make_folds(n_v, v_y, v_groups)
+    p_folds = _make_folds(n_p, p_y, p_groups)
     k = max(len(v_folds), len(p_folds))
 
     for fi in range(k):
