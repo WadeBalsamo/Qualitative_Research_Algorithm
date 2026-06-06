@@ -45,9 +45,9 @@ class TestRealGnn(unittest.TestCase):
         # Reliability report
         val = os.path.join(paths.reports_gnn_dir(self.out), 'validation.txt')
         self.assertTrue(os.path.isfile(val), "validation.txt not written")
-        # Consensus overlay
-        overlay = paths.classification_overlay_path(self.out, 'gnn')
-        self.assertTrue(os.path.isfile(overlay), "gnn_labels overlay not written")
+        # Consensus overlay (now a table in qra.db, not an on-disk *_labels.jsonl)
+        from process import classifications_io as _cio
+        self.assertTrue(_cio.overlay_exists(self.out, 'gnn'), "gnn overlay not written")
         # Discovery CSVs
         gdir = paths.gnn_data_dir(self.out)
         self.assertTrue(os.path.isfile(os.path.join(gdir, 'segment_positions.csv')))
