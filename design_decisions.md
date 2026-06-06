@@ -197,6 +197,18 @@ model (D-C). Mechanism (M2) graph kept regardless.
   5 real dims). ⇒ the **mechanism deliverable uses a 5-class progression model** (best 5-class GNN,
   e.g. A4) while the **classifier of record may be 6-class** (A4n). The two missions can use different
   head configs on the same embedding/graph substrate.
+- **2026-06-06 — SA-mech merged (triangulation) + SA3 merged (baselines).** Integration branch now
+  carries Qwen backend + imbalance + triangulation + probe/C&S. `triangulation_metric` computes ρ +
+  participant-clustered bootstrap CI + FDR-restricted sign agreement (n_fdr=0 on real data ⇒
+  `converges` strictly False, as expected); `run_counterfactual_experiment` runs the readout un-gated
+  with gate-κ echoed as trust context. Baselines: probe (`class_weight` per flag) + C&S (α=0.8, 50
+  iters, row-normalized D⁻¹A, train-clamped smooth).
+- **2026-06-06 — MiniLM mechanism BASELINE (pipeline validated; negative result).** Dry-ran the full
+  mechanism path on MiniLM (train 5-class GNN + precipitates edges → counterfactual → triangulate):
+  works end-to-end (161 cue blocks, 20 cells). Per-move influence ranks Utilization > Reframing >
+  Phenomenology > Education > Reinforcement, but **Spearman ρ=0.014, 95% CI [−0.16, 0.18] (includes
+  0) → NO convergence** (gate κ=0.247 trust context). ⇒ MiniLM features are too weak for the
+  mechanism, exactly as for the classifier. The **Qwen run is the real §1A test** (pending re-embed).
 
 ## 9. PRIMARY work-stream — mechanism triangulation (the peer-review deliverable)
 
