@@ -446,7 +446,7 @@ def generate_session_txt_report(
         lines.append('')
 
     content = '\n'.join(lines)
-    out_dir = os.path.join(_paths.human_reports_dir(output_dir), 'per_session')
+    out_dir = _paths.reports_per_session_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f'session_{session_id}.txt')
     with open(path, 'w', encoding='utf-8') as f:

@@ -174,7 +174,7 @@ In addition to existing figures, the following have been added:
 
 ### Language Atlas (`reports/language_atlas.py`)
 
-The atlas produces a curriculum-actionable guide to the key language patterns driving VAAMR stage progression. For each top-ranked (FDR-significant) PURER move, microskill, emergent GNN motif, and named coupling factor, it renders `FROM participant quote → therapist CUE text → TO participant quote` blocks with stage-mixture annotations and effect sizes.
+The atlas produces a curriculum-actionable guide to the key language patterns driving VAAMR stage progression. For each top-ranked (FDR-significant) PURER move, emergent GNN motif, and named coupling factor, it renders `FROM participant quote → therapist CUE text → TO participant quote` blocks with stage-mixture annotations and effect sizes.
 
 Emergent motifs (high GNN influence + low PURER purity) are highlighted as candidates for new therapeutic constructs requiring human review. Alliance-named coupling factors (Capability E) appear if the GNN layer was run.
 

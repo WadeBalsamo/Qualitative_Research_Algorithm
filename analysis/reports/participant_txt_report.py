@@ -228,7 +228,7 @@ def generate_participant_txt_report(
 
     # Strip leading "Participant_" (case-insensitive) to avoid participant_Participant_MM.txt
     clean_id = re.sub(r'^[Pp]articipant_', '', participant_id)
-    out_dir = os.path.join(_paths.human_reports_dir(output_dir), 'per_participant')
+    out_dir = _paths.reports_per_participant_dir(output_dir)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f'participant_{clean_id}.txt')
     with open(path, 'w', encoding='utf-8') as f:

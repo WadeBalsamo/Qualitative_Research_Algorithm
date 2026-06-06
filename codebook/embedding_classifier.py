@@ -161,6 +161,7 @@ class EmbeddingCodebookClassifier:
                 model_id,
                 model_kwargs={'torch_dtype': dtype},
                 trust_remote_code=True,
+                device=getattr(self.config, 'device', None),  # None → auto-CUDA
             )
             loaded = True
         except TypeError:
@@ -200,7 +201,9 @@ class EmbeddingCodebookClassifier:
         if not loaded:
             # Fallback: load without dtype hint (v2 compatibility)
             try:
-                self._model = SentenceTransformer(model_id, trust_remote_code=True)
+                self._model = SentenceTransformer(
+                    model_id, trust_remote_code=True,
+                    device=getattr(self.config, 'device', None))
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to load embedding model '{model_id}': {e}"
@@ -309,6 +312,8 @@ class EmbeddingCodebookClassifier:
 
         targets = codebook.to_embedding_targets()
         n_codes = len(targets)
+        if n_codes == 0:
+            return {seg.segment_id: [] for seg in segments}
         cw = self.config.criteria_weight
         ew = self.config.exemplar_weight
         max_words = self.config.max_exemplar_tokens

@@ -80,15 +80,6 @@ class Segment:
     codebook_disagreements: Optional[List[str]] = None
     codebook_confidence: Optional[Dict[str, float]] = None
 
-    # Microcounseling-skill label fields (therapist sub-layer codebook; populated by
-    # the microskill classifier — the therapist-side twin of the VCE codebook).
-    # Only set when speaker == 'therapist'.
-    microskill_labels_embedding: Optional[List[str]] = None
-    microskill_labels_llm: Optional[List[str]] = None
-    microskill_labels_ensemble: Optional[List[str]] = None
-    microskill_disagreements: Optional[List[str]] = None
-    microskill_confidence: Optional[Dict[str, float]] = None
-
     # PURER label fields (populated by Stage 3c; only set when speaker == 'therapist')
     purer_primary: Optional[int] = None
     purer_secondary: Optional[int] = None
@@ -101,6 +92,21 @@ class Segment:
     purer_needs_review: bool = False
     purer_rater_ids: Optional[List[str]] = None
     purer_rater_votes: Optional[List[Dict]] = None
+
+    # GNN consensus-distillation fields (populated by the GNN layer when
+    # gnn_layer.produce_consensus_labels=True). gnn_vaamr_* apply to participant
+    # segments, gnn_purer_* to therapist segments. These become the label of record
+    # only when gnn_layer.gnn_authoritative=True (provenance tier 'gnn_consensus').
+    gnn_vaamr_pred: Optional[int] = None
+    gnn_vaamr_conf: Optional[float] = None
+    gnn_purer_pred: Optional[int] = None
+    gnn_purer_conf: Optional[float] = None
+    gnn_label_source: Optional[str] = None  # e.g. 'gnn_trained' | 'gnn_scale_mode'
+    # Abstention/deferral (A2): True when the graph's max-prob fell below the per-stage
+    # confidence floor — the graph defers and master_dataset keeps the LLM label even when
+    # gnn_authoritative + gate are satisfied, so a confident-wrong label cannot be promoted.
+    gnn_vaamr_abstain: Optional[bool] = None
+    gnn_purer_abstain: Optional[bool] = None
 
     # Validation fields (populated after human coding comparison)
     human_label: Optional[int] = None

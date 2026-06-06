@@ -1,7 +1,7 @@
 """
 analysis/reports/superposition_report.py
 -----------------------------------------
-Human-readable superposition report (06_reports/report_superposition.txt).
+Human-readable superposition report (06_reports/02_mechanism/superposition.txt).
 
 Surfaces the VAAMR stage-mixture signal the hard reports collapse: the corpus
 superposition rate, the stage co-occurrence ("cusp") matrix, how liminality
@@ -32,7 +32,7 @@ _SOURCE_NOTE = {
 
 
 def generate_superposition_report(df: pd.DataFrame, framework: dict, output_dir: str) -> str:
-    """Write report_superposition.txt. Returns the path (or '' if no mixtures)."""
+    """Write 02_mechanism/superposition.txt. Returns the path (or '' if no mixtures)."""
     if 'mixture' not in df.columns or len(df) == 0:
         return ''
 
@@ -141,9 +141,9 @@ def generate_superposition_report(df: pd.DataFrame, framework: dict, output_dir:
         L.append(_wrap_quote(str(r.get('text', ''))[:400], indent=4))
         L.append("")
 
-    rep_dir = _paths.human_reports_dir(output_dir)
+    rep_dir = _paths.reports_mechanism_dir(output_dir)
     os.makedirs(rep_dir, exist_ok=True)
-    path = os.path.join(rep_dir, 'report_superposition.txt')
+    path = os.path.join(rep_dir, 'superposition.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write("\n".join(L))
     return path

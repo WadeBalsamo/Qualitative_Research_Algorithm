@@ -354,21 +354,25 @@ python qra.py run --resume-from ./checkpoints/last_run
 
 ## Command-Line Interface Reference
 
+Running `python qra.py` with **no subcommand** launches the interactive TUI (see [Interactive TUI Reference](#interactive-tui-reference) below), which reaches every capability in this table through guided menus.
+
 ### Main Commands
 | Command | Description |
 |---------|-------------|
-| `setup` | Interactive configuration wizard |
-| `run` | Execute complete pipeline |
-| `analyze` | Post-hoc results analysis |
-| `ingest` | Segment transcripts only |
-| `classify` | Run classifiers only |
-| `assemble` | Join segments and overlays |
-| `testset create` | Create new validation set |
-| `testset refresh` | Update AI answer keys |
-| `testset list` | List existing test sets |
-| `cv create` | Create content-validity testset |
-| `cv refresh` | Refresh content-validity AI answer keys |
-| `cv list` | List content-validity testsets |
+| *(none)* | Launch the interactive TUI |
+| `setup` | Interactive configuration wizard (creates `qra_config.json`) |
+| `run` | Execute the complete pipeline (ingest → classify → assemble → analyze) |
+| `add-data` | Incrementally add new transcripts to an existing project (frozen segments/testsets untouched) |
+| `ingest` | Segment + freeze transcripts only (Stage 1) |
+| `classify` | Run classifiers only — `--what vaamr\|purer\|codebook\|cross-validation\|all` |
+| `assemble` | Join frozen segments and classification overlays into `master_segments` |
+| `validate` | Refresh human/AI validation artifacts without re-classifying |
+| `analyze` | Post-hoc results analysis (`--gnn` / `--no-gnn` to force the GNN layer) |
+| `reclassify-run` | Redo a single classification run (e.g. fix one run's model) |
+| `testset create` / `refresh` / `list` | Manage frozen validation test sets (`--kind vaamr\|purer\|codebook`) |
+| `cv create` / `refresh` / `list` | Manage content-validity test sets (`--framework vaamr\|purer`) |
+| `apply-anonymization` | Retroactively scrub PHI names from already-frozen segment text |
+| `edit-anonymization` | Edit the speaker anonymization key and cascade the change across all artifacts |
 
 ### Advanced Options
 ```bash
@@ -378,8 +382,22 @@ python qra.py ingest -o ./output/ --reingest c1s1
 # Re-segment all sessions
 python qra.py ingest -o ./output/ --reingest-all
 
-# Force re-classification
-python qra.py classify -o ./output/ --what theme --force
+# Classify one layer without the automatic downstream assemble/analyze
+python qra.py classify -o ./output/ --what vaamr --no-downstream
+
+# LLM-free graph "scale mode" (after the GNN reliability gate passes)
+python qra.py classify -o ./output/ --backend gnn
+
+# Force the GNN representation-and-discovery layer on/off at analyze-time
+python qra.py analyze -o ./output/ --gnn
+python qra.py analyze -o ./output/ --no-gnn
+
+# Fix a single run's model, then auto re-assemble + re-analyze
+python qra.py reclassify-run -o ./output/ --run 3 --model nvidia/nemotron-3-nano-30b
+
+# Retroactively anonymize frozen text; edit the speaker key with full cascade
+python qra.py apply-anonymization -o ./output/ --yes
+python qra.py edit-anonymization -o ./output/ --merge "Jill,Bill=therapist_1" --yes
 
 # Verbose segmentation logging
 python qra.py run --verbose-segmentation
@@ -387,6 +405,43 @@ python qra.py run --verbose-segmentation
 # Zero-shot content-validity test (skips full pipeline)
 python qra.py run --test-zeroshot --preset small --output-dir ./data/output/
 ```
+
+---
+
+## Interactive TUI Reference
+
+Running `python qra.py` with no subcommand launches a menu-driven Text User Interface. It is the recommended entry point for new users — it surfaces every pipeline stage, validation tool, and editor through guided prompts, and continuously displays project state (which stages have run, how many testsets exist, and the GNN's reliability status).
+
+### Main Menu
+| Option | Action |
+|--------|--------|
+| **1 — New Project** | Run the setup wizard, then optionally execute the full pipeline immediately |
+| **2 — Open Project** | Load an existing (or legacy) project directory and access all stages, testset management, and editors |
+| **3 — About / Help** | Framework reference (VAAMR/PURER/VCE), on-disk layout, and CLI command summary |
+| **0 — Exit** | Quit |
+
+### New Project — Setup Wizard
+The wizard offers three modes — **Small/Test** (lightweight models for rapid iteration), **Production** (large research-grade models), and **Custom** (step-by-step control of every hyperparameter) — and walks through: input/output paths, speaker-key import, PHI text anonymization, therapist/speaker role identification, PURER cue options, segmentation parameters, LLM backend and per-run checker models, framework and exemplar selection, codebook (VCE) options, classification parameters and confidence thresholds, validation and content-validity test sets, post-pipeline analysis, therapist-cue summarization, session/participant summaries, the **GNN layer** (label mode, scope, reliability-gate target, authoritative toggle, ablation, motif/factor counts), and finally save-and-run.
+
+### Open Project Menu
+The menu adapts to detected project state. Available actions:
+
+| Option | Action |
+|--------|--------|
+| **1 — Ingest & Freeze Segments** | Stage 1: segment transcripts, write frozen `segments.jsonl` (migrates legacy layouts) |
+| **2 — Classify VAAMR** | Stage 3: participant-segment VAAMR classification (optional zero-shot mode) |
+| **3 — Classify PURER** | Stage 3c: therapist cue-block PURER classification; sub-menu to re-run all / change model / add a run / redo one run |
+| **4 — Assemble Master Dataset** | Stage 6: join overlays → `master_segments` + coded transcripts + validation artifacts |
+| **5 — Analysis & Reports** | Stage 8: longitudinal/session/theme analyses, mechanism + efficacy dossiers, figures, summaries |
+| **6 — Testset Management** | Create VAAMR/PURER testsets, refresh AI answer keys, list frozen testsets |
+| **7 — Content-Validity Testsets** | Create/refresh/list content-validity testsets (exemplar/subtle/adversarial items) |
+| **8 — Refresh Validation Artifacts** | Re-emit human forms, coded transcripts, and AI answer keys without re-classifying |
+| **9 — Edit Configuration** | Change LM Studio URL, models, `n_runs`; toggle codebook / PURER / **GNN layer** / **GNN-authoritative labels**; open `qra_config.json` in `$EDITOR` |
+| **10 — Edit Speaker Anonymization Key** | Launch the anonymization editor (rename/merge/relabel speakers, cascade across all artifacts) |
+| **11 — Classify (Graph Consensus, LLM-Free)** | Label new data with the trained graph — recommended once `report_gnn_validation.txt` reports the graph is ready; warns and asks for confirmation otherwise |
+
+### Anonymization Editor (Open Project → option 10)
+A roster TUI listing every speaker as `anonymized_id ⟵ original name (role)`. Per-speaker actions: rename anonymized ID, rename raw name, change role (participant/therapist/staff), merge into another speaker, remove. Roster-level actions: walk through all speakers in sequence (`r`), add a speaker (`a`), toggle NLP name re-removal (`n`), **preview cascade as a dry-run** (`p`), and **apply changes & cascade** (`w`) — which writes a timestamped backup, rewrites frozen segment fields/IDs/tokens, remaps overlays and checkpoints, updates validation worksheets, and regenerates the master dataset and analysis. The same operations are scriptable via `qra edit-anonymization` flags (`--rename`, `--rename-raw`, `--set-role`, `--merge`, `--remove-names`, `--dry-run`, `--yes`).
 
 ---
 
@@ -667,7 +722,7 @@ Each test set spec (`TestSetSpec`) accepts:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | true | Enable stage-superposition enrichment |
-| `mixture_source` | string | `auto` | Mixture source: `gnn`, `llm_ballots`, `secondary_stage`, or `auto` (priority order) |
+| `mixture_source` | string | `auto` | Mixture source: `gnn`, `ballots`, `secondary`, or `auto` (priority order: GNN → ballots → secondary) |
 | `liminal_entropy_threshold` | float | 0.6 | Normalized entropy threshold for liminal classification |
 | `liminal_gap_threshold` | float | 0.25 | Max gap between top-two mixture components for liminality |
 | `active_stage_threshold` | float | 0.15 | Minimum mixture component to count as "active" |
@@ -686,20 +741,43 @@ Each test set spec (`TestSetSpec`) accepts:
 
 #### Sub-config: `gnn_layer`
 
+The GNN layer is ON by default and runs at analyze-time (set `enabled=False` to skip it). It plays two roles: discovery/triangulation (Capabilities A–E) and a **graph-distilled consensus classifier** with an out-of-sample reliability gate. See `methodology.md` §8.5 for the as-built specification.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | false | Enable GNN analysis layer |
-| `embedding_model` | string | `Qwen/Qwen3-Embedding-8B` | Segment embedding model (reused from segmentation) |
+| `enabled` | bool | false | Enable the GNN layer (or use `qra analyze --gnn`) |
+| `embedding_model` | string | `Qwen/Qwen3-Embedding-8B` | Segment embedding model (reused from segmentation/VCE — no extra model) |
+| `use_query_prefix` | bool | true | Apply the embedding model's query prefix |
+| `embedding_batch_size` | int | 8 | Embedding encode batch size |
+| `cache_embeddings` | bool | true | Cache embeddings to `02_meta/gnn/segment_embeddings.npz` |
+| `knn_k` | int | 8 | kNN similarity edges per segment node (enables inductive attachment of new data) |
+| `include_vce_nodes` | bool | false | Add VCE-code anchor nodes (off by default; toggled on for the Capability-D ablation) |
+| `include_purer_nodes` | bool | true | Add PURER-move anchor nodes |
+| `cross_framework_min_lift` | float | 1.5 | Lift threshold for cross-framework (VAAMR↔VCE) edges |
 | `hidden_dim` | int | 128 | GraphSAGE hidden dimension |
 | `n_layers` | int | 2 | Number of SAGE aggregation layers |
-| `knn_k` | int | 5 | kNN edges per node for inductive similarity graph |
-| `objectives` | string[] | `[soft_vaamr, progression, purer, contrastive, link_prediction]` | Training objectives |
-| `label_mode` | string | `weak` | Label source: `weak` (LLM ballots), `human`, `self_supervised` |
-| `epochs` | int | 100 | Maximum training epochs |
-| `n_motif_clusters` | int | 12 | Number of cue motif clusters (Capability B) |
-| `min_motif_influence` | float | 0.1 | Minimum influence score to report a motif |
+| `dropout` | float | 0.5 | Dropout |
+| `objectives` | string[] | `[soft_vaamr, progression, contrastive, link_prediction]` | Training objectives (also: `vce_multilabel`, `purer`) |
+| `label_mode` | string | `weak` | Training signal: `weak` (LLM ballots), `human` (human-coded subset only), `self_supervised` (structure only) |
+| `contrastive_temp` | float | 0.1 | InfoNCE temperature for the stage-separating contrastive head |
+| `epochs` | int | 300 | Maximum training epochs |
+| `lr` | float | 0.001 | Learning rate |
+| `patience` | int | 40 | Early-stopping patience |
+| `seed` | int | 42 | Random seed |
+| `device` | string\|null | null | `cuda`/`cpu`, or null to auto-detect |
+| `run_on_participants` | bool | true | Position participant segments (VAAMR mixture / progression) |
+| `run_on_therapists` | bool | true | Position therapist segments (cue-block) |
+| `n_motif_clusters` | int | 12 | Number of cue-motif clusters (Capability B) |
+| `min_motif_influence` | float | 1.2 | Forward-transition lift above which a motif is flagged for review |
+| `motif_min_block_count` | int | 3 | Ignore motifs with fewer than this many cue blocks |
 | `n_latent_factors` | int | 5 | Latent coupling factors (Capability E) |
-| `run_gnn_ablation` | bool | false | Enable construct-head ablation (Capability D, adds training time) |
+| `interpret_against_cf_ic` | bool | true | Name latent factors against the inline CF/IC alliance lexicon |
+| `run_gnn_ablation` | bool | false | Construct-head ablation (Capability D; doubles training cost) |
+| `produce_consensus_labels` | bool | true | Write per-segment graph labels to the `gnn_labels` overlay |
+| `gnn_authoritative` | bool | false | **Promotion switch** — make graph labels the label of record (only after the reliability gate passes) |
+| `validation_folds` | int | 5 | k for k-fold held-out reliability evaluation |
+| `validation_holdout` | float | 0.2 | Single-holdout fraction when `validation_folds ≤ 1` |
+| `irr_target` | float | 0.70 | κ vs LLM consensus at which LLM-free graph scaling is recommended |
 
 #### Sub-config: `session_summaries` / `participant_summaries`
 
@@ -720,6 +798,9 @@ Each test set spec (`TestSetSpec`) accepts:
 | `02_meta/classifications/purer_labels.jsonl` | JSONL | PURER classification overlay (refreshable) |
 | `02_meta/classifications/codebook_labels.jsonl` | JSONL | VCE codebook overlay (refreshable) |
 | `02_meta/classifications/cross_validation_labels.jsonl` | JSONL | Cross-validation overlay |
+| `02_meta/classifications/gnn_labels.jsonl` | JSONL | Graph-distilled consensus overlay (`gnn_vaamr_pred`/`conf`, `gnn_purer_pred`/`conf`, `gnn_label_source`) |
+| `02_meta/gnn/segment_embeddings.npz` | NPZ | Cached Qwen3 segment embeddings (incremental) |
+| `02_meta/gnn/model/weights.pt` + `manifest.json` | PyTorch/JSON | Trained GraphSAGE checkpoint + config/seed/metrics |
 | `02_meta/classifications/classification_manifest.json` | JSON | Provenance record of all overlays |
 | `02_meta/training_data/master_segments.jsonl` | JSONL | Full assembled dataset (segments + all overlays joined) |
 | `02_meta/training_data/master_segments.csv` | CSV | Tabular version of master segments |
@@ -751,12 +832,15 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `consensus_vote` | int or string | Final consensus label or `ABSTAIN` |
 | `label_confidence_tier` | string | `High`, `Medium`, `Low`, or `Unclassified` |
 | `final_label` | int | Gold-standard label after human adjudication |
-| `final_label_source` | string | Source of final label (`llm_only`, `human`, `adjudicated`) |
+| `final_label_source` | string | Source of final label — resolution order `adjudicated` > `human_consensus` > `gnn_consensus` > `llm_zero_shot` |
 | `codebook_labels_ensemble` | string[] | Multi-label VCE codes from ensemble reconciliation |
 | `codebook_confidence` | object | Per-code confidence scores |
 | `purer_primary` | int | PURER primary move type (0-4) |
 | `purer_confidence_primary` | float | PURER confidence score |
 | `purer_agreement_level` | string | PURER agreement level |
+| `gnn_vaamr_pred` / `gnn_vaamr_conf` | int / float | Graph-distilled VAAMR prediction + confidence (from `gnn_labels` overlay) |
+| `gnn_purer_pred` / `gnn_purer_conf` | int / float | Graph-distilled PURER prediction + confidence |
+| `gnn_label_source` | string | `gnn_trained` or `gnn_scale_mode` |
 | `human_label` | int | Human-coded label (when available) |
 | `in_human_coded_subset` | bool | Included in human evaluation set |
 
@@ -788,11 +872,11 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `03_analysis_data/gnn/segment_positions.csv` | Per-segment GNN mixture, progression_coord, node_type (Capability A) |
 | `03_analysis_data/gnn/cue_motifs.csv` | Motif stats: influence, purity, n_exemplars (Capability B) |
 | `03_analysis_data/gnn/cue_block_assignments.csv` | Per-cue-block motif assignment sidecar (Capability B) |
-| `03_analysis_data/gnn/gnn_head_predictions.csv` | Per-segment GNN head predictions for purer/vce/microskill (Capability C) |
+| `03_analysis_data/gnn/gnn_head_predictions.csv` | Per-segment GNN head predictions for purer/vce (Capability C) |
 | `03_analysis_data/gnn/gnn_vs_llm_lift.csv` | GNN-vs-LLM lift comparison (Capability C) |
-| `03_analysis_data/gnn/purer_microskill_lift.csv` | PURER × microskill lift table (Capability C) |
 | `03_analysis_data/gnn/coupling_factors.csv` | Latent coupling factors with forward correlation (Capability E) |
 | `03_analysis_data/gnn/gnn_construct_signal.csv` | Ablation loss deltas per construct head (Capability D) |
+| `03_analysis_data/gnn/gnn_validation.csv` | Per-class out-of-sample reliability-gate table (machine-readable) |
 | `06_reports/report_superposition.txt` | Corpus superposition summary, cusp density, liminal exemplars |
 | `06_reports/report_mechanism.txt` | PURER→VAAMR mechanism dossier with CI/p/FDR |
 | `06_reports/report_avoidance_barrier.txt` | Avoidance-barrier transition ranking |
@@ -800,6 +884,7 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `06_reports/report_language_atlas.txt` | Therapeutic language atlas |
 | `06_reports/report_gnn_emergent_motifs.txt` | Emergent cue motifs flagged for human review (Capability B) |
 | `06_reports/report_gnn_triangulation.txt` | GNN↔LLM↔human agreement and lift comparison (Capability C) |
+| `06_reports/report_gnn_validation.txt` | **Reliability gate** — per-stage/per-move out-of-sample κ vs LLM consensus + human, with the "ready for LLM-free scaling? YES/NO" verdict |
 | `06_reports/report_gnn_construct_signal.txt` | Construct signal ablation ranking (Capability D) |
 | `06_reports/report_gnn_coupling.txt` | Latent coupling factors and alliance naming (Capability E) |
 
@@ -911,7 +996,7 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | File | Description |
 |------|-------------|
 | `runner.py` | GNN analysis entry point — orchestrates all five capabilities |
-| `config.py` | `GnnLayerConfig` dataclass (enabled=False default) |
+| `config.py` | `GnnLayerConfig` dataclass (enabled=True default) |
 | `embeddings.py` | Qwen3 segment embedding reuse with NPZ cache |
 | `graph_builder.py` | Heterogeneous graph: temporal chain, anchor/label, kNN, cross-framework edges |
 | `model.py` | Pure-PyTorch GraphSAGE with multi-task heads (no torch-geometric needed) |
@@ -923,6 +1008,7 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `triangulation.py` | GNN↔LLM↔human agreement (Cohen's κ), triangulation report |
 | `ablation.py` | Construct-head ablation: which label families carry independent signal? (Capability D) |
 | `coupling.py` | Latent participant↔therapist coupling factors, CF/IC alliance naming (Capability E) |
+| `validation.py` | Out-of-sample reliability gate: per-stage/per-move κ vs LLM consensus + human, YES/NO scaling verdict |
 | `reports.py` | GNN artifact writers: CSVs and human-readable reports |
 
 ### Theme Framework (Markdown Source)

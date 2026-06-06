@@ -164,16 +164,66 @@ def figures_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '05_figures')
 
 
-# ── Human-readable reports ────────────────────────────────────────────────
+# ── Human-readable reports (tiered, numbered) ─────────────────────────────
+#
+# 06_reports/ is organized into a numbered tier so reading order is obvious:
+#   00_READ_ME.txt / 00_executive_summary.txt  — start here
+#   01_outcomes/    — did the program work (efficacy, longitudinal, barrier)
+#   02_mechanism/   — how it works (transitions, cue→response, PURER, atlas…)
+#   03_per_session/ — per-session drill-down
+#   04_per_participant/
+#   05_per_stage/   — per VAAMR stage + codebook exemplars
+#   06_gnn/         — GNN discovery + validation
+#   07_methods_appendix.txt — how each metric is computed + caveats
 
 def human_reports_dir(run_dir: str) -> str:
     """Root for all human-readable .txt reports."""
     return os.path.join(run_dir, '06_reports')
 
 
+def reports_outcomes_dir(run_dir: str) -> str:
+    """Program-outcome reports: efficacy, longitudinal, avoidance barrier."""
+    return os.path.join(run_dir, '06_reports', '01_outcomes')
+
+
+def reports_mechanism_dir(run_dir: str) -> str:
+    """Mechanism reports: transitions, cue→response, PURER, mechanism, atlas, superposition."""
+    return os.path.join(run_dir, '06_reports', '02_mechanism')
+
+
+def reports_per_session_dir(run_dir: str) -> str:
+    """Per-session drill-down reports and the session-distribution overview."""
+    return os.path.join(run_dir, '06_reports', '03_per_session')
+
+
+def reports_per_participant_dir(run_dir: str) -> str:
+    """Per-participant longitudinal drill-down reports."""
+    return os.path.join(run_dir, '06_reports', '04_per_participant')
+
+
+def reports_gnn_dir(run_dir: str) -> str:
+    """GNN discovery & validation reports (validation, triangulation, motifs, coupling)."""
+    return os.path.join(run_dir, '06_reports', '06_gnn')
+
+
+def executive_summary_path(run_dir: str) -> str:
+    """Deterministic program-improvement brief (top-level synthesis)."""
+    return os.path.join(human_reports_dir(run_dir), '00_executive_summary.txt')
+
+
+def reports_readme_path(run_dir: str) -> str:
+    """Guide to every report in 06_reports/ with recommended reading order."""
+    return os.path.join(human_reports_dir(run_dir), '00_READ_ME.txt')
+
+
+def methods_appendix_path(run_dir: str) -> str:
+    """How each report/metric is computed, with methodological caveats."""
+    return os.path.join(human_reports_dir(run_dir), '07_methods_appendix.txt')
+
+
 def themes_dir(run_dir: str) -> str:
-    """Per-theme/stage text and JSON reports."""
-    return os.path.join(run_dir, '06_reports', 'per_theme')
+    """Per-theme/stage text reports (and codebook exemplars)."""
+    return os.path.join(run_dir, '06_reports', '05_per_stage')
 
 
 def themes_json_dir(run_dir: str) -> str:
@@ -233,8 +283,8 @@ def classification_overlay_path(run_dir: str, key: str) -> str:
         'theme': 'theme_labels.jsonl',
         'purer': 'purer_labels.jsonl',
         'codebook': 'codebook_labels.jsonl',
-        'microskill': 'microskill_labels.jsonl',
         'cv': 'cross_validation_labels.jsonl',
+        'gnn': 'gnn_labels.jsonl',
     }
     return os.path.join(classifications_dir(run_dir), _filenames[key])
 

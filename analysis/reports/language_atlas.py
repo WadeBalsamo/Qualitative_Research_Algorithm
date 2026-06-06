@@ -5,7 +5,7 @@ Therapeutic language atlas — the readable "key language patterns" deliverable.
 
 The mechanism dossier ranks therapist moves by their association with participant
 progression, but a curriculum designer needs to read the actual language. This
-renders, for the top-ranked PURER moves / microskills / emergent motifs / named
+renders, for the top-ranked PURER moves / emergent motifs / named
 coupling factors, the FROM participant quote → therapist cue text → TO participant
 quote, with stage mixtures — so the influential patterns are concrete and
 teachable. Emergent motifs (high influence, low PURER purity) are flagged as
@@ -61,7 +61,7 @@ def _render_block(b, tlu, framework, L, indent='    '):
 
 
 def generate_language_atlas(df, df_all, framework, output_dir) -> Optional[str]:
-    """Write report_language_atlas.txt. Returns path, or None if inputs are missing."""
+    """Write 02_mechanism/language_atlas.txt. Returns path, or None if inputs are missing."""
     from gnn_layer.inference import build_cue_blocks_with_segments
     from ..mechanism import _seg_lookup, _load_block_motifs, _enrich_blocks
 
@@ -81,46 +81,65 @@ def generate_language_atlas(df, df_all, framework, output_dir) -> Optional[str]:
     L.append("")
     L.append("The actual language behind the mechanism statistics: FROM participant quote →")
     L.append("therapist CUE → TO participant quote, for the therapist moves most associated")
-    L.append("with forward progression. Directional/associational (see report_mechanism.txt");
-    L.append("for CIs and significance). Read as candidate teachable patterns, not proof.")
+    L.append("with progression — BOTH forward-moving and backward/stalling patterns. ")
+    L.append("Directional/associational (see 02_mechanism/mechanism.txt for CIs and")
+    L.append("significance). Read as candidate teachable patterns, not proof.")
     L.append("")
 
-    # ---- Top PURER movers (from the inferential mechanism table) -------------
+    # ---- Forward AND backward movers (from the inferential mechanism table) --
     mech_csv = os.path.join(_paths.mechanism_dir(output_dir), 'mechanism_delta_progression.csv')
-    top_specs = []  # (grouping, from_stage, behavior)
+    forward_specs = []   # (grouping, from_stage, behavior, mean_delta) — most positive
+    backward_specs = []  # (grouping, from_stage, behavior, mean_delta) — most negative
     if os.path.isfile(mech_csv):
         try:
             mdf = pd.read_csv(mech_csv)
-            for grouping in ('purer', 'microskill', 'motif'):
+            for grouping in ('purer', 'motif'):
                 g = mdf[mdf['grouping'] == grouping]
                 if g.empty:
                     continue
                 if 'fdr_significant' in g.columns and g['fdr_significant'].any():
                     g = g[g['fdr_significant']]
-                g = g.sort_values('mean_delta_prog', ascending=False).head(3)
-                for _, r in g.iterrows():
-                    top_specs.append((grouping, r['from_stage'], r['behavior'], r['mean_delta_prog']))
+                fwd = g.sort_values('mean_delta_prog', ascending=False).head(3)
+                bwd = g[g['mean_delta_prog'] < 0].sort_values('mean_delta_prog', ascending=True).head(3)
+                for _, r in fwd.iterrows():
+                    forward_specs.append((grouping, r['from_stage'], r['behavior'], r['mean_delta_prog']))
+                for _, r in bwd.iterrows():
+                    backward_specs.append((grouping, r['from_stage'], r['behavior'], r['mean_delta_prog']))
         except Exception:
             pass
 
-    L.append("-" * 78)
-    L.append("1. TOP FORWARD-MOVING THERAPIST LANGUAGE (by Δprogression)")
-    L.append("-" * 78)
-    if top_specs:
-        key_of = {'purer': 'dominant_purer', 'microskill': 'dominant_microskill', 'motif': 'cue_motif'}
-        for grouping, from_stage, behavior, delta in top_specs:
+    key_of = {'purer': 'dominant_purer', 'motif': 'cue_motif'}
+
+    def _emit_specs(specs, most_negative_first):
+        if not specs:
+            L.append("  (run the mechanism analysis first to populate ranked movers)")
+            return
+        for grouping, from_stage, behavior, delta in specs:
             kf = key_of[grouping]
             examples = [b for b in enriched
                         if b['from_stage'] == from_stage and str(b.get(kf)) == str(behavior)]
-            examples.sort(key=lambda b: -b['delta_prog'])
+            examples.sort(key=lambda b: b['delta_prog'] if most_negative_first else -b['delta_prog'])
             if not examples:
                 continue
             fname = framework.get(int(from_stage), {}).get('short_name', str(from_stage))
             L.append(f"\n  [{grouping}] {behavior}  —  from {fname}  (mean Δ={delta:+.3f})")
             for b in examples[:2]:
                 _render_block(b, tlu, framework, L)
+
+    L.append("-" * 78)
+    L.append("1a. TOP FORWARD-MOVING THERAPIST LANGUAGE (Δprogression > 0)")
+    L.append("-" * 78)
+    _emit_specs(forward_specs, most_negative_first=False)
+
+    L.append("")
+    L.append("-" * 78)
+    L.append("1b. BACKWARD-MOVING / STALLING THERAPIST LANGUAGE (Δprogression < 0)")
+    L.append("    Read as 'patterns to notice and avoid', not as blame — same caveats apply.")
+    L.append("-" * 78)
+    if backward_specs:
+        _emit_specs(backward_specs, most_negative_first=True)
     else:
-        L.append("  (run the mechanism analysis first to populate ranked movers)")
+        L.append("  (no behaviors with negative mean Δprogression met the threshold)")
 
     # ---- Emergent motifs (high influence, low PURER purity) -----------------
     L.append("-" * 78)
@@ -169,9 +188,9 @@ def generate_language_atlas(df, df_all, framework, output_dir) -> Optional[str]:
         L.append("  (GNN coupling not available — enable the GNN layer)")
     L.append("")
 
-    rep_dir = _paths.human_reports_dir(output_dir)
+    rep_dir = _paths.reports_mechanism_dir(output_dir)
     os.makedirs(rep_dir, exist_ok=True)
-    path = os.path.join(rep_dir, 'report_language_atlas.txt')
+    path = os.path.join(rep_dir, 'language_atlas.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write("\n".join(L))
     return path

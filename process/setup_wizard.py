@@ -23,7 +23,6 @@ from .config import (
     PipelineConfig,
     SegmentationConfig,
     ValidationConfig,
-    TestSetConfig,
     TestSetsConfig,
     TestSetSpec,
     ContentValidityConfig,
@@ -163,6 +162,40 @@ def _prompt_yes_no(label: str, default: bool = True) -> bool:
     return raw in ('y', 'yes')
 
 
+# Full reference for every GnnLayerConfig knob, shown at the end of the GNN wizard
+# step. The high-impact knobs are prompted interactively; the rest are documented
+# here and edited directly in qra_config.json by expert users.
+_GNN_KNOB_REFERENCE = [
+    "enabled               master switch (prompted)",
+    "label_mode            weak | human | self_supervised — training signal (prompted)",
+    "gnn_authoritative     make graph labels the label of record (prompted)",
+    "produce_consensus_labels  write per-segment graph labels to gnn_labels.jsonl (default True)",
+    "validation_folds      k-fold count for the out-of-sample gate (prompted)",
+    "validation_holdout    single-holdout fraction when folds<=1 (default 0.2)",
+    "irr_target            kappa vs LLM consensus to recommend scaling (prompted)",
+    "run_on_participants   position participant VAAMR segments (prompted)",
+    "run_on_therapists     position therapist PURER segments (prompted)",
+    "run_gnn_ablation      construct-signal ablation, Capability D (prompted)",
+    "n_motif_clusters      # cue-language motif clusters, Capability B (prompted)",
+    "min_motif_influence   flag motifs whose forward lift exceeds this (default 1.2)",
+    "motif_min_block_count ignore motifs with fewer cue blocks (default 3)",
+    "n_latent_factors      # coupling latent factors, Capability E (prompted)",
+    "interpret_against_cf_ic  name factors against the CF/IC lexicon (default True)",
+    "include_vce_nodes     VCE anchor nodes — OFF by default (set True to test VCE via ablation)",
+    "include_purer_nodes   PURER anchor nodes (default True)",
+    "cross_framework_min_lift  lift threshold for cross-framework edges (default 1.5)",
+    "knn_k                 kNN similarity edges per node (default 8)",
+    "hidden_dim            GNN hidden width (default 128)",
+    "n_layers              GraphSAGE layers — keep shallow to limit over-smoothing (default 2)",
+    "dropout               dropout rate (default 0.5)",
+    "objectives            trained heads: soft_vaamr/progression/contrastive/link_prediction/...",
+    "contrastive_temp      supervised-contrastive temperature (default 0.1)",
+    "epochs / lr / patience / seed   training schedule + determinism (300 / 1e-3 / 40 / 42)",
+    "embedding_model / use_query_prefix / embedding_batch_size / cache_embeddings  embedding substrate",
+    "device                None=auto (cuda if available else cpu)",
+]
+
+
 def _validate_speaker_anonymization_key(path: str) -> tuple[bool, Optional[str]]:
     """Validate speaker anonymization key file format.
 
@@ -240,6 +273,7 @@ class SetupWizard:
         self._step_11_analysis()
         self._step_11b_therapist_cues()
         self._step_11c_report_summaries()
+        self._step_11d_gnn()
         config_path = self._step_12_save()
 
         return {
@@ -474,6 +508,10 @@ class SetupWizard:
                 print("    PURER classification enabled.")
                 print()
                 print("    PURER cue options:")
+                print("    Long cue blocks are automatically split along therapist turn")
+                print("    boundaries into sub-cues before being sent to the LLM, so")
+                print("    over-long blocks are chunked and labeled rather than dropped.")
+                print()
                 skip_lessons = _prompt_yes_no(
                     "    Skip long didactic segments (lesson content, guided meditation scripts)?",
                     True,
@@ -481,11 +519,16 @@ class SetupWizard:
                 self.config_data.setdefault('purer_cue', {})
                 self.config_data['purer_cue']['skip_lesson_content'] = skip_lessons
                 if skip_lessons:
-                    max_words = _prompt_int(
+                    max_lesson_words = _prompt_int(
                         "    Max words before a cue is treated as lesson content", 400
                     )
-                    self.config_data['purer_cue']['max_lesson_words'] = max_words
-                    print(f"    Cue blocks > {max_words} words will be skipped.")
+                    self.config_data['purer_cue']['max_lesson_words'] = max_lesson_words
+                    print(f"    Cue blocks > {max_lesson_words} words will be skipped as lesson content.")
+                max_cue_words = _prompt_int(
+                    "    Max words per sub-cue (blocks above this are split into chunks)", 300
+                )
+                self.config_data['purer_cue']['max_cue_words'] = max_cue_words
+                print(f"    Sub-cue word budget: {max_cue_words} words per chunk.")
                 print("    Context: uses the same conversational context logic as VAAMR")
                 print("    classification, with a wider window (purer_classification")
                 print("    context_window_segments, default 6 vs 2 for participants).")
@@ -1361,6 +1404,95 @@ class SetupWizard:
         print()
 
     # -----------------------------------------------------------------
+    # Step 11d: GNN representation, discovery & consensus-distillation layer
+    # -----------------------------------------------------------------
+
+    def _step_11d_gnn(self):
+        print("--- Step 11d/17: GNN Layer (discovery + consensus distillation) ---")
+        print("    The GNN layer is an OPTIONAL analysis-time graph over the same Qwen3")
+        print("    embeddings QRA already uses (no second model loads). It does THREE things:")
+        print()
+        print("      1. DISCOVERS therapist-language motifs and participant<->therapist")
+        print("         coupling factors that drive forward VAAMR movement across the")
+        print("         avoidance barrier — needs no PURER labels (02_mechanism/purer.txt).")
+        print("      2. TRIANGULATES its own VAAMR/PURER reads against the LLM and the")
+        print("         human-coded subset (06_gnn/triangulation.txt).")
+        print("      3. DISTILLS the multi-run LLM consensus into a fast graph classifier.")
+        print("         Once it reproduces that consensus to reliability ON HELD-OUT")
+        print("         segments (06_gnn/validation.txt), it can label NEW data with")
+        print("         NO LLM calls and — only if you choose — become the label of record.")
+        print()
+        print("    Default is OFF. The pipeline runs identically whether or not this is on;")
+        print("    when on, it adds reports under 03_analysis_data/gnn/ and 06_reports/ and")
+        print("    NEVER overwrites frozen segments.")
+        print()
+        enabled = _prompt_yes_no("Enable the GNN layer?", False)
+        if not enabled:
+            self.config_data['gnn_layer'] = {'enabled': False}
+            print("    GNN layer OFF. You can still force it later with: qra analyze --gnn")
+            print()
+            return
+
+        gnn: dict = {'enabled': True}
+
+        print()
+        print("    LABEL MODE — what the graph trains on:")
+        print("      weak            : train on the multi-run LLM ballots (default; the")
+        print("                        consensus-distillation path — what enables scaling).")
+        print("      human           : train only on the human-validated subset (strongest")
+        print("                        independence claim; needs enough human labels first).")
+        print("      self_supervised : graph structure only, no labels (independence control;")
+        print("                        produces geometry/motifs but no VAAMR/PURER vote).")
+        gnn['label_mode'] = _prompt_choice(
+            "Label mode", ['weak', 'human', 'self_supervised'], 'weak')
+
+        print()
+        print("    SCOPE — which speakers the graph positions (RESERVED — not yet")
+        print("    enforced: the graph currently always positions both speakers).")
+        gnn['run_on_participants'] = _prompt_yes_no(
+            "Position participant segments (VAAMR mixture / progression)?", True)
+        gnn['run_on_therapists'] = _prompt_yes_no(
+            "Position therapist segments (cue-block / PURER)?", True)
+
+        print()
+        print("    RELIABILITY GATE — out-of-sample agreement that licenses LLM-free scaling.")
+        print("    Cross-validated, per-VAAMR-stage and per-PURER-move (the per-class recall")
+        print("    is the safeguard against over-smoothing a rare stage like Reappraisal).")
+        gnn['validation_folds'] = _prompt_int("Cross-validation folds for the gate", 5)
+        gnn['irr_target'] = _prompt_float(
+            "Target kappa vs LLM consensus to recommend graph-only scaling", 0.70)
+
+        print()
+        print("    AUTHORITATIVE LABELS — make graph labels the label of record.")
+        print("    Recommended OFF until 06_gnn/validation.txt says the graph is ready.")
+        print("    When ON, final labels resolve adjudicated > human > GNN > LLM, and the")
+        print("    raw LLM ballots stay visible per segment for audit.")
+        gnn['gnn_authoritative'] = _prompt_yes_no(
+            "Make GNN labels authoritative now?", False)
+
+        print()
+        print("    ABLATION (Capability D) — retrains per construct head to measure how much")
+        print("    independent signal VCE / PURER each carry. This is the tool")
+        print("    for deciding whether the VCE codebook justifies further research. Doubles")
+        print("    training cost. (VCE graph nodes are OFF by default; turn on ablation only")
+        print("    when you have set include_vce_nodes=True in the config to test VCE.)")
+        gnn['run_gnn_ablation'] = _prompt_yes_no("Run construct-signal ablation?", False)
+
+        print()
+        print("    DISCOVERY granularity:")
+        gnn['n_motif_clusters'] = _prompt_int("Number of cue-language motif clusters", 12)
+        gnn['n_latent_factors'] = _prompt_int("Number of coupling latent factors", 5)
+
+        self.config_data['gnn_layer'] = gnn
+
+        print()
+        print("    --- Full knob reference (expert knobs stay in qra_config.json) ---")
+        print("    The knobs above are the high-impact ones. Every GnnLayerConfig field:")
+        for line in _GNN_KNOB_REFERENCE:
+            print(f"      {line}")
+        print()
+
+    # -----------------------------------------------------------------
     # Step 12: Save & run
     # -----------------------------------------------------------------
 
@@ -1440,7 +1572,6 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
         output_dir=pipeline.get('output_dir', './data/output/'),
         run_theme_labeler=pipeline.get('run_theme_labeler', True),
         run_codebook_classifier=pipeline.get('run_codebook_classifier', False),
-        run_microskill_classifier=pipeline.get('run_microskill_classifier', False),
         speaker_anonymization_key_path=pipeline.get('speaker_anonymization_key_path'),
         anonymize_transcript_text=pipeline.get('anonymize_transcript_text', True),
         anonymize_text_model=pipeline.get('anonymize_text_model', 'obi/deid_roberta_i2b2'),
@@ -1507,18 +1638,6 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             two_pass=cb_emb.get('two_pass', True),
             embedding_model=cb_emb.get('embedding_model', 'Qwen/Qwen3-Embedding-8B'),
             exemplar_import_path=cb_emb.get('exemplar_import_path'),
-        ),
-        microskill_embedding=EmbeddingClassifierConfig(
-            **{k: v for k, v in data.get('microskill_embedding', {}).items()
-               if k in EmbeddingClassifierConfig.__dataclass_fields__}
-        ),
-        microskill_llm=LLMCodebookConfig(
-            **{k: v for k, v in data.get('microskill_llm', {}).items()
-               if k in LLMCodebookConfig.__dataclass_fields__}
-        ),
-        microskill_ensemble=EnsembleConfig(
-            **{k: v for k, v in data.get('microskill_ensemble', {}).items()
-               if k in EnsembleConfig.__dataclass_fields__}
         ),
         validation=ValidationConfig(),
         test_sets=_build_test_sets_config(data.get('test_sets', {})),
