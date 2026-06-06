@@ -428,7 +428,7 @@ def _action_classify_purer(config, output_dir: str) -> None:
             _info(f'  Run {i+1}: {m}{tag}')
     print()
 
-    config_path = os.path.join(output_dir, '02_meta', 'qra_config.json')
+    config_path = os.path.join(_paths.meta_dir(output_dir), 'qra_config.json')
 
     def _save_purer_to_disk():
         if not os.path.isfile(config_path):

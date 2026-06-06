@@ -10,9 +10,7 @@ stronger evidence than LLM<->LLM (methodology Sec 5.2). lift = P(b | a) / P(b).
 
 from typing import Dict, List, Optional
 
-
-def _codes(v):
-    return v if isinstance(v, list) else []
+from .graph_builder import _codes
 
 
 def _lift_table(pairs_stage, pairs_codes, label_a='stage', label_b='code'):
