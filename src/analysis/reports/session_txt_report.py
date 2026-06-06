@@ -8,7 +8,7 @@ import pandas as pd
 
 from process import output_paths as _paths
 from ._formatting import (
-    _bar, _pct, _wrap_quote, _collect_therapist_cue, _summarize_cue,
+    _bar, _pct, _wrap_quote, _wrap_text, _collect_therapist_cue, _summarize_cue,
     _collect_cue_block_purer_profile, _format_purer_profile,
     _PURER_SHORT, _PURER_NAME,
 )
@@ -16,27 +16,6 @@ from .transition_report import _find_transition_examples_by_cohort_session
 
 
 _PURER_DISPLAY_ORDER = [3, 0, 4, 2, 1]  # E, P, R2, R, U — typical frequency
-
-
-def _wrap_text(text: str, indent: int = 0, max_width: int = 80) -> str:
-    """Word-wrap plain text (no quotes) to max_width."""
-    if not text:
-        return ''
-    prefix = ' ' * indent
-    out_lines = []
-    for raw_line in text.replace('\r\n', '\n').split('\n'):
-        if not raw_line.strip():
-            out_lines.append('')
-            continue
-        current = prefix
-        for word in raw_line.split():
-            if len(current) + len(word) + 1 > max_width:
-                out_lines.append(current)
-                current = prefix + word
-            else:
-                current = current + word if current == prefix else current + ' ' + word
-        out_lines.append(current)
-    return '\n'.join(out_lines)
 
 
 def _compute_session_purer_by_transition(df_all: pd.DataFrame, session_id: str) -> dict:
