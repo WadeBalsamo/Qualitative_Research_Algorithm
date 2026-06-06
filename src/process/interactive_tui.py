@@ -204,18 +204,29 @@ def _gnn_status(output_dir: str) -> str:
     'not_ready' — trained + gate run, but not yet reliable enough
     'trained'   — checkpoint exists but no validation report yet
     'absent'    — GNN layer has not been run
+
+    Prefers the machine-readable gate verdict (gnn_gate.json); falls back to the
+    human validation.txt report and finally the trained-weights checkpoint.
     """
     from . import output_paths as _paths
+    try:
+        from gnn_layer.validation import read_gate_verdict
+        verdict = read_gate_verdict(output_dir)
+        if verdict is not None:
+            return 'ready' if verdict.get('ready_for_scaling') else 'not_ready'
+    except Exception:
+        pass
     rep = os.path.join(_paths.reports_gnn_dir(output_dir), 'validation.txt')
-    weights = os.path.join(_paths.gnn_model_dir(output_dir), 'weights.pt')
     if os.path.isfile(rep):
         try:
-            for line in open(rep, encoding='utf-8'):
-                if 'LLM-FREE SCALING?' in line:
-                    return 'ready' if 'YES' in line else 'not_ready'
+            with open(rep, encoding='utf-8') as fh:
+                for line in fh:
+                    if 'LLM-FREE SCALING?' in line:
+                        return 'ready' if 'YES' in line else 'not_ready'
         except OSError:
             pass
         return 'trained'
+    weights = os.path.join(_paths.gnn_model_dir(output_dir), 'weights.pt')
     return 'trained' if os.path.isfile(weights) else 'absent'
 
 
@@ -280,19 +291,23 @@ def _action_ingest(config, output_dir: str) -> None:
     _section('Stage 1 — Ingest & Freeze Segments')
     _info(
         'Loads transcript files, runs semantic segmentation, and writes frozen\n'
-        'per-session segments to 01_transcripts/segmented/<session_id>/segments.jsonl.\n'
+        'per-session segments to the project database (qra.db).\n'
         '\n'
-        'For legacy projects this also migrates existing testset worksheets into\n'
-        'per-testset directories with manifest.json + content-SHA snapshots so\n'
-        'that future testset refreshes can verify segment text has not drifted.\n'
+        'Legacy JSONL projects are auto-migrated into qra.db on first ingest.\n'
         '\n'
         'Frozen segments are NEVER re-written by classify/assemble stages.\n'
-        'Re-ingestion requires --reingest (which you can do from the CLI).'
+        'Choose "re-segment from scratch" below to rebuild them deliberately.'
     )
     print()
+    from . import segments_io as _sio
+    fresh = False
+    if _sio.list_segmented_sessions(output_dir):
+        fresh = _confirm('Re-segment ALL sessions from scratch? (rebuilds frozen segments)',
+                         default=False)
     if not _confirm('Run ingest now?'):
         return
-    segments = stage_ingest(config, output_dir=output_dir, observer=SilentObserver())
+    segments = stage_ingest(config, output_dir=output_dir, observer=SilentObserver(),
+                            force_reingest_all=fresh)
     n_sess = len(set(s.session_id for s in segments))
     print()
     _ok(f'{len(segments)} segments across {n_sess} sessions ingested and frozen.')
@@ -301,14 +316,16 @@ def _action_ingest(config, output_dir: str) -> None:
 
 def _action_classify_theme(config, output_dir: str, framework) -> None:
     from .orchestrator import stage_classify_theme
+    from . import classifications_io as _cio
+    from . import reclassify_ops as _reclassify
     _section('Stage 3 — VAAMR Theme Classification')
     _info(
         'Runs zero-shot LLM classification on participant segments using the\n'
         'VAAMR framework (Vigilance → Avoidance → Attention → Metacognition\n'
         '→ Reappraisal).  Multi-run ensemble voting produces confidence tiers.\n'
         '\n'
-        'Writes: 02_meta/classifications/theme_labels.jsonl\n'
-        'Reads:  frozen segments (01_transcripts/segmented/)\n'
+        'Writes: the theme overlay in qra.db\n'
+        'Reads:  frozen segments (qra.db)\n'
         'Frozen segments and testsets are NOT affected by this stage.\n'
         '\n'
         'ZERO-SHOT MODE: strips exemplar/subtle/adversarial utterances from\n'
@@ -316,6 +333,27 @@ def _action_classify_theme(config, output_dir: str, framework) -> None:
         'evaluating framework validity without example anchoring.'
     )
     print()
+
+    # If VAAMR was already classified, offer to start over from scratch (mirrors
+    # the PURER "re-run all" option) before falling through to a normal run.
+    if _cio.overlay_exists(output_dir, 'theme'):
+        _info('VAAMR classification already exists for this project.')
+        print()
+        opts = [
+            ('Re-run (resume from checkpoints)',
+             'Continue from existing LLM run checkpoints where possible.'),
+            ('Re-run FROM SCRATCH',
+             'Clear VAAMR checkpoints + the theme overlay first, then classify anew.'),
+        ]
+        sub = _menu('VAAMR Reclassify Options', opts)
+        if sub == 0:
+            return
+        if sub == 2:
+            if not _confirm('Clear VAAMR checkpoints + overlay and re-run from scratch?'):
+                return
+            r = _reclassify.reset_for_fresh(output_dir, 'vaamr')
+            _ok(f"Cleared {r['checkpoints_removed']} checkpoint(s) + the theme overlay.")
+            config.resume_from = None
 
     # Zero-shot toggle
     zero_shot = _confirm(
@@ -341,7 +379,7 @@ def _action_classify_theme(config, output_dir: str, framework) -> None:
         return
     stage_classify_theme(config, framework, output_dir=output_dir)
     print()
-    _ok('theme_labels.jsonl written. Run Assemble to rebuild master_segments.')
+    _ok('Theme overlay written to qra.db. Run Assemble to rebuild master_segments.')
     _pause()
 
 
@@ -413,7 +451,7 @@ def _action_classify_purer(config, output_dir: str) -> None:
         'Classification is at the cue-block level; labels are propagated back\n'
         'to all constituent therapist segments after classification.\n'
         '\n'
-        'Writes: 02_meta/classifications/purer_labels.jsonl\n'
+        'Writes: the PURER overlay in qra.db\n'
         'Participant VAAMR labels and frozen segments are NOT modified.'
     )
     print()
@@ -483,7 +521,7 @@ def _action_classify_purer(config, output_dir: str) -> None:
             config.resume_from = None
             stage_classify_purer(config, output_dir=output_dir)
             print()
-            _ok('purer_labels.jsonl written. Run Assemble to rebuild master_segments.')
+            _ok('PURER overlay written to qra.db. Run Assemble to rebuild master_segments.')
             _pause()
             return
 
@@ -501,7 +539,7 @@ def _action_classify_purer(config, output_dir: str) -> None:
             config.resume_from = None
             stage_classify_purer(config, output_dir=output_dir)
             print()
-            _ok('purer_labels.jsonl written. Run Assemble to rebuild master_segments.')
+            _ok('PURER overlay written to qra.db. Run Assemble to rebuild master_segments.')
             _pause()
             return
 
@@ -518,7 +556,7 @@ def _action_classify_purer(config, output_dir: str) -> None:
             config.resume_from = None
             stage_classify_purer(config, output_dir=output_dir)
             print()
-            _ok('purer_labels.jsonl written. Run Assemble to rebuild master_segments.')
+            _ok('PURER overlay written to qra.db. Run Assemble to rebuild master_segments.')
             _pause()
             return
 
@@ -556,7 +594,7 @@ def _action_classify_purer(config, output_dir: str) -> None:
             config.resume_from = checkpoint_path
             stage_classify_purer(config, output_dir=output_dir)
             print()
-            _ok('purer_labels.jsonl written. Run Assemble to rebuild master_segments.')
+            _ok('PURER overlay written to qra.db. Run Assemble to rebuild master_segments.')
             _pause()
             return
 
@@ -589,7 +627,7 @@ def _action_assemble(config, output_dir: str, framework) -> None:
     _section('Stage 6 — Assemble Master Dataset')
     _info(
         'Joins frozen segments + all classification overlays into a single\n'
-        'master_segments.jsonl / master_segments.csv with confidence tiers.\n'
+        'master_segments.csv export with confidence tiers.\n'
         '\n'
         'Also regenerates:\n'
         '  • coded transcripts  (04_validation/full_transcripts/)\n'
@@ -605,7 +643,7 @@ def _action_assemble(config, output_dir: str, framework) -> None:
         return
     stage_assemble(config, output_dir=output_dir)
     print()
-    _ok('master_segments.jsonl written and validation artifacts refreshed.')
+    _ok('master_segments.csv written and validation artifacts refreshed.')
     _pause()
 
 
@@ -626,9 +664,16 @@ def _action_analyze(output_dir: str) -> None:
         'Output: 03_analysis_data/, 05_figures/, 06_reports/'
     )
     print()
-    if not _confirm('Run analysis now?'):
+    opts = [
+        ('Use config default', 'Honor gnn_layer.enabled from the project config.'),
+        ('Force GNN ON', 'Run the GNN representation + consensus layer this time.'),
+        ('Force GNN OFF', 'Skip the GNN layer this time (faster).'),
+    ]
+    sel = _menu('GNN layer for this analysis run', opts)
+    if sel == 0:
         return
-    run_analysis(output_dir)
+    force_gnn = {1: None, 2: True, 3: False}[sel]
+    run_analysis(output_dir, force_gnn=force_gnn)
     print()
     _ok('Analysis complete. Reports written to 06_reports/.')
     _pause()
@@ -969,6 +1014,161 @@ def _action_edit_config(config_path: str) -> None:
 # Existing Project flow
 # ---------------------------------------------------------------------------
 
+def _action_add_data(output_dir: str, config_path) -> None:
+    """Incrementally segment + classify only NEW transcripts (longitudinal additions)."""
+    _section('Add New Transcripts (incremental)')
+    _info(
+        'Segments + classifies only NEW transcript files, then re-assembles and\n'
+        're-analyzes. Frozen segments and frozen validation testsets are never\n'
+        'disturbed. Newly-discovered speakers are walked through interactively.\n'
+        '\n'
+        'Requires an existing project (frozen segments + classification manifest).'
+    )
+    print()
+    if not _confirm('Run incremental add-data now?'):
+        return
+    import argparse as _argparse
+    import qra as _qra
+    fake = _argparse.Namespace(
+        config=config_path, transcript_dir=None, output_dir=output_dir, trial_id=None,
+        backend=None, model=None, api_key=None, models=None, lmstudio_url=None,
+        no_auto_analyze=False, test_zeroshot=False, preset=None,
+        resume_from=None, framework=None, codebook=None,
+        speaker_filter_mode=None, exclude_speakers=None,
+        no_theme_labeler=False, run_codebook_classifier=False,
+        no_codebook_classifier=False, verbose_segmentation=False,
+        zero_shot=False, no_text_anonymization=False,
+    )
+    try:
+        _qra.cmd_add_data(fake)
+    except SystemExit as ex:
+        if ex.code not in (0, None):
+            _warn('No new transcripts found (or add-data exited).')
+    except Exception as exc:
+        _err(f'add-data failed: {exc}')
+    _pause()
+
+
+def _action_classify_codebook(config, output_dir: str) -> None:
+    """Run the VCE phenomenology codebook classifier on participant segments."""
+    from .orchestrator import stage_classify_codebook
+    from codebook.phenomenology_codebook import get_phenomenology_codebook
+    _section('Classify — VCE Codebook (participant segments)')
+    _info(
+        'Runs the VCE phenomenology codebook (embedding similarity + LLM ensemble)\n'
+        'on participant segments. Writes the codebook overlay to qra.db.\n'
+        'Participant VAAMR labels and frozen segments are NOT modified.'
+    )
+    print()
+    if not _confirm('Run codebook classification now?'):
+        return
+    stage_classify_codebook(config, get_phenomenology_codebook(), output_dir=output_dir)
+    print()
+    _ok('Codebook overlay written to qra.db. Run Assemble to rebuild master_segments.')
+    _pause()
+
+
+def _action_classify_cv(config, output_dir: str, framework) -> None:
+    """Compute VAAMR × VCE co-occurrence lift statistics (cross-validation)."""
+    from .orchestrator import stage_cross_validation
+    _section('Classify — Cross-Validation (VAAMR × VCE lift)')
+    _info(
+        'Computes theme × codebook co-occurrence lift statistics implementing\n'
+        "Varela's mutual-constraints logic. Requires both VAAMR and codebook\n"
+        'overlays. Writes lift statistics to 04_validation/cross_validation/.'
+    )
+    print()
+    if not _confirm('Run cross-validation now?'):
+        return
+    stage_cross_validation(config, framework, output_dir=output_dir)
+    print()
+    _ok('Cross-validation lift statistics written.')
+    _pause()
+
+
+def _action_gnn_train(config, output_dir: str, state: dict) -> None:
+    """Train the graph + run the reliability gate (also ADDS the GNN to an LLM-only project)."""
+    from analysis.runner import run_analysis
+    from gnn_layer.validation import read_gate_verdict, format_gate_verdict
+    _section('Train / update GNN consensus layer')
+    _info(
+        'Trains the graph on the existing LLM/human consensus, runs the reliability\n'
+        'gate (kappa vs LLM), and writes the GNN reports + consensus overlay.\n'
+        'Use this to ADD the GNN to a project that has only run LLM consensus.\n'
+        '\n'
+        'A trustworthy reliability gate needs multi-run LLM ballots (n_runs >= 3).'
+    )
+    print()
+    # Multi-run ballot pre-flight (non-blocking warning).
+    try:
+        import pandas as _pd
+        from . import segments_io as _sio
+        from . import classifications_io as _cio
+        from gnn_layer.soft_labels import ballot_coverage
+        segs = _sio.load_segments_for_stage(output_dir, apply=())
+        by_id = {s.segment_id: s for s in segs}
+        _cio.apply_overlays(output_dir, by_id, keys=('theme',))
+        cov = ballot_coverage(_pd.DataFrame([
+            {'speaker': s.speaker, 'segment_id': s.segment_id,
+             'rater_votes': getattr(s, 'rater_votes', None)} for s in segs]))
+        if cov['n_participant'] and cov['multirun_fraction'] < 0.5:
+            _warn(f"Only {round(100 * cov['multirun_fraction'])}% of participant segments "
+                  "carry multi-run LLM ballots.")
+            _warn('The GNN consensus signal needs >=2 runs; the gate kappa may be unreliable.')
+            _warn('Consider re-running VAAMR with n_runs >= 3 first.')
+            if not _confirm('Train the GNN anyway?', default=False):
+                return
+    except Exception:
+        pass
+    if not _confirm('Train the GNN layer now? (this can take a while)'):
+        return
+    run_analysis(output_dir, verbose=True, force_gnn=True)
+    print()
+    _info(format_gate_verdict(read_gate_verdict(output_dir), output_dir))
+    _pause()
+
+
+def _action_gnn_status(output_dir: str) -> None:
+    """Print the GNN reliability-gate verdict (kappa vs LLM; ready for scaling?)."""
+    from gnn_layer.validation import read_gate_verdict, format_gate_verdict
+    _section('GNN Reliability Gate')
+    _info(format_gate_verdict(read_gate_verdict(output_dir), output_dir))
+    print()
+    _info('Inter-rater reliability readout: when the gate reports the graph is')
+    _info('READY, its agreement with the LLM/human consensus has reached the')
+    _info('target — the graph can label new data without LLM calls (scale mode).')
+    _pause()
+
+
+def _action_migrate(output_dir: str) -> None:
+    """Import a legacy JSONL project into qra.db (preview, then confirm)."""
+    from . import db as _db
+    from .legacy_migration import is_jsonl_project, migrate_jsonl_to_sqlite, preview_counts
+    _section('Migrate Legacy JSONL → qra.db')
+    if _db.db_exists(output_dir):
+        _ok('qra.db already present — nothing to migrate.')
+        _pause()
+        return
+    if not is_jsonl_project(output_dir):
+        _warn('No legacy JSONL pipeline files found — nothing to migrate.')
+        _pause()
+        return
+    c = preview_counts(output_dir)
+    ov = ', '.join(f'{k}:{n}' for k, n in sorted(c['overlays'].items())) or 'none'
+    _info(f"Would import {c['segments']} segments across {c['sessions']} session(s).")
+    _info(f"  overlays:    {ov}")
+    _info(f"  manifest:    {c['manifest_keys']} key(s)")
+    _info(f"  testsets:    {c['testset_worksheets']} worksheet(s)")
+    _info(f"  cv testsets: {c['cv_testsets']}")
+    _info('Non-destructive: originals are relocated to _legacy_files/.')
+    print()
+    if not _confirm('Run migration now?'):
+        return
+    result = migrate_jsonl_to_sqlite(output_dir)
+    _ok(f"Imported {result['segments']} segments across {result['sessions']} session(s) into qra.db.")
+    _pause()
+
+
 def _existing_project_flow() -> None:
     _section('Open Existing Project')
     _info(
@@ -1007,93 +1207,114 @@ def _existing_project_flow() -> None:
     config.output_dir = output_dir
 
     while True:
-        # Refresh state each loop so status marks update after actions
+        # Refresh state each loop so status marks update after actions.
         state = _detect_state(output_dir)
         _print_project_state(state)
 
-        # Build contextual action list — flag unavailable actions
         def _tag(cond, suffix='  ✓ done'):
             return suffix if cond else ''
 
-        opts = [
-            ('Ingest & Freeze Segments' + _tag(state['has_segments']),
-             'Segment transcripts, freeze per-session data, migrate legacy testsets.'
-             + (' [LEGACY — required first step]' if state['is_legacy'] else '')),
-            ('Classify — VAAMR (participant stages)' + _tag(state['has_theme']),
-             'Run LLM zero-shot VAAMR classification. Zero-shot mode available.\n'
-             'Requires frozen segments (step above).'),
-            ('Classify — PURER (therapist moves)' + _tag(state['has_purer']),
-             'Run LLM PURER cue-block classification on therapist segments.\n'
-             'Requires frozen segments.'),
-            ('Assemble master dataset' + _tag(state['has_master']),
-             'Join frozen segments + overlays → master_segments.jsonl + coded transcripts.'),
-            ('Analysis & Reports' + _tag(state['has_analysis']),
-             'Per-participant trajectories, per-session summaries, PURER×VAAMR\n'
-             'influence analysis, figures, and LLM narrative summaries.'),
-            ('Testset Management',
-             f'{len(state["has_testsets"])} frozen testset(s).  Create, list, or refresh AI answer keys.'),
-            ('Content-Validity Testsets',
-             f'{len(state["has_cv_testsets"])} CV testset(s).  Create, list, or refresh AI graded reports.'),
-            ('Refresh Validation Artifacts',
-             'Re-emit human forms, coded transcripts, and AI answer keys without re-classifying.'),
-            ('Edit Configuration',
-             'Change models, LM Studio URL, feature flags, or open config in $EDITOR.'),
-            ('Edit Speaker Anonymization Key',
-             'Rename / merge / relabel speakers and cascade the change across\n'
-             'segments, overlays, checkpoints, validation, and analysis.'),
-            ('Classify — Graph consensus (LLM-free)' + _gnn_tag(state.get('gnn_status', 'absent')),
-             'Label new data with the trained graph — no LLM calls. Distilled from the\n'
-             'LLM/human consensus; recommended once the reliability gate\n'
-             '(06_reports/06_gnn/validation.txt) reports the graph is ready.'),
-        ]
+        def _need_segments(fn):
+            """Wrap an action so it guards on frozen segments existing first."""
+            def _wrapped():
+                if not state['has_segments']:
+                    _warn('No frozen segments yet — run Ingest first.')
+                    _pause()
+                else:
+                    fn()
+            return _wrapped
 
-        choice = _menu(f'Project: {os.path.basename(output_dir)}', opts, back_label='Back to main menu')
+        def _edit_config_and_reload():
+            nonlocal config
+            _action_edit_config(state['config_path'])
+            if state['config_path']:
+                try:
+                    config = _load_config(state['config_path'])
+                    config.output_dir = output_dir
+                    _ok('Config reloaded into session.')
+                except Exception:
+                    pass
+
+        def _edit_anonymization():
+            from .anonymization_editor import run_anonymization_tui
+            run_anonymization_tui(output_dir, config=config)
+
+        gnn_status = state.get('gnn_status', 'absent')
+
+        # Ordered by workflow group: Build → Classify → GNN → Assemble/Analyze →
+        # Validation → Maintenance.  Each entry is (label, help, zero-arg action).
+        entries = [
+            # -- Build --
+            ('Ingest & freeze segments' + _tag(state['has_segments']),
+             'Segment transcripts and freeze them to qra.db (offers re-segment from scratch).'
+             + ('  [LEGACY — run Migrate first if offered]' if state['is_legacy'] else ''),
+             lambda: _action_ingest(config, output_dir)),
+            ('Add new transcripts (incremental)',
+             'Segment + classify only NEW sessions, then re-assemble + re-analyze.\n'
+             'Frozen segments and frozen testsets are untouched.',
+             lambda: _action_add_data(output_dir, state['config_path'])),
+            # -- Classify --
+            ('Classify — VAAMR (participant stages)' + _tag(state['has_theme']),
+             'LLM multi-run VAAMR classification. Zero-shot + re-run-from-scratch options.',
+             _need_segments(lambda: _action_classify_theme(config, output_dir, framework))),
+            ('Classify — PURER (therapist moves)' + _tag(state['has_purer']),
+             'LLM PURER cue-block classification with reclassify options.',
+             _need_segments(lambda: _action_classify_purer(config, output_dir))),
+            ('Classify — VCE codebook' + _tag(state['has_codebook']),
+             'VCE phenomenology codebook (embedding + LLM) on participant segments.',
+             _need_segments(lambda: _action_classify_codebook(config, output_dir))),
+            ('Classify — cross-validation (VAAMR × VCE lift)',
+             'Theme × codebook co-occurrence lift statistics (needs both overlays).',
+             _need_segments(lambda: _action_classify_cv(config, output_dir, framework))),
+            # -- GNN --
+            ('Train / update GNN consensus layer' + _gnn_tag(gnn_status),
+             'Train the graph + run the reliability gate. Adds the GNN to an LLM-only project.',
+             _need_segments(lambda: _action_gnn_train(config, output_dir, state))),
+            ('Classify — Graph consensus (LLM-free)' + _gnn_tag(gnn_status),
+             'Label new/unlabeled data with the trained graph — no LLM calls (scale mode).',
+             _need_segments(lambda: _action_classify_gnn(config, output_dir, framework, state))),
+            ('View GNN reliability / κ status',
+             'Gate verdict: κ(graph,LLM) vs target; is the graph ready for LLM-free scaling?',
+             lambda: _action_gnn_status(output_dir)),
+            # -- Assemble / Analyze --
+            ('Assemble master dataset' + _tag(state['has_master']),
+             'Join frozen segments + overlays → master_segments.csv + coded transcripts.',
+             lambda: _action_assemble(config, output_dir, framework)),
+            ('Analysis & reports' + _tag(state['has_analysis']),
+             'Trajectories, summaries, PURER×VAAMR influence, figures (prompts GNN on/off).',
+             lambda: _action_analyze(output_dir)),
+            # -- Validation --
+            ('Testset management',
+             f'{len(state["has_testsets"])} frozen testset(s).  Create / list / refresh AI keys.',
+             lambda: _action_testset_menu(config, output_dir, state, framework)),
+            ('Content-validity testsets',
+             f'{len(state["has_cv_testsets"])} CV testset(s).  Create / list / refresh.',
+             lambda: _action_cv_menu(config, output_dir, state, framework)),
+            ('Refresh validation artifacts',
+             'Re-emit human forms, coded transcripts, and AI answer keys (no re-classify).',
+             lambda: _action_validate(config, output_dir, framework)),
+            # -- Maintenance --
+            ('Edit configuration',
+             'Change models, LM Studio URL, feature flags, or open config in $EDITOR.',
+             _edit_config_and_reload),
+            ('Edit speaker anonymization key',
+             'Rename / merge / relabel speakers and cascade across every artifact.',
+             _edit_anonymization),
+        ]
+        if state['is_legacy']:
+            entries.append((
+                'Migrate legacy JSONL → qra.db',
+                'Import a pre-SQLite project into qra.db (preview, then confirm).',
+                lambda: _action_migrate(output_dir)))
+
+        opts = [(label, desc) for label, desc, _ in entries]
+        choice = _menu(f'Project: {os.path.basename(output_dir)}', opts,
+                       back_label='Back to main menu')
         if choice == 0:
             return
 
         try:
-            if choice == 1:
-                _action_ingest(config, output_dir)
-            elif choice == 2:
-                if not state['has_segments']:
-                    _warn('No frozen segments yet — run Ingest first.')
-                    _pause()
-                else:
-                    _action_classify_theme(config, output_dir, framework)
-            elif choice == 3:
-                if not state['has_segments']:
-                    _warn('No frozen segments yet — run Ingest first.')
-                    _pause()
-                else:
-                    _action_classify_purer(config, output_dir)
-            elif choice == 4:
-                _action_assemble(config, output_dir, framework)
-            elif choice == 5:
-                _action_analyze(output_dir)
-            elif choice == 6:
-                _action_testset_menu(config, output_dir, state, framework)
-            elif choice == 7:
-                _action_cv_menu(config, output_dir, state, framework)
-            elif choice == 8:
-                _action_validate(config, output_dir, framework)
-            elif choice == 9:
-                _action_edit_config(state['config_path'])
-                if state['config_path']:
-                    try:
-                        config = _load_config(state['config_path'])
-                        config.output_dir = output_dir
-                        _ok('Config reloaded into session.')
-                    except Exception:
-                        pass
-            elif choice == 10:
-                from .anonymization_editor import run_anonymization_tui
-                run_anonymization_tui(output_dir, config=config)
-            elif choice == 11:
-                if not state['has_segments']:
-                    _warn('No frozen segments yet — run Ingest first.')
-                    _pause()
-                else:
-                    _action_classify_gnn(config, output_dir, framework, state)
+            entries[choice - 1][2]()
         except KeyboardInterrupt:
             print()
             _warn('Action interrupted.')
@@ -1189,22 +1410,26 @@ def _about() -> None:
         'across 6 domains.  Applied only to participant segments.\n'
         '\n'
         'On-disk layout:\n'
-        '  01_transcripts/segmented/   FROZEN — one segments.jsonl per session\n'
-        '  02_meta/classifications/    Refreshable overlays (theme / purer / codebook)\n'
+        '  qra.db                      Per-project SQLite store — FROZEN segments\n'
+        '                              + refreshable classification overlays\n'
+        '                              (theme / purer / codebook / cv / gnn) + manifests\n'
         '  04_validation/testsets/     FROZEN human worksheets + refreshable AI keys\n'
         '  03_analysis_data/           Graph-ready CSVs, per-session/participant JSON\n'
         '  05_figures/                 PNG visualizations\n'
         '  06_reports/                 Human-readable text reports\n'
         '\n'
         'CLI surface (all features also reachable from the TUI above):\n'
-        '  qra ingest     Segment + freeze transcripts\n'
-        '  qra classify   Overlay: --what vaamr|purer|codebook|cross-validation|all\n'
-        '                          --zero-shot  (strip exemplars from prompts)\n'
-        '  qra assemble   Join overlays → master_segments + validation artifacts\n'
-        '  qra analyze    Post-hoc analysis on assembled dataset\n'
+        '  qra ingest     Segment + freeze transcripts (--fresh = re-segment all)\n'
+        '  qra classify   --what vaamr|purer|codebook|cross-validation|all\n'
+        '                 --zero-shot (no exemplars)   --fresh (re-classify from scratch)\n'
+        '  qra gnn        train / classify (LLM-free) / status   (GNN consensus layer)\n'
+        '  qra assemble   Join overlays → master_segments.csv + validation artifacts\n'
+        '  qra analyze    Post-hoc analysis (--gnn / --no-gnn to force the GNN layer)\n'
+        '  qra add-data   Incrementally add new transcripts (longitudinal)\n'
         '  qra validate   Refresh validation artifacts without reclassifying\n'
         '  qra testset    create / refresh / list  frozen validation testsets\n'
         '  qra cv         create / refresh / list  content-validity testsets\n'
+        '  qra migrate    Import a legacy JSONL project into qra.db\n'
         '  qra run        Full pipeline (ingest → classify → assemble → analyze)\n'
         '  qra setup      Interactive configuration wizard (also reachable here)\n'
     )
