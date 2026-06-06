@@ -22,6 +22,7 @@ from .content_validity import (
     generate_or_refresh_content_validity_testsets,
 )
 from .mindfulbert_dataset import build_mindfulbert_dataset
+from .splits import export_split_manifest
 
 __all__ = [
     'assemble_master_dataset',
@@ -48,4 +49,6 @@ __all__ = [
     'generate_or_refresh_content_validity_testsets',
     # Track C — MindfulBERT training-set builder
     'build_mindfulbert_dataset',
+    # Frozen leakage-safe split manifest (contract P0)
+    'export_split_manifest',
 ]

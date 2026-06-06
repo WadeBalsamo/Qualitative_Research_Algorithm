@@ -427,5 +427,43 @@ class TestCsvOutput(unittest.TestCase):
             self.assertIn(col, df.columns, f'expected column {col!r} missing')
 
 
+class TestProgressionCoordColumns(unittest.TestCase):
+    """Contract P1 — progression_coord + stage_mixture columns on participant rows."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.csv_path = os.path.join(self.tmpdir, 'master_segments.csv')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_coord_from_ballots(self):
+        import pandas as pd
+        # Two ballots split between stage 2 and 3 → coord halfway between.
+        p = _make_participant('p1', primary_stage=2,
+                              rater_votes=[{'stage': 2, 'confidence': 1.0},
+                                           {'stage': 3, 'confidence': 1.0}])
+        t = _make_therapist('t1', purer_primary=1)
+        df = assemble_master_dataset([p, t], self.csv_path)
+        self.assertIn('progression_coord', df.columns)
+        self.assertIn('stage_mixture', df.columns)
+        prow = df[df['segment_id'] == 'p1'].iloc[0]
+        self.assertAlmostEqual(float(prow['progression_coord']), 2.5, places=5)
+        mix = json.loads(prow['stage_mixture'])
+        self.assertEqual(len(mix), 5)
+        self.assertAlmostEqual(sum(mix), 1.0, places=5)
+        # Therapist rows carry no VAAMR progression coordinate.
+        trow = df[df['segment_id'] == 't1'].iloc[0]
+        self.assertTrue(pd.isna(trow['progression_coord']))
+        self.assertTrue(pd.isna(trow['stage_mixture']))
+
+    def test_coord_onehot_fallback(self):
+        # No ballots → one-hot of primary_stage → integer coordinate.
+        p = _make_participant('p2', primary_stage=4)
+        df = assemble_master_dataset([p], self.csv_path)
+        prow = df[df['segment_id'] == 'p2'].iloc[0]
+        self.assertAlmostEqual(float(prow['progression_coord']), 4.0, places=5)
+
+
 if __name__ == '__main__':
     unittest.main()

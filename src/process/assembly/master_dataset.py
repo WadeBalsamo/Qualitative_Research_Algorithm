@@ -10,6 +10,36 @@ from .. import output_paths as _paths
 from ._shared import _ms_to_hms, _fmt_conf, _theme_name_from, _summarize_rationales
 
 
+def _progression_for_segment(seg):
+    """Soft stage-mixture + E[stage] progression coordinate for a participant segment.
+
+    Reuses the numpy-only ballot math in ``gnn_layer.soft_labels`` (no trained GNN
+    required): the multi-run ``rater_votes`` mixture, falling back to a one-hot of the
+    final/primary label when ballots are unusable. Returns ``(mixture_list, coord)`` for
+    participant segments and ``(None, None)`` for therapist segments (PURER, not VAAMR).
+    """
+    if getattr(seg, 'speaker', None) != 'participant':
+        return None, None
+    import numpy as np
+    from gnn_layer.soft_labels import (
+        ballots_to_mixture, mixture_to_progression, one_hot, N_VAAMR_STAGES,
+    )
+    votes = getattr(seg, 'rater_votes', None)
+    mix = ballots_to_mixture(votes)
+    if not votes or np.allclose(mix, 1.0 / N_VAAMR_STAGES):
+        stage = getattr(seg, 'final_label', None)
+        if stage is None:
+            stage = getattr(seg, 'primary_stage', None)
+        if stage is not None:
+            try:
+                mix = one_hot(int(stage))
+            except (TypeError, ValueError):
+                return None, None
+        else:
+            return None, None
+    return [round(float(p), 6) for p in mix], round(mixture_to_progression(mix), 6)
+
+
 def assemble_master_dataset(
     segments: List[Segment],
     output_path: str,
@@ -100,6 +130,11 @@ def assemble_master_dataset(
         else:
             confidence_tier = 'low'
 
+        # Soft stage mixture + continuous progression coordinate (participant only).
+        # Note: computed from the raw ballots/primary label, BEFORE any GNN promotion,
+        # so the coordinate is stable regardless of whether the GNN layer ran.
+        stage_mixture, progression_coord = _progression_for_segment(seg)
+
         row = {
             'segment_id': seg.segment_id,
             'trial_id': seg.trial_id,
@@ -175,6 +210,10 @@ def assemble_master_dataset(
             'final_label': final_label,
             'final_label_source': final_label_source,
             'label_confidence_tier': confidence_tier,
+            # Continuous progression target + soft stage mixture (participant only;
+            # JSON-encoded list column). Consumed by the MindfulBERT export + workshop.
+            'progression_coord': progression_coord,
+            'stage_mixture': (json.dumps(stage_mixture) if stage_mixture is not None else None),
         }
         rows.append(row)
 

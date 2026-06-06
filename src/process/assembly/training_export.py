@@ -137,11 +137,29 @@ def export_training_data(
     Write BERT-ready JSONL files into <output_dir>/trainingdata/.
 
     Produces:
-      theme_classification.jsonl  — one record per segment with a final theme label
-      codebook_multilabel.jsonl   — one record per segment with codebook labels
-      label_map.json              — label-ID ↔ name mappings for both tasks
+      theme_classification.jsonl       — one record per segment with a final theme label
+      codebook_multilabel.jsonl        — one record per segment with codebook labels
+      label_map.json                   — label-ID ↔ name mappings for both tasks
+      theme_classification_datasheet.json — per-stage counts + class weights (imbalance)
     """
     import datetime as _dt
+    from collections import Counter as _Counter
+    from gnn_layer.soft_labels import (
+        ballots_to_mixture, one_hot, N_VAAMR_STAGES,
+    )
+
+    def _stage_mixture(seg, label_id):
+        """5-vector soft mixture from multi-run ballots; one-hot fallback (numpy-only)."""
+        import numpy as np
+        votes = getattr(seg, 'rater_votes', None)
+        mix = ballots_to_mixture(votes)
+        if not votes or np.allclose(mix, 1.0 / N_VAAMR_STAGES):
+            if label_id is not None:
+                try:
+                    mix = one_hot(int(label_id))
+                except (TypeError, ValueError):
+                    pass
+        return [round(float(p), 6) for p in mix]
 
     id_to_name: dict = {}
     if framework is not None:
@@ -170,6 +188,8 @@ def export_training_data(
 
     theme_count = 0
     code_count = 0
+    theme_label_counter: "_Counter" = _Counter()
+    tier_counter: "_Counter" = _Counter()
 
     with open(theme_path, 'w', encoding='utf-8') as tf, \
          open(codebook_path, 'w', encoding='utf-8') as cf:
@@ -188,6 +208,7 @@ def export_training_data(
                     'confidence': seg.llm_confidence_primary,
                     'consistency': seg.llm_run_consistency,
                     'label_source': getattr(seg, 'final_label_source', None) or 'llm_zero_shot',
+                    'stage_mixture': _stage_mixture(seg, label_id),
                     'segment_id': seg.segment_id,
                     'participant_id': seg.participant_id,
                     'session_id': seg.session_id,
@@ -195,6 +216,8 @@ def export_training_data(
                 }
                 tf.write(json.dumps(record, ensure_ascii=False) + '\n')
                 theme_count += 1
+                theme_label_counter[int(label_id)] += 1
+                tier_counter[getattr(seg, 'label_confidence_tier', None) or 'unknown'] += 1
 
             # Codebook multi-label record
             codes = seg.codebook_labels_ensemble or []
@@ -226,5 +249,25 @@ def export_training_data(
     with open(map_path, 'w', encoding='utf-8') as f:
         json.dump(label_map, f, indent=2, ensure_ascii=False)
 
+    # Theme-classification datasheet — per-stage counts + inverse-frequency class weights
+    # so the workshop can set class weights without rescanning the corpus (contract P3).
+    datasheet_path = os.path.join(training_dir, 'theme_classification_datasheet.json')
+    n_classes = len(id_to_name) or N_VAAMR_STAGES
+    total = sum(theme_label_counter.values())
+    raw_w = {i: (total / (n_classes * c) if c else 0.0)
+             for i, c in theme_label_counter.items()}
+    norm = (sum(raw_w.values()) / len(raw_w)) if raw_w else 1.0
+    class_weights = {str(i): round(w / norm, 6) for i, w in raw_w.items()} if norm else {}
+    theme_datasheet = {
+        'generated': _dt.datetime.utcnow().strftime('%Y-%m-%d'),
+        'n_examples': theme_count,
+        'label_map': {str(k): v for k, v in id_to_name.items()},
+        'theme_label_counts': {str(k): int(v) for k, v in sorted(theme_label_counter.items())},
+        'class_weights': class_weights,
+        'label_confidence_tier_counts': {str(k): int(v) for k, v in tier_counter.items()},
+    }
+    with open(datasheet_path, 'w', encoding='utf-8') as f:
+        json.dump(theme_datasheet, f, indent=2, ensure_ascii=False)
+
     print(f"Training data: {theme_count} theme records, {code_count} codebook records")
-    return [theme_path, codebook_path, map_path]
+    return [theme_path, codebook_path, map_path, datasheet_path]

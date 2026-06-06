@@ -30,6 +30,7 @@ channel (gnn_layer/influence.py) is GPU-relevant and follows the device mandate 
 """
 
 import datetime
+import hashlib
 import json
 import os
 from collections import Counter
@@ -40,6 +41,14 @@ from .. import output_paths as _paths
 DATASET_VERSION = '1.0'
 PURER_NAMES = {0: 'Phenomenology', 1: 'Utilization', 2: 'Reframing',
                3: 'Education', 4: 'Reinforcement'}
+# VAAMR stage short-names (mirrors the CLAUDE.md VAAMR table); used for the SFT instruction.
+VAAMR_NAMES = {0: 'Vigilance', 1: 'Avoidance', 2: 'Attention Regulation',
+               3: 'Metacognition', 4: 'Reappraisal'}
+
+
+def _text_sha(context_text: str, cue_text: str) -> str:
+    """sha256 of ``context_text|cue_text`` — dedup key / synthetic-contamination guard (C2)."""
+    return hashlib.sha256(f"{context_text}|{cue_text}".encode('utf-8')).hexdigest()
 # Provenance precedence (higher = stronger). An example's tier is the WEAKEST of its
 # two VAAMR endpoints — the dataset never claims more certainty than its weakest label.
 _TIER_RANK = {'adjudicated': 3, 'human_consensus': 2, 'gnn_consensus': 1, 'llm_zero_shot': 0}
@@ -55,28 +64,58 @@ def _coerce_int(v):
     return int(f) if f == f else None
 
 
+def _coerce_float(v):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f else None
+
+
+def _stage_mixture_for_row(r, has_mixture_col):
+    """5-vector soft stage mixture for a row.
+
+    Prefers the ``stage_mixture`` column written by master_dataset (JSON list); falls back
+    to recomputing from the ``rater_votes`` column via the numpy-only ballot math. Returns
+    None when neither is available (e.g. therapist rows)."""
+    if has_mixture_col:
+        raw = r.get('stage_mixture')
+        if isinstance(raw, str) and raw.strip():
+            try:
+                v = json.loads(raw)
+                if isinstance(v, list) and v:
+                    return [float(x) for x in v]
+            except (ValueError, TypeError):
+                pass
+        elif isinstance(raw, list) and raw:
+            return [float(x) for x in raw]
+    # Recompute from ballots if present.
+    from gnn_layer.soft_labels import ballots_to_mixture, _parse_votes
+    votes = _parse_votes(r.get('rater_votes')) if 'rater_votes' in r else None
+    if votes:
+        import numpy as np
+        return [float(x) for x in np.asarray(ballots_to_mixture(votes))]
+    return None
+
+
 def _seg_index(df_all):
     """segment_id → row dict with the fields the builder needs."""
     out: Dict[str, dict] = {}
     has_coord = 'progression_coord' in df_all.columns
+    has_mixture = 'stage_mixture' in df_all.columns
     for _, r in df_all.iterrows():
         sid = str(r.get('segment_id', ''))
         if not sid:
             continue
-        coord = None
-        if has_coord:
-            try:
-                c = float(r.get('progression_coord'))
-                coord = c if c == c else None
-            except (TypeError, ValueError):
-                coord = None
+        coord = _coerce_float(r.get('progression_coord')) if has_coord else None
         out[sid] = {
             'text': str(r.get('text', '') or ''),
             'speaker': str(r.get('speaker', '') or ''),
             'progression_coord': coord,
+            'stage_mixture': _stage_mixture_for_row(r, has_mixture),
             'final_label': _coerce_int(r.get('final_label')),
             'final_label_source': r.get('final_label_source'),
-            'confidence': r.get('llm_confidence_primary'),
+            'confidence': _coerce_float(r.get('llm_confidence_primary')),
             'purer': _coerce_int(r.get('purer_primary')),
             'participant_id': r.get('participant_id'),
             'session_number': r.get('session_number'),
@@ -146,6 +185,15 @@ def _build_examples(df_all, gate_passed: bool) -> List[dict]:
             'dominant_purer_name': (PURER_NAMES.get(int(dom)) if dom is not None else None),
             'n_therapist_segments': len(ther),
             'n_cue_words': len(cue_text.split()),
+            # ---- continuous progression endpoints + soft mixtures (P1) ----
+            'from_coord': fl['progression_coord'],
+            'to_coord': tl['progression_coord'],
+            'from_stage_mixture': fl['stage_mixture'],
+            'to_stage_mixture': tl['stage_mixture'],
+            # ---- per-endpoint LLM confidence + content hash (P2) ----
+            'from_confidence': fl['confidence'],
+            'to_confidence': tl['confidence'],
+            'text_sha': _text_sha(fl['text'], cue_text),
             # ---- PRIMARY label (observed Δprogression — label of record) ----
             'delta_progression': round(float(delta), 5),
             'direction': _direction(float(delta)),
@@ -160,6 +208,64 @@ def _build_examples(df_all, gate_passed: bool) -> List[dict]:
             },
         })
     return examples
+
+
+def _build_cue_pool(examples) -> List[dict]:
+    """P2 — deduplicated therapist-cue pool keyed by text_sha.
+
+    One row per distinct cue: ``{cue_text, dominant_purer, n_uses, p_advance, text_sha}``.
+    ``p_advance`` is the fraction of uses whose observed direction is 'advanced'. Feeds the
+    NSP candidate pool + hard-negative mining in the workshop.
+    """
+    by_sha: Dict[str, dict] = {}
+    for ex in examples:
+        sha = ex['text_sha']
+        agg = by_sha.get(sha)
+        if agg is None:
+            agg = {'cue_text': ex['cue_text'], 'text_sha': sha,
+                   '_purers': Counter(), 'n_uses': 0, '_adv': 0}
+            by_sha[sha] = agg
+        agg['n_uses'] += 1
+        if ex['dominant_purer'] is not None:
+            agg['_purers'][ex['dominant_purer']] += 1
+        if ex['direction'] == 'advanced':
+            agg['_adv'] += 1
+    pool = []
+    for agg in by_sha.values():
+        dom = agg['_purers'].most_common(1)[0][0] if agg['_purers'] else None
+        pool.append({
+            'cue_text': agg['cue_text'],
+            'dominant_purer': dom,
+            'n_uses': agg['n_uses'],
+            'p_advance': round(agg['_adv'] / agg['n_uses'], 5) if agg['n_uses'] else 0.0,
+            'text_sha': agg['text_sha'],
+        })
+    return pool
+
+
+def _build_sft_view(examples) -> List[dict]:
+    """P3 — instruction-formatted SFT corpus (advancers only).
+
+    Row: ``{instruction, input, output, provenance_tier, from_stage, dominant_purer,
+    text_sha}`` where ``output`` is the therapist cue that advanced the participant.
+    """
+    rows = []
+    for ex in examples:
+        if ex['direction'] != 'advanced':
+            continue
+        stage_name = VAAMR_NAMES.get(ex['from_stage'], str(ex['from_stage']))
+        rows.append({
+            'instruction': ('Given the participant is in the VAAMR stage below and their '
+                            'latest utterance, write the therapist cue most likely to '
+                            'progress them toward a more mindful stage.'),
+            'input': f"Stage: {stage_name}\nParticipant: {ex['context_text']}",
+            'output': ex['cue_text'],
+            'provenance_tier': ex['provenance']['tier'],
+            'from_stage': ex['from_stage'],
+            'dominant_purer': ex['dominant_purer'],
+            'text_sha': ex['text_sha'],
+        })
+    return rows
 
 
 def _attach_augmentation(examples, output_dir: str) -> int:
@@ -289,6 +395,16 @@ def _write_datasheet(examples, datasheet: dict, output_dir: str) -> str:
         L.append(f"    {k:<12} {v}")
     L.append("")
     L.append("-" * W)
+    L.append("  PER-STAGE ENDPOINT COUNTS (from_stage + to_stage) & CLASS WEIGHTS")
+    L.append("-" * W)
+    for sid, cnt in datasheet.get('theme_label_counts', {}).items():
+        name = VAAMR_NAMES.get(int(sid), sid)
+        w = datasheet.get('class_weights', {}).get(sid)
+        L.append(f"    [{sid}] {name:<22} {cnt:<6} weight={w}")
+    L.append(f"    therapist cue pool (deduped): {datasheet.get('n_cue_pool', 0)}   "
+             f"SFT examples (advancers): {datasheet.get('n_sft_examples', 0)}")
+    L.append("")
+    L.append("-" * W)
     L.append("  PROVENANCE MIX (weakest endpoint per example)")
     L.append("-" * W)
     for k, v in datasheet['provenance_mix'].items():
@@ -393,10 +509,38 @@ def build_mindfulbert_dataset(df_all, output_dir: str, config=None,
             f.write(json.dumps(ex, ensure_ascii=False, default=str) + '\n')
     files.append(jsonl_path)
 
+    # ---- P2: deduplicated therapist-cue pool ----
+    cue_pool = _build_cue_pool(examples)
+    pool_path = os.path.join(tdir, 'therapist_cue_pool.jsonl')
+    with open(pool_path, 'w', encoding='utf-8') as f:
+        for row in cue_pool:
+            f.write(json.dumps(row, ensure_ascii=False, default=str) + '\n')
+    files.append(pool_path)
+
+    # ---- P3: ready-made SFT view (advancers only) ----
+    sft_rows = _build_sft_view(examples)
+    sft_path = os.path.join(tdir, 'mindfulbert_sft.jsonl')
+    with open(sft_path, 'w', encoding='utf-8') as f:
+        for row in sft_rows:
+            f.write(json.dumps(row, ensure_ascii=False, default=str) + '\n')
+    files.append(sft_path)
+
     # ---- datasheet ----
     prov_mix = Counter(ex['provenance']['tier'] for ex in examples)
     dir_dist = Counter(ex['direction'] for ex in examples)
     n_abstained = sum(1 for ex in examples if ex['provenance']['gnn_abstain'])
+    # Per-stage endpoint counts (from_stage + to_stage) + inverse-frequency class weights (P3).
+    stage_counter: Counter = Counter()
+    for ex in examples:
+        stage_counter[int(ex['from_stage'])] += 1
+        stage_counter[int(ex['to_stage'])] += 1
+    n_stage_classes = len(stage_counter) or 1
+    stage_total = sum(stage_counter.values())
+    raw_w = {i: (stage_total / (n_stage_classes * c) if c else 0.0)
+             for i, c in stage_counter.items()}
+    w_norm = (sum(raw_w.values()) / len(raw_w)) if raw_w else 1.0
+    theme_class_weights = ({str(i): round(w / w_norm, 6) for i, w in raw_w.items()}
+                           if w_norm else {})
     datasheet = {
         'dataset_version': DATASET_VERSION,
         'created': datetime.datetime.now().isoformat(timespec='seconds'),
@@ -406,6 +550,10 @@ def build_mindfulbert_dataset(df_all, output_dir: str, config=None,
         'label_basis': Counter(ex['label_basis'] for ex in examples).most_common(1)[0][0],
         'direction_distribution': dict(dir_dist),
         'provenance_mix': dict(prov_mix),
+        'theme_label_counts': {str(k): int(v) for k, v in sorted(stage_counter.items())},
+        'class_weights': theme_class_weights,
+        'n_cue_pool': len(cue_pool),
+        'n_sft_examples': len(sft_rows),
         'n_abstained': n_abstained,
         'gate_passed': gate_passed,
         'augmentation': aug_meta,

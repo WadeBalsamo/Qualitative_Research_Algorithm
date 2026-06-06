@@ -223,7 +223,7 @@ class GnnLayerConfig:
     # (the label of record); GNN model-counterfactual "would-progress" targets are a SEPARATE,
     # provenance-tagged augmentation channel produced only from a gate-passing model and
     # RETAINED only if a held-out ablation (C4) shows it helps (gain > augmentation_min_gain).
-    build_mindfulbert_dataset: bool = False  # master switch for Track C
+    build_mindfulbert_dataset: bool = True   # master switch for Track C (on by default — feeds the fine-tuning workshop)
     augmentation_enabled: bool = False       # add the GNN-counterfactual channel (C3; gate-passing only)
     augmentation_min_gain: float = 0.0       # retain augmentation only if held-out gain exceeds this (C4)
 

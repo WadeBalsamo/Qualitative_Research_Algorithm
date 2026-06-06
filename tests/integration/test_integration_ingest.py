@@ -28,9 +28,15 @@ class TestRealIngest(unittest.TestCase):
         shutil.rmtree(self.out, ignore_errors=True)
         os.makedirs(self.out, exist_ok=True)
         self.cfg = build_tiny_config(self.out, transcript_dir=_TESTDATA, enable_gnn=False)
+        # The testdata facilitator is "Dr. Rivera"; speaker roles are config-driven
+        # (no honorific heuristic), so exclude-mode must name the therapist for the
+        # participant/therapist separation this test asserts.
+        self.cfg.speaker_filter.mode = "exclude"
+        self.cfg.speaker_filter.speakers = ["Dr. Rivera"]
 
     def test_ingest_freezes_segments_and_separates_speakers(self):
         from process.orchestrator import stage_ingest
+        from process import segments_io
         try:
             segments = stage_ingest(self.cfg, output_dir=self.out)
         except Exception as e:
@@ -40,13 +46,11 @@ class TestRealIngest(unittest.TestCase):
         # Both participant and therapist roles should be present after normalization.
         self.assertIn("participant", speakers)
         self.assertIn("therapist", speakers)
-        # Frozen segments written under 01_transcripts/segmented/<sid>/segments.jsonl
-        seg_root = os.path.join(self.out, "01_transcripts", "segmented")
-        self.assertTrue(os.path.isdir(seg_root), "frozen segmented dir missing")
-        jsonls = []
-        for root, _dirs, files in os.walk(seg_root):
-            jsonls += [f for f in files if f == "segments.jsonl"]
-        self.assertTrue(jsonls, "no frozen segments.jsonl written")
+        # Frozen segments are persisted to the qra.db `segments` table (not JSONL files).
+        sessions = segments_io.list_segmented_sessions(self.out)
+        self.assertTrue(sessions, "no frozen sessions recorded in qra.db")
+        self.assertTrue(segments_io.read_session_segments(self.out, sessions[0]),
+                        "frozen segments not retrievable from qra.db")
 
 
 if __name__ == "__main__":

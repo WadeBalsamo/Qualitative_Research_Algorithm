@@ -68,6 +68,7 @@ from .assembly import (
     export_human_classification_forms,
     export_flagged_for_review,
     export_training_data,
+    export_split_manifest,
     generate_or_refresh_validation_testsets,
     export_validation_testsets,  # Phase 1 back-compat — remove with legacy_migration.py
     generate_or_refresh_content_validity_testsets,
@@ -1935,6 +1936,13 @@ def run_full_pipeline(
     observer.on_stage_progress(
         "Report Generation",
         "  Training data: 02_meta/training_data/theme_classification.jsonl + codebook_multilabel.jsonl",
+    )
+
+    # Frozen, leakage-safe participant-grouped split manifest (contract P0)
+    export_split_manifest(all_segments, output_dir)
+    observer.on_stage_progress(
+        "Report Generation",
+        "  Split manifest: 02_meta/training_data/splits.json",
     )
 
     observer.on_stage_complete(
