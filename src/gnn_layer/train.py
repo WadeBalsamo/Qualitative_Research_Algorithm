@@ -51,10 +51,13 @@ def assemble_targets(
     """
     import numpy as np
     import torch
-    from .soft_labels import mixture_to_progression
+    from .soft_labels import mixture_to_progression, N_VAAMR_STAGES
 
     idx_of = graph.index_of
     targets: dict = {}
+    # soft-VAAMR width: 5 (default) or 6 when the "No code" class is enabled. The mixture
+    # vectors carry this width directly; n_classes only sizes the empty-target fallback.
+    n_classes = int(getattr(config, 'vaamr_n_classes', 5) or 5)
 
     # ---- VAAMR soft targets (participant nodes present in soft_targets) ----
     v_idx, v_mix = [], []
@@ -64,15 +67,20 @@ def assemble_targets(
     if v_idx:
         targets['vaamr_idx'] = torch.tensor(v_idx, dtype=torch.long)
         targets['vaamr_mix'] = torch.tensor(np.stack(v_mix), dtype=torch.float32)
+        # Progression coordinate E[stage] is defined over the 5 real VAAMR stages only;
+        # for a 6-class No-code row (one-hot on class 5) dims 0..4 are 0 → prog 0.0. The
+        # No-code distinction is carried by the classification head, not this regressor.
+        # For the 5-class path m[:5] == m, so this is byte-identical to the prior code.
         targets['prog_val'] = torch.tensor(
-            [mixture_to_progression(m) for m in v_mix], dtype=torch.float32)
-        # contrastive labels = argmax stage among labeled nodes
+            [mixture_to_progression(m[:N_VAAMR_STAGES]) for m in v_mix], dtype=torch.float32)
+        # contrastive labels = argmax stage among labeled nodes (class 5 / No-code is a
+        # valid contrastive group; the SupCon loss only needs a consistent label).
         targets['contrast_idx'] = targets['vaamr_idx']
         targets['contrast_label'] = torch.tensor(
             [int(np.argmax(m)) for m in v_mix], dtype=torch.long)
     else:
         targets['vaamr_idx'] = torch.zeros((0,), dtype=torch.long)
-        targets['vaamr_mix'] = torch.zeros((0, 5), dtype=torch.float32)
+        targets['vaamr_mix'] = torch.zeros((0, n_classes), dtype=torch.float32)
         targets['prog_val'] = torch.zeros((0,), dtype=torch.float32)
         targets['contrast_idx'] = torch.zeros((0,), dtype=torch.long)
         targets['contrast_label'] = torch.zeros((0,), dtype=torch.long)
