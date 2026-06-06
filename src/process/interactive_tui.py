@@ -460,7 +460,8 @@ def _action_classify_purer(config, output_dir: str) -> None:
         if removed:
             _ok(f'Removed {removed} PURER checkpoint file(s).')
 
-    already_done = os.path.isfile(_paths.classification_overlay_path(output_dir, 'purer'))
+    from . import classifications_io as _cio
+    already_done = _cio.overlay_exists(output_dir, 'purer')
 
     if already_done:
         _info('PURER classification already exists for this project.')
@@ -756,8 +757,6 @@ def _action_testset_refresh_all(config, output_dir: str, framework, state: dict)
             _err(f'Worksheet #{n}: {exc}')
         except Exception as exc:
             _err(f'Worksheet #{n}: {exc}')
-        except Exception as exc:
-            _err(f'{name}: {exc}')
     print()
     _pause()
 
@@ -856,23 +855,18 @@ def _action_cv_refresh_all(config, output_dir: str, state: dict, framework) -> N
 
 
 def _action_cv_list(output_dir: str, state: dict) -> None:
-    from . import output_paths as _paths
+    from .assembly.content_validity import list_content_validity_testsets
     _section('Content-Validity Testsets')
-    if not state['has_cv_testsets']:
+    testsets = list_content_validity_testsets(output_dir)
+    if not testsets:
         _warn('No content-validity testsets found.')
         _pause()
         return
-    for name in state['has_cv_testsets']:
-        m_path = _paths.cv_testset_manifest_path(output_dir, name)
-        try:
-            with open(m_path) as fh:
-                m = json.load(fh)
-            n = m.get('n_items', '?')
-            created = m.get('created_at', 'unknown')[:10]
-            fw = m.get('framework', '?')
-            print(f'  • {name}  ({fw}, {n} items, created {created})')
-        except Exception:
-            print(f'  • {name}  [unreadable manifest]')
+    for t in testsets:
+        fw = (t.get('framework') or {}).get('name', '?')
+        n = t.get('n_items', '?')
+        created = (t.get('created_at') or 'unknown')[:10]
+        print(f'  • {t["name"]}  ({fw}, {n} items, created {created})')
     print()
     _pause()
 
