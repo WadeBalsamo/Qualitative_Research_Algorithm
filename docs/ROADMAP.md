@@ -17,7 +17,7 @@ Each phase builds on the preceding one; the labeled corpus, validated constructs
 
 ## Current State (Point of Departure)
 
- The pipeline can ingest diarized transcripts, semantically segment them, classify participant segments against VAAMR and therapist segments against PURER via zero-shot LLM consensus voting, optionally apply VCE codebook classification, assemble master datasets, generate cue-response reports, run the program-efficacy and mechanism dossiers, and prepare human validation sets. The GNN representation-and-discovery layer is implemented (`gnn_layer/`): it provides continuous VAAMR superposition, emergent cue-motif discovery, GNN↔LLM↔human triangulation, construct-signal ablation, participant↔therapist coupling factors, and — most consequentially — a graph-distilled consensus classifier with an out-of-sample per-stage reliability gate that, once passed, enables LLM-free classification of new segments (`qra classify --backend gnn`). Cohorts 1 and 2 of the Move-MORE Feasibility Trial have been processed.
+ The pipeline can ingest diarized transcripts, semantically segment them, classify participant segments against VAAMR and therapist segments against PURER via zero-shot LLM consensus voting, optionally apply VCE codebook classification, assemble master datasets, generate cue-response reports, run the program-efficacy and mechanism dossiers, and prepare human validation sets. The GNN representation-and-discovery layer is implemented (`gnn_layer/`): it provides continuous VAAMR superposition, emergent cue-motif discovery, GNN↔LLM↔human triangulation, construct-signal ablation, participant↔therapist coupling factors, and — most consequentially — a graph-distilled consensus classifier with an out-of-sample per-stage reliability gate that, once passed, enables LLM-free classification of new segments (`qra gnn classify`). Cohorts 1 and 2 of the Move-MORE Feasibility Trial have been processed.
 
 What remains is the research-facing work: completing human validation, importing the human-coded testsets and the trial's quantitative outcomes, computing the multi-substrate reliability statistics, producing the manuscripts, and building the downstream MindfulBERT models.
 
@@ -231,7 +231,7 @@ Train the top-performing model configuration on progressively larger subsets of 
 > kNN-similarity edges. On that graph, Capabilities A–E are live — continuous VAAMR
 > positioning (A), cue-motif discovery (B), GNN↔LLM/GNN↔human triangulation (C),
 > head ablation (D), and coupling factors (E) — as is the graph-distilled consensus
-> classifier with its out-of-sample per-stage reliability gate (`qra classify --backend gnn`).
+> classifier with its out-of-sample per-stage reliability gate (`qra gnn classify`).
 >
 > What is **designed but NOT built** is everything in this phase that assumes a
 > *heterogeneous* graph: construct anchor nodes and typed taxonomy edges (§3.2's
@@ -493,7 +493,7 @@ Fine-tune a psychology-domain encoder — **psych-bert** (a mental-health-pretra
 
 ### 6.2 Graph-Scaled Classification Across Larger Datasets
 
-Use the trained graph (Phase 3) as the scaling engine for classifying datasets far larger than the four-cohort trial. New segments attach inductively to the frozen graph via kNN edges and are labeled by the loaded checkpoint with no LLM calls (`gnn_layer/inference.py:attach_new_segments` + `qra classify --backend gnn`). Applied to additional MORE-family corpora and other MBI trials, this both stress-tests the universality of the VAAMR taxonomy (§6.4) and *manufactures the large, labeled corpus* that the generative model in §6.3 requires — graph-scaled classification is the data-generation step for the next fine-tuning.
+Use the trained graph (Phase 3) as the scaling engine for classifying datasets far larger than the four-cohort trial. New segments attach inductively to the frozen graph via kNN edges and are labeled by the loaded checkpoint with no LLM calls (`gnn_layer/inference.py:attach_new_segments` + `qra gnn classify`). Applied to additional MORE-family corpora and other MBI trials, this both stress-tests the universality of the VAAMR taxonomy (§6.4) and *manufactures the large, labeled corpus* that the generative model in §6.3 requires — graph-scaled classification is the data-generation step for the next fine-tuning.
 
 ### 6.3 MindfulBERT (Generative): Therapeutic Text That Advances VAAMR Progression
 

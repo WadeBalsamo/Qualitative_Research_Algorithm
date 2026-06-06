@@ -38,9 +38,19 @@ python qra.py run --config ./qra_config.json --auto-analyze
 python qra.py analyze --output-dir ./data/output/
 
 # Modular pipeline stages (Phase 3)
-python qra.py ingest -o ./data/output/                   # segment only
-python qra.py classify -o ./data/output/ --what theme     # classify theme only
-python qra.py assemble -o ./data/output/                  # join frozen+overlays
+python qra.py ingest -o ./data/output/                       # segment only (--fresh = re-segment all)
+python qra.py classify -o ./data/output/ --what vaamr        # classify VAAMR only
+python qra.py classify -o ./data/output/ --what vaamr --fresh # re-classify FROM SCRATCH (clear ckpts+overlay)
+python qra.py assemble -o ./data/output/                     # join frozen+overlays
+
+# GNN consensus layer (modular; add the GNN to an LLM-only project, then scale)
+python qra.py gnn train -o ./data/output/                    # train graph + reliability gate + reports
+python qra.py gnn status -o ./data/output/                   # κ(graph,LLM); ready for LLM-free scaling?
+python qra.py gnn classify -o ./data/output/                 # LLM-free label new/unlabeled segments
+
+# Import a legacy (pre-SQLite, JSONL) project into qra.db (preview, then --run)
+python qra.py migrate -o ./data/output/                      # preview
+python qra.py migrate -o ./data/output/ --run               # perform (originals → _legacy_files/)
 
 # Incremental data addition (segment + classify only NEW transcripts; re-assembles + re-analyzes)
 python qra.py add-data --config ./data/output/02_meta/qra_config.json
@@ -207,14 +217,15 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 
 | Path | Role |
 |------|------|
-| `qra.py` | CLI entry point (setup / run / analyze / ingest / classify / assemble / testset / cv) |
+| `qra.py` | CLI entry point (setup / run / analyze / ingest / classify / assemble / gnn / migrate / add-data / reclassify-run / testset / cv / *-anonymization) |
 | `src/process/orchestrator.py` | Stage sequencing, `run_full_pipeline`, standalone `stage_*` functions |
 | `src/process/config.py` | `PipelineConfig` dataclass — single source of truth for all settings |
 | `src/process/db.py` | SQLite store: `qra.db` schema (12 tables), `open_db()` atomic-transaction context manager, WAL, JSON-column helpers |
 | `src/process/segments_io.py` | Frozen segment I/O (SQLite `segments` table), `params_hash`, `read_master_segments` (frozen+overlays), `load_segments_for_stage` |
-| `src/process/classifications_io.py` | Overlay tables read/write (SQLite UPSERT), `read_overlay`/`overlay_exists`/`remap_overlay_segment_ids`, provenance manifest |
+| `src/process/classifications_io.py` | Overlay tables read/write (SQLite UPSERT), `read_overlay`/`overlay_exists`/`clear_overlay`/`remap_overlay_segment_ids`, provenance manifest |
+| `src/process/reclassify_ops.py` | From-scratch reset helper for `--fresh` (clears checkpoints + overlay per framework); shared by CLI + TUI |
 | `src/process/_freeze.py` | Freeze primitives — `FrozenArtifactError`, SHA verification (still used for on-disk frozen .txt worksheets) |
-| `src/process/legacy_migration.py` | Migration shim: v2.0→per-session, v2.5→v3 layout, **JSONL→SQLite (`migrate_jsonl_to_sqlite`)**, and `qra_config.json` default-fill (`upgrade_config_file`) |
+| `src/process/legacy_migration.py` | Migration shim: v2.0→per-session, v2.5→v3 layout, **JSONL→SQLite (`migrate_jsonl_to_sqlite`, `preview_counts`; surfaced as `qra migrate`)**, and `qra_config.json` default-fill (`upgrade_config_file`) |
 | `src/process/transcript_ingestion.py` | Semantic segmentation logic, `ConversationalSegmenter` |
 | `src/process/llm_segmentation.py` | LLM-assisted segmentation boundary refinement |
 | `src/process/speaker_anonymization.py` | Persistent speaker ID mapping across runs |
@@ -235,6 +246,7 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 | `src/codebook/embedding_classifier.py` | Sentence-transformer embedding-based classification |
 | `src/codebook/ensemble.py` | Ensemble reconciliation of embedding + LLM results |
 | `src/classification_tools/llm_classifier.py` | Zero-shot prompt construction and response parsing |
+| `src/classification_tools/zeroshot_reporting.py` | `write_zeroshot_report` — graded `--test-zeroshot` content-validity report (extracted from `qra.py`) |
 | `src/classification_tools/llm_client.py` | Backend abstraction (OpenRouter, Ollama, LM Studio, HuggingFace, Replicate) |
 | `src/classification_tools/classification_loop.py` | Multi-run consensus voting with checkpointing |
 | `src/classification_tools/data_structures.py` | `Segment` dataclass |
