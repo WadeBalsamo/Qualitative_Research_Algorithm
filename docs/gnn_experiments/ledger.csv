@@ -1,1 +1,2 @@
 arm,branch,embedding,embed_dim,method,imbalance,n_classes,gnn_human_kappa,gnn_human_lo,gnn_human_hi,gnn_human_n,gnn_llm_kappa_205,gnn_llm_lo,gnn_llm_hi,gnn_llm_kappa_76,recall_vigilance,recall_avoidance,recall_attnreg,recall_metacog,recall_reappraisal,recall_nocode,seed,timestamp,decision,notes
+A0,worktree-agent-a7385c75ac3c7a67d,minilm,384,GraphSAGE,none,5,-0.0207,-0.0801,0.0645,66,0.0503,-0.0258,0.1237,0.1107,0.2000,0.0000,0.6849,0.0000,0.2414,,42,2026-06-06T22:26:01+00:00,,
