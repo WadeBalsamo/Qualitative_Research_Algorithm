@@ -286,3 +286,11 @@ class GnnLayerConfig:
     validation_folds: int = 5              # k for k-fold held-out evaluation
     validation_holdout: float = 0.2        # single-holdout fraction when validation_folds <= 1
     irr_target: float = 0.70               # kappa vs LLM consensus at which LLM-free scaling is recommended
+    # PARTICIPANT-GROUPED cross-validation (the honest default). Random k-fold over a transcript
+    # graph LEAKS: a held-out segment's temporal/kNN neighbours include its own and same-participant
+    # segments (whose labels are visible), so the model effectively sees the answer — this inflated
+    # the historical gate κ (0.247 random → ≈0.05 grouped on this corpus; see graph_experiments.md
+    # §4.5). When True (default) AND the caller passes a per-node `groups` map (the runner builds one
+    # from participant_id / session_id), crossval_predictions holds out WHOLE participants
+    # (StratifiedGroupKFold), removing the leak. Set False to restore the legacy random k-fold.
+    participant_grouped_cv: bool = True

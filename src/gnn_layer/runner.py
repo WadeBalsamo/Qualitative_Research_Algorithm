@@ -136,8 +136,19 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     try:
         from . import validation as _val
         # Request held-out logits so A3 temperature calibration can reuse this CV.
+        # Participant-grouped CV (honest default): hold out WHOLE participants so the gate κ
+        # is not inflated by transcript-graph leakage (graph_experiments.md §4.5). Participant
+        # segments group by participant_id; therapist (PURER) segments by session_id.
+        def _cv_group(r):
+            pid = r.get('participant_id')
+            if str(r.get('speaker', '') or '') == 'participant' and pid is not None \
+                    and str(pid) not in ('', 'nan', 'None'):
+                return f"p:{pid}"
+            sess = r.get('session_id')
+            return f"s:{sess}" if sess is not None else None
+        cv_groups = {str(r.get('segment_id')): _cv_group(r) for _, r in df_all.iterrows()}
         cv = _train.crossval_predictions(graph, targets, config, n_vce=len(vce_codes),
-                                         return_logits=True)
+                                         return_logits=True, groups=cv_groups)
         if cv['vaamr'] or cv['purer']:
             vm = _val.evaluate_crossval(df_all, cv, config)
             # ---- A3 temperature calibration (fit on the same held-out CV) ----
