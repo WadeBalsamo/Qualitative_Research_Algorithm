@@ -190,6 +190,41 @@ influence lens.
 
 ---
 
+### 4.5 Premise revision after the first real-corpus gate (2026-06-06)
+
+The §4.2 rejection of CFiCS-style heterogeneity rested on the premise that **"QRA does not have
+CFiCS's few-shot/fine-grained constraint."** The first real-corpus VAAMR gate (workspace
+`./data/Meta`; full writeup in root `qra_gnn_trial_run_report.md` §12) **refutes that premise**:
+
+- GNN↔LLM **κ=0.247**, GNN↔human **κ=0.053**; **Avoidance and Metacognition recall = 0%** (the graph
+  collapses to the majority stage). VAAMR rare-stage classification *is* a fine-grained few-shot
+  problem — precisely the regime where CFiCS shows concept structure is decisive (skill macro-F1 ~4→96).
+- The circularity objection (D3) still holds for the *GNN↔LLM* axis, but the design's own remedy
+  stands: **judge concept anchors on the GNN↔human axis**, which they cannot inflate. A **66-item
+  human-coded subset already exists** (it drives `06b_irr_report.txt`) but is **not yet wired into the
+  GNN gate** — closing that integration gap makes the anchor ablation decisive *today*.
+
+**Caveats that bound this (also new from the trial):** (i) this gate ran on a **substitute embedding**
+(`all-MiniLM-L6-v2`, because the pinned `transformers` can't load `Qwen3-Embedding-8B` — see
+[[project_gnn_embedding_transformers_pin]]), so κ=0.247 is a **lower bound**; (ii) **human↔human
+α≈0.33–0.52** — the construct is fuzzy and the **legacy κ≥0.70 gate is unreachable in principle**.
+
+**Revised stance:** the homogeneous graph remains the *default* substrate, but heterogeneity is no
+longer presumptively unjustified for VAAMR — it is now an **escalation path to be tested on the human
+axis** *after* the embedding is fixed. Sequence: **fix features first (Qwen3-8B), measure whether a
+GNN even beats a simple baseline, then escalate to concept structure only if fine-grained gaps
+remain** (Track A0).
+
+### 4.6 Target reset — human-level inter-rater reliability
+
+The end goal is **human-level IRR**, not the legacy 0.70 gate. Concretely:
+- **GNN↔human κ → the LLM↔human level (≈0.54)** is the load-bearing validity target.
+- **GNN↔LLM κ → the human↔human ceiling (≈0.45–0.52)** is the distillation-fidelity target.
+- The LLM consensus (already κ=0.537 vs human, i.e. human-level) is the **label of record** until a
+  model clears these on the human axis.
+
+---
+
 ## 5. Design decisions (the locked record + the why)
 
 Each decision below was made explicitly with the lead researcher.
@@ -207,6 +242,8 @@ Each decision below was made explicitly with the lead researcher.
 | D9 | **Full classifier-hardening track** (abstention, calibration, label propagation, scale-mode sim gate). | This is what actually makes the graph a *trustworthy* LLM-free classifier at scale; the distillation backbone is ~80% built but lacks these trust mechanisms. |
 | D10 | **Never train MindfulBERT on un-gated or unvalidated model labels.** | Distilling a model's guesses into another model compounds n≈32 fragility. |
 | D11 | **GPU-preferred, CPU-safe compute.** All GNN compute uses CUDA when available (`config.device=None`→auto) and falls back to CPU cleanly; `config.device` governs BOTH the GNN model and the heavy embedding pass. | The 8B Qwen3 embedding + GraphSAGE training are the cost centres; the layer must exploit the GPU when present but never crash without one. Every new track inherits this (see §6a). |
+| D12 | **Target = human-level IRR, not κ≥0.70.** Success is GNN↔human κ → LLM↔human (≈0.54) and GNN↔LLM κ → human↔human (≈0.45–0.52). | Human↔human α≈0.33–0.52 → 0.70 is unreachable in principle; the LLM is already human-level (§4.6). |
+| D13 | **One git branch per distinct architecture; document every arm; promote on the human axis.** Big architectural experiments (Qwen embedding, C&S, imbalance losses, concept anchors) each run on their own branch with a recorded per-class κ/recall + GNN↔human κ result; merged to default only on a human-axis gain. | Isolation + reversibility + comparability; negative results are evidence, not noise (Track A0). |
 
 ---
 
@@ -396,6 +433,47 @@ gate that is the *hard precondition* for any graph label of record.
     as needed.
   - **Files:** `gnn_layer/validation.py`, `process/orchestrator.py`,
     `process/assembly/master_dataset.py`, tests under `tests/unit/`.
+
+### Track A0 — Reliability recovery battery (VAAMR) — **NEW, top priority**
+
+**Goal:** raise VAAMR GNN↔human κ toward the LLM↔human level (≈0.54) — i.e. *human-level IRR* (D12) —
+and recover the rare stages (Avoidance/Metacognition, currently 0% recall). Motivated by the
+2026-06-06 gate (§4.5; root report §12). **Precondition for any "GNN-as-classifier" claim.**
+
+**A0-pre — wire the human subset into the gate.** The 66-item human-coded subset (from
+`06b_irr_report.txt`) is not yet read by the GNN reliability gate / triangulation. Wire it in so
+every arm below reports **GNN↔human κ**, not only GNN↔LLM. (Integration gap, not new modeling.)
+
+**Path A — embedding-first isolation (do first; own branch).**
+Stand up `Qwen3-Embedding-8B` in an **isolated env** (upgrade `transformers` there only; main env keeps
+the working pin — [[project_gnn_embedding_transformers_pin]]). Re-embed; then on **identical
+folds/seed** score, for the soft-VAAMR head:
+- **A1 linear probe** (logistic on Qwen embeddings, no graph) — "do we need a graph at n=205?"
+- **A2 Correct-&-Smooth** (linear base + label propagation over temporal/kNN) — proven to match/beat
+  GNNs at limited-label scale (Huang et al., ICLR 2021).
+- **A3 current GraphSAGE**, then **A4 + class-balanced/focal loss + TAM-style margin** (the imbalance
+  fixes that directly target rare-class collapse).
+
+**Decision rules:** Qwen alone recovers rare stages → ship Qwen as `gnn_layer.embedding_model` default.
+GraphSAGE ≤ linear/C&S → the GNN doesn't earn its place for the classifier mission (use the simpler
+model; keep the GNN for discovery/coupling). Features help but rare stages still collapse → adopt the
+A4 imbalance losses.
+
+**Path B — CFiCS-style concept graph (escalate only if Path A leaves fine-grained gaps; own branch).**
+Heterogeneous graph = segment nodes + **VAAMR construct-definition anchors + hierarchy** + domain
+embeddings; gain measured **on the human axis** via `ablation.anchor_contribution` (anchors cannot
+inflate that axis — D3). Optional sub-arm: a clinical/mental-health embedding (CFiCS used ClinicalBERT)
+if Qwen still under-separates the subtle stages.
+
+**Discipline (D13):** each arm on its own branch; append a row to the experiment ledger (root report
+§12.8) with branch / embedding / graph / loss / per-class κ+recall / GNN↔LLM κ / GNN↔human κ /
+decision; promote to default only on a human-axis gain.
+
+**Files (anticipated):** `gnn_layer/validation.py` + `triangulation.py` (human-subset wiring),
+`gnn_layer/train.py` + `model.py` (class-balanced/focal/TAM loss; C&S post-processing), a linear-probe
+baseline harness, `gnn_layer/config.py` (loss/embedding knobs), `gnn_layer/anchors.py` (Path B).
+
+---
 
 ### Track A — Scalable, trustworthy label engine
 

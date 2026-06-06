@@ -139,6 +139,10 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
                     _log(verbose, f"temperature calibration failed: {e}")
             files.append(_val.write_validation_report(vm, output_dir, config))
             files.append(_val.write_validation_csv(vm, output_dir))
+            # Persist the out-of-fold (held-out) per-segment predictions so the IRR
+            # layer can compare human codes against an HONEST GNN axis — one that
+            # never trained on that segment's own LLM label.
+            files.append(_val.write_heldout_predictions_csv(cv, output_dir))
             # Persist the machine-readable verdict so the orchestrator can gate
             # gnn_authoritative promotion on it (Track 0.2 — gate-gated promotion).
             files.append(_val.write_gate_verdict(vm, output_dir))

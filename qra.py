@@ -1591,6 +1591,72 @@ def cmd_testset_list(args):
 
 
 # =========================================================================
+# irr subcommand group (inter-rater reliability)
+# =========================================================================
+
+def _irr_run_full(output_dir, allow_drift=False):
+    """Shared by `qra irr run` and `qra irr report`: analyze + report + figures."""
+    from analysis import irr_analysis, irr_figures
+    from analysis.reports import irr_report, irr_items
+    from process import output_paths as _paths
+    from process import irr_import
+
+    try:
+        results = irr_analysis.run_irr_analysis(
+            output_dir, verbose=True, strict_drift=not allow_drift)
+    except irr_import.TestsetDriftError as e:
+        print("\nRefusing to run IRR — test-set content has drifted from the human-coded text:")
+        print(str(e))
+        print("\nThe machine labels would be scored against segments the humans never coded. "
+              "Re-import the affected worksheet(s), or pass --allow-drift to score anyway "
+              "(the report will flag the drift).")
+        sys.exit(1)
+    report_path = irr_report.generate_irr_report(results, output_dir)
+    item_files = irr_items.write_irr_item_details(results, output_dir)
+    figs = irr_figures.write_irr_figures(results, output_dir)
+    print(f"Report:  {report_path}")
+    print(f"Data:    {_paths.irr_validation_dir(output_dir)}")
+    print(f"Per-item detail: {len(item_files)} test-set file(s)")
+    print(f"Figures: {len(figs)} written")
+    if not results.get('have_machine_labels'):
+        print("Note: no frozen segments / machine labels — only Human↔Human computed.")
+    return results
+
+
+def cmd_irr_import(args):
+    """qra irr import — import a human-coded IRR CSV into the project qra.db."""
+    from process import irr_import
+    if not os.path.isfile(args.csv):
+        print(f"CSV not found: {args.csv}")
+        sys.exit(1)
+    irr_import.import_irr_csv(args.output_dir, args.csv, verbose=True)
+
+
+def cmd_irr_run(args):
+    """qra irr run — compute IRR (pull live LLM+GNN) + write report/figures/data."""
+    _irr_run_full(args.output_dir, allow_drift=getattr(args, 'allow_drift', False))
+
+
+def cmd_irr_report(args):
+    """qra irr report — regenerate the IRR report + figures from a fresh analysis."""
+    _irr_run_full(args.output_dir, allow_drift=getattr(args, 'allow_drift', False))
+
+
+def cmd_irr_list(args):
+    """qra irr list — list imported IRR test-sets."""
+    from process import irr_import
+    testsets = irr_import.list_imported_testsets(args.output_dir)
+    if not testsets:
+        print("No imported IRR test-sets found. Run `qra irr import` first.")
+        return
+    print(f"{'WS':>4}  {'Name':<14} {'Items':>6}  Raters")
+    print('-' * 50)
+    for t in testsets:
+        print(f"{t['worksheet_n']:>4}  {t['name']:<14} {t['n_items']:>6}  "
+              f"{', '.join(t['raters'])}")
+
+
+# =========================================================================
 # cv subcommand group (Phase 2)
 # =========================================================================
 
@@ -2207,6 +2273,32 @@ Examples:
     _cv_list = cv_sub.add_parser('list', help='List content-validity testsets')
     _cv_list.add_argument('--output-dir', '-o', required=True)
 
+    # ---- irr (inter-rater reliability subcommand group) ----
+    irr_parser = subparsers.add_parser(
+        'irr',
+        help='Inter-rater reliability: import human codes, compute Human↔Human / '
+             'Human↔LLM / Human↔GNN (bare `qra irr` launches the TUI)',
+    )
+    irr_sub = irr_parser.add_subparsers(dest='irr_command')
+
+    _irr_import = irr_sub.add_parser('import', help='Import a human-coded IRR CSV into qra.db')
+    _irr_import.add_argument('--output-dir', '-o', required=True)
+    _irr_import.add_argument('--csv', required=True, help='Path to human_coded_testsets.csv')
+
+    _irr_run = irr_sub.add_parser('run', help='Compute IRR (live LLM+GNN) + write report/figures')
+    _irr_run.add_argument('--output-dir', '-o', required=True)
+    _irr_run.add_argument('--allow-drift', action='store_true',
+                          help='Score IRR even if test-set segment text has drifted from the '
+                               'human-coded content (default: refuse). Drift is flagged in the report.')
+
+    _irr_report = irr_sub.add_parser('report', help='Regenerate the IRR report + figures')
+    _irr_report.add_argument('--output-dir', '-o', required=True)
+    _irr_report.add_argument('--allow-drift', action='store_true',
+                             help='Regenerate even if test-set segment text has drifted (default: refuse).')
+
+    _irr_list = irr_sub.add_parser('list', help='List imported IRR test-sets')
+    _irr_list.add_argument('--output-dir', '-o', required=True)
+
     # ---- reclassify-run ----
     reclassify_parser = subparsers.add_parser(
         'reclassify-run',
@@ -2417,6 +2509,18 @@ def main():
                 cmd_cv_list(args)
             else:
                 cv_parser.print_help()
+        elif args.command == 'irr':
+            if getattr(args, 'irr_command', None) == 'import':
+                cmd_irr_import(args)
+            elif args.irr_command == 'run':
+                cmd_irr_run(args)
+            elif args.irr_command == 'report':
+                cmd_irr_report(args)
+            elif args.irr_command == 'list':
+                cmd_irr_list(args)
+            else:
+                from process.irr_tui import run_irr_tui
+                run_irr_tui()
         elif args.command == 'gnn':
             if getattr(args, 'gnn_command', None) == 'train':
                 cmd_gnn_train(args)

@@ -59,6 +59,11 @@ python qra.py add-data --config ./data/output/02_meta/qra_config.json
 python qra.py apply-anonymization -o ./data/output/       # scrub PHI names from frozen segment text
 python qra.py edit-anonymization -o ./data/output/        # edit speaker key + cascade downstream
 
+# Inter-rater reliability (Human↔Human, Human↔LLM, Human↔GNN held-out + distillation)
+python qra.py irr import -o ./data/output/ --csv data/irr/human_coded_testsets.csv
+python qra.py irr run -o ./data/output/                       # pull live LLM+GNN, compute, report
+python qra.py irr list -o ./data/output/                      # bare `qra irr` → TUI
+
 # Validation test set management (Phase 2)
 python qra.py testset create -o ./data/output/ --kind purer --name purer_irr_1
 python qra.py testset refresh -o ./data/output/ --all
@@ -173,7 +178,8 @@ or external config (`qra_config.json`, speaker key).
 
 `qra.db` tables: `segments` (frozen raw segmentation + `params_hash`/`segmenter_version`/`ingest_timestamp`
 columns), `theme_labels` / `purer_labels` / `codebook_labels` / `cv_labels` / `gnn_labels` (overlays),
-`classification_manifest`, `testset_worksheets` + `testset_items`, `cv_testsets` + `cv_testset_items`.
+`classification_manifest`, `testset_worksheets` + `testset_items`, `cv_testsets` + `cv_testset_items`,
+`irr_testsets` + `irr_human_codes` (imported human IRR codes — ground truth, maintained across re-runs).
 
 ```
 output_dir/
@@ -191,6 +197,8 @@ output_dir/
 │   ├── testsets/            # FROZEN — human worksheets + AI answer keys (.txt); item metadata in qra.db
 │   ├── content_validity/<name>/  # FROZEN — worksheet/definition_key/AI_answer_key .txt; manifest+items in qra.db
 │   ├── cross_validation/    # Lift statistics
+│   ├── irr/                 # Inter-rater reliability: results.json, pairwise/discrepancy/item CSVs,
+│   │                        #   per-testset dossiers (irr_items_testset_<n>.txt), figures
 │   └── human_coding_evaluation_set.csv
 ├── _legacy_files/           # (only if migrated) original JSONL/JSON moved here, non-destructively
 ├── 05_figures/              # PNG visualization figures (incl. gnn_*.png)
@@ -217,7 +225,7 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 
 | Path | Role |
 |------|------|
-| `qra.py` | CLI entry point (setup / run / analyze / ingest / classify / assemble / gnn / migrate / add-data / reclassify-run / testset / cv / *-anonymization) |
+| `qra.py` | CLI entry point (setup / run / analyze / ingest / classify / assemble / gnn / migrate / add-data / reclassify-run / testset / cv / irr / *-anonymization) |
 | `src/process/orchestrator.py` | Stage sequencing, `run_full_pipeline`, standalone `stage_*` functions |
 | `src/process/config.py` | `PipelineConfig` dataclass — single source of truth for all settings |
 | `src/process/db.py` | SQLite store: `qra.db` schema (12 tables), `open_db()` atomic-transaction context manager, WAL, JSON-column helpers |
@@ -250,7 +258,14 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 | `src/classification_tools/llm_client.py` | Backend abstraction (OpenRouter, Ollama, LM Studio, HuggingFace, Replicate) |
 | `src/classification_tools/classification_loop.py` | Multi-run consensus voting with checkpointing |
 | `src/classification_tools/data_structures.py` | `Segment` dataclass |
-| `src/analysis/runner.py` | Post-hoc analysis entry point |
+| `src/analysis/runner.py` | Post-hoc analysis entry point (auto-regenerates IRR when human codes present + models changed) |
+| `src/process/irr_import.py` | Import human-coded IRR CSV → `irr_testsets`/`irr_human_codes`; label normalize, consensus validate, resolve worksheet item → `segment_id`, drift warnings |
+| `src/process/irr_tui.py` | `qra irr` interactive menu (import / run / view / list) |
+| `src/analysis/irr_analysis.py` | IRR orchestrator: Human↔Human, Human↔LLM (consensus + per-model), Human↔GNN (held-out + distillation); per-item details; `maybe_run_irr` change-gated regen |
+| `src/analysis/irr_stats.py` | IRR statistics via proven libraries — Cohen κ (scikit-learn), Fleiss κ (statsmodels), Krippendorff α (`krippendorff`) |
+| `src/analysis/reports/irr_report.py` | `06_reports/06b_irr_report.txt` (headline κ table, dual GNN axes + gate read, discrepancies) |
+| `src/analysis/reports/irr_items.py` | Per-test-set line-by-line dossier (text + human/LLM reasonings + GNN held-out + LLM↔GNN) |
+| `src/analysis/irr_figures.py` | IRR confusion matrices + rater-agreement heatmap |
 | `src/analysis/purer_analysis.py` | PURER × VAAMR cue-block influence analysis |
 | `src/analysis/purer_figures.py` | PURER × VAAMR lift heatmap and figures |
 | `src/analysis/reports/` | Detailed text report generators (session, stage, transition, cue response, longitudinal, summaries) |
