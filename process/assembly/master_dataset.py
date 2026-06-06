@@ -14,13 +14,33 @@ def assemble_master_dataset(
     segments: List[Segment],
     output_path: str,
     confidence_tiers: Optional[Dict] = None,
+    gnn_authoritative: bool = False,
+    gate_passed: bool = False,
 ) -> pd.DataFrame:
     """
     Produce the master segment dataset.
 
     Computes final_label and label_confidence_tier following the priority:
-    adjudicated > human_consensus > llm_zero_shot.
+    adjudicated > human_consensus > gnn_consensus > llm_zero_shot.
+
+    The ``gnn_consensus`` tier is engaged only when the operator opts in
+    (``gnn_authoritative=True``) AND the graph has passed its out-of-sample reliability
+    gate (``gate_passed=True``; persisted by gnn_layer.validation.write_gate_verdict and
+    read by the orchestrator) AND the segment carries a GNN prediction. A config flag
+    alone can never promote an un-gated graph: ``gate_passed`` defaults to False, so the
+    safeguard holds even if a caller forgets to thread it through. Abstention (A2) is an
+    additional brake: when the graph deferred on a segment (``gnn_vaamr_abstain`` /
+    ``gnn_purer_abstain`` True), the LLM label is kept even if the graph is otherwise
+    authoritative — a confident-wrong graph guess never reaches the label of record. The raw
+    LLM label is always preserved (``primary_stage`` for VAAMR, ``purer_primary`` for PURER)
+    and the per-rater ballots stay visible in ``rater_votes`` / ``purer_rater_votes``, so every
+    override is auditable. When the GNN is not authoritative, labels of record are
+    byte-identical to the LLM-consensus pipeline.
     """
+    # The graph may only become the label of record when BOTH the operator opted in
+    # AND the reliability gate passed out-of-sample (Track 0.2 — gate-gated promotion).
+    gnn_label_of_record = bool(gnn_authoritative and gate_passed)
+
     ct = confidence_tiers or {}
     high_consistency = ct.get('high_consistency', 3)
     high_confidence = ct.get('high_confidence', 0.8)
@@ -29,19 +49,39 @@ def assemble_master_dataset(
 
     rows = []
     for seg in segments:
-        # Compute final_label
+        # Compute final_label (VAAMR participant stage label of record)
+        _gnn_vaamr = getattr(seg, 'gnn_vaamr_pred', None)
         if seg.adjudicated_label is not None:
             final_label = seg.adjudicated_label
             final_label_source = 'adjudicated'
         elif seg.human_label is not None and seg.human_label == seg.primary_stage:
             final_label = seg.human_label
             final_label_source = 'human_consensus'
+        elif (gnn_label_of_record and _gnn_vaamr is not None and seg.speaker == 'participant'
+              and not getattr(seg, 'gnn_vaamr_abstain', False)):
+            final_label = _gnn_vaamr
+            final_label_source = 'gnn_consensus'
         elif seg.primary_stage is not None:
             final_label = seg.primary_stage
             final_label_source = 'llm_zero_shot'
         else:
             final_label = None
             final_label_source = None
+
+        # Compute purer_final (PURER therapist move label of record). PURER has no
+        # human/adjudicated tier yet, so the hierarchy is gnn_consensus > llm_zero_shot.
+        _gnn_purer = getattr(seg, 'gnn_purer_pred', None)
+        _purer_llm = getattr(seg, 'purer_primary', None)
+        if (gnn_label_of_record and _gnn_purer is not None and seg.speaker == 'therapist'
+                and not getattr(seg, 'gnn_purer_abstain', False)):
+            purer_final = _gnn_purer
+            purer_final_source = 'gnn_consensus'
+        elif _purer_llm is not None:
+            purer_final = _purer_llm
+            purer_final_source = 'llm_zero_shot'
+        else:
+            purer_final = None
+            purer_final_source = None
 
         # Compute confidence tier
         if (
@@ -98,11 +138,6 @@ def assemble_master_dataset(
             'codebook_labels_llm': seg.codebook_labels_llm,
             'codebook_labels_ensemble': seg.codebook_labels_ensemble,
             'codebook_disagreements': seg.codebook_disagreements,
-            # Microcounseling-skill labels (therapist segments only; None for participants)
-            'microskill_labels_embedding': getattr(seg, 'microskill_labels_embedding', None),
-            'microskill_labels_llm': getattr(seg, 'microskill_labels_llm', None),
-            'microskill_labels_ensemble': getattr(seg, 'microskill_labels_ensemble', None),
-            'microskill_disagreements': getattr(seg, 'microskill_disagreements', None),
             # PURER labels (therapist segments only; None for participant segments)
             'purer_primary': getattr(seg, 'purer_primary', None),
             'purer_secondary': getattr(seg, 'purer_secondary', None),
@@ -119,6 +154,17 @@ def assemble_master_dataset(
             'purer_rater_votes': (
                 json.dumps(v) if (v := getattr(seg, 'purer_rater_votes', None)) else None
             ),
+            'purer_final': purer_final,
+            'purer_final_source': purer_final_source,
+            # GNN consensus-distillation predictions (graph-distilled; authoritative
+            # only when gnn_authoritative=True — see final_label / purer_final above)
+            'gnn_vaamr_pred': getattr(seg, 'gnn_vaamr_pred', None),
+            'gnn_vaamr_conf': getattr(seg, 'gnn_vaamr_conf', None),
+            'gnn_vaamr_abstain': getattr(seg, 'gnn_vaamr_abstain', None),
+            'gnn_purer_pred': getattr(seg, 'gnn_purer_pred', None),
+            'gnn_purer_conf': getattr(seg, 'gnn_purer_conf', None),
+            'gnn_purer_abstain': getattr(seg, 'gnn_purer_abstain', None),
+            'gnn_label_source': getattr(seg, 'gnn_label_source', None),
             # Validation
             'human_label': seg.human_label,
             'human_secondary_label': seg.human_secondary_label,

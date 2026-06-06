@@ -156,7 +156,10 @@ def compute_group_trajectory(ps_outcomes: pd.DataFrame, outcome: str = 'progress
             'ci_lo': round(ci['lo'], 4) if ci['lo'] == ci['lo'] else None,
             'ci_hi': round(ci['hi'], 4) if ci['hi'] == ci['hi'] else None,
         })
-    return pd.DataFrame(rows).sort_values('session_number').reset_index(drop=True)
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values('session_number').reset_index(drop=True)
+    return out
 
 
 def compute_participant_slopes(ps_outcomes: pd.DataFrame, outcome: str = 'progression_coord') -> pd.DataFrame:
@@ -243,13 +246,35 @@ def run_efficacy_analysis(df: pd.DataFrame, framework: dict, output_dir: str, co
     barrier.to_csv(os.path.join(eff_dir, 'barrier_crossing.csv'), index=False)
     files.append(os.path.join(eff_dir, 'barrier_crossing.csv'))
 
-    # Group trend test (mixed-effects, random participant effect).
+    # PRIMARY (ordinal-safe): Mann–Kendall monotonic trend on the per-session group
+    # series of adaptive-stage (2–4) occupancy. Uses only the sign of pairwise
+    # differences, so it does NOT assume the VAAMR stages are equally spaced.
+    _adapt_ordered = group_adapt.sort_values('session_number')['mean'].tolist()
+    mk_adapt = S.mann_kendall_trend(_adapt_ordered)
+    _prog_ordered = group_prog.sort_values('session_number')['mean'].tolist()
+    mk_prog = S.mann_kendall_trend(_prog_ordered)
+
+    # SECONDARY (sensitivity, interval-scale): mixed-effects slope on E[stage]. This
+    # treats the ordinal coordinate as cardinal — reported as a caveated sensitivity
+    # analysis, not the headline.
     trend = S.mixedlm_trend(ps, 'progression_coord', 'session_number', 'participant_id')
 
-    # Sign test on advancing participants.
+    # Sign test on advancing participants (per-participant slope direction).
     valid_slopes = slopes['slope'].dropna()
     n_adv = int((valid_slopes > 0).sum())
     sign = S.sign_test(n_adv, int(len(valid_slopes)))
+
+    # Sample-size guard (flag, do NOT suppress).
+    n_part = int(ps['participant_id'].nunique())
+    n_sess = int(ps['session_number'].nunique())
+    power = S.power_flag(n_part, n_sess)
+
+    # Which substrate produced the stage mixtures feeding all of the above?
+    try:
+        from .superposition import dominant_source
+        mixture_provenance = dominant_source(df)
+    except Exception:
+        mixture_provenance = 'unknown'
 
     outcomes = load_external_outcomes(output_dir, config)
     linkage = link_to_external(slopes, outcomes)
@@ -257,9 +282,42 @@ def run_efficacy_analysis(df: pd.DataFrame, framework: dict, output_dir: str, co
         linkage.to_csv(os.path.join(eff_dir, 'external_outcome_linkage.csv'), index=False)
         files.append(os.path.join(eff_dir, 'external_outcome_linkage.csv'))
 
-    rep = _write_efficacy_report(group_prog, group_adapt, slopes, barrier, trend, sign,
-                                 outcomes, linkage, framework, output_dir)
+    rep = _write_progression_report(group_prog, group_adapt, slopes, barrier, trend, sign,
+                                     mk_adapt, mk_prog, power, mixture_provenance,
+                                     outcomes, linkage, framework, output_dir)
     files.append(rep)
+
+    # Machine-readable headline stats so downstream synthesis (the executive
+    # summary) reads clean numbers instead of parsing the prose report.
+    try:
+        import json as _json
+        crossed = int(barrier['crossed_to_attention_regulation'].sum()) if len(barrier) else 0
+        _clean = lambda d: {k: (None if (isinstance(v, float) and v != v) else v) for k, v in d.items()}
+        summary = {
+            'mk_adaptive_occupancy': _clean(mk_adapt),   # PRIMARY ordinal trend
+            'mk_progression_coord': _clean(mk_prog),
+            'trend_interval_sensitivity': _clean(trend),  # SECONDARY (equal-spacing assumed)
+            'sign_test': _clean(sign),
+            'n_advancing': n_adv,
+            'n_participants': n_part,
+            'n_sessions': n_sess,
+            'underpowered': power['underpowered'],
+            'power_note': power['note'],
+            'mixture_source': mixture_provenance,
+            'n_participants_with_slope': int(len(valid_slopes)),
+            'barrier_crossed': crossed,
+            'barrier_total': int(len(barrier)),
+            'adaptive_first_mean': (float(group_adapt.iloc[0]['mean']) if len(group_adapt) else None),
+            'adaptive_last_mean': (float(group_adapt.iloc[-1]['mean']) if len(group_adapt) else None),
+            'group_first_mean': (float(group_prog.iloc[0]['mean']) if len(group_prog) else None),
+            'group_last_mean': (float(group_prog.iloc[-1]['mean']) if len(group_prog) else None),
+        }
+        sp = os.path.join(eff_dir, 'efficacy_summary.json')
+        with open(sp, 'w', encoding='utf-8') as _f:
+            _json.dump(summary, _f, indent=2)
+        files.append(sp)
+    except Exception as _e:
+        print(f"  Warning: efficacy_summary.json failed: {_e}")
 
     try:
         fig = _plot_efficacy(group_prog, group_adapt, barrier, linkage, output_dir)
@@ -271,43 +329,82 @@ def run_efficacy_analysis(df: pd.DataFrame, framework: dict, output_dir: str, co
     return {'files_written': files, 'trend': trend, 'n_advancing': n_adv}
 
 
-def _write_efficacy_report(group_prog, group_adapt, slopes, barrier, trend, sign,
-                           outcomes, linkage, framework, output_dir) -> str:
+def _write_progression_report(group_prog, group_adapt, slopes, barrier, trend, sign,
+                              mk_adapt, mk_prog, power, mixture_provenance,
+                              outcomes, linkage, framework, output_dir) -> str:
+    pflag = power.get('note', '')
     L = []
     L.append("=" * 78)
-    L.append("PROGRAM EFFICACY REPORT")
+    L.append("PROGRAM PROGRESSION SUMMARY  (descriptive, single-arm)")
     L.append("=" * 78)
     L.append("")
-    L.append("Does the program move participants toward adaptive VAAMR stages, and does that")
-    L.append("track real-world change? Primary outcome: continuous progression coordinate")
-    L.append("(E[stage], 0–4). Observational ⇒ associational. CIs are participant-cluster")
-    L.append("bootstrap; the trend test uses a random participant effect.")
+    L.append("WHAT THIS IS — and is NOT. This is a DESCRIPTIVE summary of how participants'")
+    L.append("LLM-coded VAAMR language moves across the program. It is NOT an efficacy")
+    L.append("estimate: there is no control arm, no randomized comparison here, and the")
+    L.append("'outcome' is the same coded language being analyzed — which is also shaped by")
+    L.append("therapist prompting (methodology §9.4). Read every number as hypothesis-")
+    L.append("generating for human validation and Cohort 3–4 replication, never as proof")
+    L.append("that the program caused clinical benefit.")
+    L.append("This is an observational, single-arm design: every relationship reported")
+    L.append("here is associational, not causal.")
+    L.append("")
+    L.append("VAAMR is an ORDINAL developmental typology. The PRIMARY trend below uses a")
+    L.append("rank-based Mann–Kendall test (no equal-spacing assumption). The E[stage]")
+    L.append("'progression coordinate' and its linear slope appear only as a clearly-")
+    L.append("labeled interval-scale SENSITIVITY analysis.")
+    L.append(f"Stage-mixture substrate: {mixture_provenance}.")
+    if str(mixture_provenance).lower().startswith('gnn'):
+        L.append("  ⚠ Mixtures are GNN-derived. The GNN is validated against LLM consensus,")
+        L.append("    NOT yet against human coding — do not treat as more reliable than the LLM.")
+    if pflag:
+        L.append(f"  ⚠ {pflag}")
     L.append("")
 
     L.append("-" * 78)
-    L.append("1. GROUP PROGRESSION TRAJECTORY (primary outcome)")
+    L.append("1. ADAPTIVE-STAGE OCCUPANCY OVER SESSIONS (primary, ordinal-safe)")
     L.append("-" * 78)
+    L.append("  Proportion of each session's participant segments coded in adaptive stages")
+    L.append("  (Attention-Regulation/Metacognition/Reappraisal, 2–4):")
+    for _, r in group_adapt.iterrows():
+        ci = (f"[{r['ci_lo']:.2f}, {r['ci_hi']:.2f}]" if r['ci_lo'] is not None else "[n/a]")
+        L.append(f"  session {int(r['session_number']):<3} {r['mean']*100:5.1f}% {ci}  (n={r['n_participants']})")
+    if mk_adapt.get('n', 0) >= 3:
+        tau = mk_adapt.get('tau')
+        tau_s = f"{tau:+.3f}" if isinstance(tau, (int, float)) and tau == tau else "n/a"
+        L.append(f"\n  Monotonic trend (Mann–Kendall): {mk_adapt['direction']}, "
+                 f"τ={tau_s}, Sen slope={mk_adapt.get('sen_slope'):+.4f}/session, "
+                 f"p={mk_adapt.get('p_value'):.4f} (n={mk_adapt['n']} sessions).")
+    else:
+        L.append("\n  Monotonic trend: not estimable (need ≥3 sessions with data).")
+    if pflag:
+        L.append(f"  ⚠ {pflag}")
+    L.append("")
+
+    L.append("-" * 78)
+    L.append("2. E[stage] PROGRESSION COORDINATE  (SENSITIVITY — interval-scale assumed)")
+    L.append("-" * 78)
+    L.append("  ⚠ Treats VAAMR 0–4 as equally spaced (Vigilance→Avoidance == Metacog→Reappraisal).")
+    L.append("    Provided for comparison only; the ordinal trend above is the headline.")
     for _, r in group_prog.iterrows():
         ci = (f"[{r['ci_lo']:+.2f}, {r['ci_hi']:+.2f}]" if r['ci_lo'] is not None else "[n/a]")
         L.append(f"  session {int(r['session_number']):<3} mean={r['mean']:+.3f} {ci}  (n={r['n_participants']})")
-    L.append("")
-    L.append(f"  Trend ({trend['method']}): slope = {trend['slope']:+.4f}/session "
-             f"[{trend['ci_lo']:+.4f}, {trend['ci_hi']:+.4f}], p = "
-             f"{trend['p_value']:.4f} (n={trend['n']} obs, {trend['n_groups']} participants)."
-             if trend['slope'] == trend['slope'] else "  Trend: not estimable.")
-    L.append("  Positive slope ⇒ group advances toward later stages over the program.")
+    if trend['slope'] == trend['slope']:
+        L.append(f"\n  Linear trend ({trend['method']}): slope = {trend['slope']:+.4f}/session "
+                 f"[{trend['ci_lo']:+.4f}, {trend['ci_hi']:+.4f}], p = "
+                 f"{trend['p_value']:.4f} (n={trend['n']} obs, {trend['n_groups']} participants).")
+    else:
+        L.append("\n  Linear trend: not estimable.")
+    mk_p = mk_prog.get('p_value')
+    if mk_prog.get('n', 0) >= 3:
+        L.append(f"  Mann–Kendall on E[stage] (rank check): {mk_prog['direction']}, "
+                 f"p={mk_p:.4f}." if isinstance(mk_p, (int, float)) and mk_p == mk_p else
+                 f"  Mann–Kendall on E[stage]: {mk_prog['direction']}.")
+    if pflag:
+        L.append(f"  ⚠ {pflag}")
     L.append("")
 
     L.append("-" * 78)
-    L.append("2. ADAPTIVE-STAGE OCCUPANCY (stages 2–4, secondary outcome)")
-    L.append("-" * 78)
-    for _, r in group_adapt.iterrows():
-        ci = (f"[{r['ci_lo']:.2f}, {r['ci_hi']:.2f}]" if r['ci_lo'] is not None else "[n/a]")
-        L.append(f"  session {int(r['session_number']):<3} {r['mean']*100:5.1f}% {ci}")
-    L.append("")
-
-    L.append("-" * 78)
-    L.append("3. PER-PARTICIPANT PROGRESSION & ADVANCEMENT")
+    L.append("3. PER-PARTICIPANT TRAJECTORY DIRECTION")
     L.append("-" * 78)
     for _, r in slopes.iterrows():
         if r.get('slope') is None:
@@ -319,13 +416,17 @@ def _write_efficacy_report(group_prog, group_adapt, slopes, barrier, trend, sign
     L.append(f"\n  Advancing (slope>0): {sign['n_positive']}/{sign['n_total']} participants; "
              f"sign-test p = {sign['p_value']:.4f}." if sign['p_value'] == sign['p_value']
              else f"\n  Advancing: {sign['n_positive']}/{sign['n_total']}.")
+    L.append("  (Per-participant slopes inherit the interval-scale caveat from §2.)")
     L.append("")
 
     L.append("-" * 78)
-    L.append("4. AVOIDANCE → ATTENTION-REGULATION BARRIER CROSSING")
+    L.append("4. AVOIDANCE → ATTENTION-REGULATION BARRIER (language-internal)")
     L.append("-" * 78)
+    L.append("  'Crossing' = first session in which Avoidance is no longer the participant's")
+    L.append("  dominant coded stage. A within-coding-scheme transition of LANGUAGE, shaped")
+    L.append("  by therapist prompting — not a verified clinical milestone.")
     crossed = int(barrier['crossed_to_attention_regulation'].sum())
-    L.append(f"  Crossed to Attention-Regulation: {crossed}/{len(barrier)} participants.")
+    L.append(f"  Dominant stage left Avoidance: {crossed}/{len(barrier)} participants.")
     for _, r in barrier.iterrows():
         fp = r['first_passage_session_index']
         fp_s = f"session #{int(fp) + 1}" if fp is not None and fp == fp else "—"
@@ -333,13 +434,15 @@ def _write_efficacy_report(group_prog, group_adapt, slopes, barrier, trend, sign
     L.append("")
 
     L.append("-" * 78)
-    L.append("5. LINK TO EXTERNAL CLINICAL OUTCOMES")
+    L.append("5. CONVERGENT VALIDITY vs EXTERNAL CLINICAL OUTCOMES (exploratory)")
     L.append("-" * 78)
+    L.append("  The ONLY place this analysis can speak to real-world change: does the coded-")
+    L.append("  language trajectory CORRELATE with measured clinical outcomes? Correlation is")
+    L.append("  convergent-validity evidence, still NOT efficacy.")
     if outcomes is None:
-        L.append("  No external outcomes file found (expected at 02_meta/outcomes.csv or the")
-        L.append("  configured efficacy.outcomes_path). Drop a participant-keyed CSV there to")
-        L.append("  correlate VAAMR progression against clinical change.")
-    elif linkage.empty:
+        L.append("  STATUS: no external outcomes integrated yet (expected at 02_meta/outcomes.csv).")
+        L.append("  See docs/OUTCOME_INTEGRATION_ROADMAP.md for the REDCap → outcomes.csv plan.")
+    elif linkage is None or linkage.empty:
         L.append(f"  External outcomes loaded ({outcomes['mode']}, measures: "
                  f"{', '.join(outcomes.get('measures', [])) or 'none'}), but too few matched")
         L.append("  participants for correlation (need ≥3 with both VAAMR slope and outcome change).")
@@ -352,12 +455,12 @@ def _write_efficacy_report(group_prog, group_adapt, slopes, barrier, trend, sign
             L.append(f"    {r['vaamr_measure']:<10} ↔ {str(r['external_measure'])[:24]:<24} "
                      f"{stat}  (n={r['n']})")
         L.append("  Positive r ⇒ participants whose language advances more also improve clinically.")
-        L.append("  Directional/associational; small N — treat as hypothesis-strengthening.")
+        L.append("  Exploratory/associational; small N — convergent-validity evidence, not efficacy.")
     L.append("")
 
-    rep_dir = _paths.human_reports_dir(output_dir)
+    rep_dir = _paths.reports_outcomes_dir(output_dir)
     os.makedirs(rep_dir, exist_ok=True)
-    path = os.path.join(rep_dir, 'report_program_efficacy.txt')
+    path = os.path.join(rep_dir, 'progression_summary.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write("\n".join(L))
     return path

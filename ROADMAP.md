@@ -1,14 +1,25 @@
 # QRA Research Roadmap
 
-This document charts the forward trajectory for the Qualitative Research Algorithm (QRA) from its current unvalidated state through three major phases: (1) completion and submission of the computational phenomenology methodology paper, (2) supervised fine-tuning of domain-adapted classifiers via AutoResearch, and (3) construction of a heterogeneous Graph Neural Network (GNN) modeling therapist–participant dynamics across the full Move-MORE corpus. Each phase builds on the preceding one; the labeled corpus, validated constructs, and architectural patterns established in earlier phases become the inputs to later ones.
+This document charts the forward trajectory for the Qualitative Research Algorithm (QRA). The pipeline has moved well beyond its original three-phase plan: the heterogeneous Graph Neural Network is now implemented and integrated (`gnn_layer/`), not a future phase. The roadmap is accordingly organized around the work that remains, in the order it is needed:
+
+1. **Methodology paper** — completion and submission of the computational phenomenology methodology paper (Phase 1).
+2. **Human-coded testset import and multi-substrate IRR triangulation** — importing human-coded `.csv` testsets and measuring inter-rater reliability across humans, human-consensus vs. LLM consensus, and human-consensus vs. graph consensus, for any framework or codebook (Phase 1.12).
+3. **Domain-adapted fine-tuning** — supervised fine-tuning of classifiers from the validated corpus, including the GNN's already-implemented distillation path (Phase 2).
+4. **Quantitative outcome integration via REDCap** — importing daily pain, movement, and practice metrics plus baseline/follow-up TSK scores, building an adaptive validation of VAAMR against quantitative measures, and exporting per-participant qualitative progressions back into REDCap (Phase 4).
+5. **The Qualitative Results paper** — the trial's primary qualitative findings manuscript, planned past Cohort 4 (Phase 5).
+6. **MindfulBERT** — the long-term big-picture vision: distilling the validated corpus into a fine-tuned `mindfulbert-for-classification` model, using the graph to scale classification across larger datasets, and ultimately fine-tuning a generative `MindfulBERT` that produces therapeutic instructional language predicted to advance VAAMR stage progression (Phase 6).
+
+The heterogeneous Graph Neural Network (Phase 3 below) is **already implemented** (`gnn_layer/`); its section is retained as the design-and-validation record and the home for its remaining manuscript work.
+
+Each phase builds on the preceding one; the labeled corpus, validated constructs, reliability instruments, and architectural patterns established in earlier phases become the inputs to later ones.
 
 ---
 
 ## Current State (Point of Departure)
 
- The pipeline can ingest diarized transcripts, semantically segment them, classify participant segments against VAAMR and therapist segments against PURER via zero-shot LLM consensus voting, optionally apply VCE codebook classification, assemble master datasets, generate cue-response reports, and prepare human validation sets. Cohorts 1 and 2 of the Move-MORE Feasibility Trial have been processed.
+ The pipeline can ingest diarized transcripts, semantically segment them, classify participant segments against VAAMR and therapist segments against PURER via zero-shot LLM consensus voting, optionally apply VCE codebook classification, assemble master datasets, generate cue-response reports, run the program-efficacy and mechanism dossiers, and prepare human validation sets. The GNN representation-and-discovery layer is implemented (`gnn_layer/`): it provides continuous VAAMR superposition, emergent cue-motif discovery, GNN↔LLM↔human triangulation, construct-signal ablation, participant↔therapist coupling factors, and — most consequentially — a graph-distilled consensus classifier with an out-of-sample per-stage reliability gate that, once passed, enables LLM-free classification of new segments (`qra classify --backend gnn`). Cohorts 1 and 2 of the Move-MORE Feasibility Trial have been processed.
 
-What remains is the research-facing work: validation, analysis, reporting, and the downstream ML pipeline.
+What remains is the research-facing work: completing human validation, importing the human-coded testsets and the trial's quantitative outcomes, computing the multi-substrate reliability statistics, producing the manuscripts, and building the downstream MindfulBERT models.
 
 ---
 
@@ -137,6 +148,23 @@ Run the classification pipeline against the exported content validity test sets 
 - **Adversarial-tier boundary accuracy:** Reveals which stage boundaries (e.g., Vigilance⇄Avoidance, Avoidance⇄Metacognition) are most confusable — these are precisely the boundaries needing human review
 - **PURER test set performance:** Same analysis for therapist segments against PURER framework definitions
 
+### 1.12 Human-Coded Testset Import and Multi-Substrate IRR Triangulation
+
+Human validation currently produces hand-filled worksheets; the reliability statistics that those worksheets are meant to yield are not yet computed automatically. This item closes that loop by treating the frozen testsets (`04_validation/testsets/<n>/` and `04_validation/content_validity/<name>/`) as the canonical IRR substrate and importing the coders' answers back into the pipeline for analysis. It applies uniformly to **any framework or codebook testset** — VAAMR, PURER, and VCE codebook — because all of them already freeze a segment-keyed worksheet with a SHA-locked text snapshot.
+
+**Item 1: Human-coded `.csv` import.** Add `qra testset import` (and a TUI action) that ingests one filled-in `.csv` per human coder against a named testset. Each row keys on the frozen `segment_id` (or content-validity item id) and carries that coder's label(s); the importer validates the SHA snapshot so a coder's sheet cannot silently drift from the segments they actually read, and writes a normalized per-coder answer table to `04_validation/testsets/<n>/human_codes/<coder_id>.jsonl`. Multi-label frameworks (codebook) import as label sets; single-label frameworks (VAAMR, PURER) import as scalars plus optional secondary.
+
+**Item 2: Inter-human reliability.** For each testset, compute agreement *across human coders*: pairwise and overall Krippendorff's α (nominal for PURER/codebook, ordinal for the VAAMR developmental arc), Cohen's/Fleiss' κ, raw agreement, and a per-class confusion breakdown that exposes which constructs the human team itself disputes. This is the denominator for every downstream comparison — a machine substrate cannot be asked to beat a ceiling the humans have not themselves reached.
+
+**Item 3: Human-consensus construction.** Adjudicate the per-coder tables into a single `human_consensus` label per item (majority with documented tie-breaking; disagreements surfaced for review), reusing the provenance machinery that already ranks `adjudicated`/`human_consensus` above machine labels.
+
+**Item 4: Three-way substrate triangulation.** Against that human consensus, compute IRR for each machine substrate on the *same* frozen items:
+- **κ(human-consensus, LLM-consensus)** — how faithfully the zero-shot multi-run pipeline reproduces expert human coding (the Section 5.4 warrant).
+- **κ(human-consensus, graph-consensus)** — the same question for the GNN's distilled labels (`gnn_labels` overlay), reusing `gnn_layer/triangulation.py`'s κ machinery on the testset slice rather than the whole corpus.
+- **κ(LLM-consensus, graph-consensus)** — distillation fidelity (how faithfully the student reproduces the teacher), reported beside the two human-anchored numbers so the human-quality axis and the fidelity axis are never conflated.
+
+All three are reported **per class** (per VAAMR stage, per PURER move, per code), matching the over-smoothing safeguard already used in `report_gnn_validation.txt`. **Deliverable:** `qra testset irr -o … --kind {vaamr,purer,codebook}` writing `04_validation/testsets/<n>/irr_report.{txt,json}` with the inter-human matrix, the human-consensus table, and the three machine-vs-human / machine-vs-machine κ tables. This is the empirical engine behind the methodology's Section 6.4 progression: it is literally the instrument that decides when the LLM consensus has "reached IRR" and when the graph has earned its turn.
+
 ---
 
 ## Phase 2 — AutoResearch: Supervised Fine-Tuning of Domain-Adapted Classifiers
@@ -197,7 +225,29 @@ Train the top-performing model configuration on progressively larger subsets of 
 
 ## Phase 3 — Graph Neural Network for Therapist–Participant Dynamics
 
-**Target:** Post-Cohort 4 — full corpus of 4 cohorts × 8 sessions available for graph construction and training.
+> **Status: Partially implemented — built vs. designed boundary.** What is **built and
+> integrated** as `gnn_layer/` (pure-PyTorch GraphSAGE, no torch-geometric) is a
+> *homogeneous segment graph*: segment nodes connected by temporal-chain and
+> kNN-similarity edges. On that graph, Capabilities A–E are live — continuous VAAMR
+> positioning (A), cue-motif discovery (B), GNN↔LLM/GNN↔human triangulation (C),
+> head ablation (D), and coupling factors (E) — as is the graph-distilled consensus
+> classifier with its out-of-sample per-stage reliability gate (`qra classify --backend gnn`).
+>
+> What is **designed but NOT built** is everything in this phase that assumes a
+> *heterogeneous* graph: construct anchor nodes and typed taxonomy edges (§3.2's
+> `precedes`/`precipitates`/etc.), the subtext similarity graph + Leiden/Louvain
+> community detection (§3.3), and the causal-influence-matrix / counterfactual /
+> per-therapist-fingerprint deliverables (§3.7). The runner builds none of these today;
+> the anchor/cross-framework hooks exist as unsupplied parameters. The manuscript
+> deliverable table (§3.7) is written against this designed layer, not the built one.
+>
+> See `methodology.md` §8.5 for the as-built specification and
+> `gnn-influence-to-execution.md` for the full built-vs-designed reconciliation and the
+> scientific guardrails (independence-mode triangulation; ablation scored on the human
+> axis; "learned-association / model-counterfactual" framing in place of "causal";
+> community stability selection) under which the designed extensions may be built.
+
+**Target:** Post-Cohort 4 — full corpus of 4 cohorts × 8 sessions available for graph training at scale and final reliability-gate validation.
 
 **Reference:** CFiCS (Schmidt et al., 2025, CLPsych 2025) — graph-based classification integrating ClinicalBERT embeddings with GraphSAGE message-passing over a heterogeneous psychotherapy taxonomy.
 
@@ -240,6 +290,11 @@ Build a heterogeneous graph with the following node types:
 | `semantically_similar` | Segment Node | Segment Node | Embedding cosine similarity > 0.85 between segments from different sessions/participants — **the subtext bridge** |
 
 ### 3.3 Subtext Graph: Semantic Bridges Across the Corpus
+
+> **DESIGNED — NOT BUILT.** No thresholded cross-session subtext graph or Leiden/Louvain
+> community detection exists in `gnn_layer/` today (the built graph's kNN edges are not the
+> same object). When built, it requires **bootstrap-over-participants stability selection** at
+> n≈32 (communities are unstable at this N); see `gnn-influence-to-execution.md` guardrail G4.
 
 Beyond the taxonomy edges, build a **subtext similarity graph** that captures latent thematic connections across the entire dialogue corpus:
 
@@ -305,6 +360,17 @@ Each node receives a feature vector constructed from:
 
 ### 3.7 Causal Structure Discovery via the Graph
 
+> **DESIGNED — NOT BUILT, and "causal" is reframed.** There are no typed `precipitates`
+> edges, no learnable edge weights (the built `SAGEConv` uses fixed edge weights), and no
+> counterfactual intervention path in `gnn_layer/` today. When built, at n≈32 observational
+> and unblinded — with the documented confound that PURER inquiry *elicits* the very VAAMR
+> language it scores (`methodology.md` §9.4) — these outputs are **not** causal estimates.
+> Per `gnn-influence-to-execution.md` guardrail G3 they ship as a **"learned PURER→VAAMR
+> association / model-attribution matrix"** (with participant-cluster bootstrap CIs, gated
+> behind the reliability gate) and a **"model-counterfactual sensitivity analysis"** (what
+> the *model* predicts under a feature swap, not a clinical counterfactual) — hypothesis-
+> generating, carrying the `methodology.md` §9.2 disclaimer on every figure.
+
 The GNN's attention weights on `precipitates` edges provide an empirical estimate of **which therapist moves most strongly influence which participant transitions** — a data-driven causal structure learned from the full corpus.
 
 **Analysis types:**
@@ -342,9 +408,98 @@ The GNN is expected to outperform the fine-tuned classifier on transition predic
 
 ---
 
-## Phase 4 — Future Research Directions
+## Phase 4 — Quantitative Outcome Integration via REDCap
 
-### 4.1 Real-Time Therapeutic Feedback System
+**Target:** Concurrent with Cohort 3 curriculum-modification analysis; required for the mixed-methods joint displays of the methodology paper (§8.3) and the Qualitative Results paper (Phase 5).
+
+**Prerequisite:** Phase 1 longitudinal progression and per-participant trajectory outputs; the efficacy dossier's external-outcome linkage scaffold (`analysis/efficacy.py:load_external_outcomes`, which already auto-detects WIDE pre/post and LONG per-session layouts) is the landing zone for imported REDCap data.
+
+The Move-MORE trial collects its quantitative outcomes in REDCap. QRA currently treats external outcomes as an optional CSV drop; this phase makes the REDCap linkage first-class in both directions — pulling quantitative measures *in* to test the convergent validity of the language index, and pushing per-participant qualitative progressions *out* in a REDCap-importable form.
+
+> **Scientific framing — what this does and does not support.** QRA classifies *language*. By itself it cannot establish that the program *works* — that is a causal/clinical claim requiring a comparison condition. The external outcomes let us test **convergent (criterion) validity** only: *do participants whose coded-language VAAMR trajectory advances more also improve more on independently measured clinical outcomes (pain, kinesiophobia, disability, reappraisal, interoception)?* A positive, pre-registered correlation is validity evidence that the language index tracks something clinically real — it is **still not efficacy** (no control arm, small single-arm n, observational). Until outcomes are integrated, the program-efficacy report is explicitly a *descriptive, single-arm* summary of LLM-coded language and makes no real-world claim. This maps directly to methodology hypothesis **H4** (Section 3.4).
+
+### 4.1 REDCap Outcome Import and the Data Contract
+
+`analysis/efficacy.py:load_external_outcomes()` already reads a participant-keyed CSV at `02_meta/outcomes.csv` (or `EfficacyConfig.outcomes_path`) and auto-detects two layouts — **WIDE** (one row per participant; `<measure>_pre`/`<measure>_post`, with `<measure>_change` computed automatically) and **LONG** (one row per `(participant_id, timepoint)`, joined to the per-session VAAMR series). A `participant_id` column is required, IDs must match QRA's anonymized IDs, and measure columns must be numeric. No code change is needed to *consume* outcomes; the work is producing the file.
+
+Add a `qra outcomes import --redcap-csv <export.csv> --crosswalk <ids.csv>` command (and TUI action) that performs the REDCap→contract transform in one auditable, re-runnable place:
+
+1. **Map `record_id` → `participant_id`** via the speaker-anonymization key (`02_meta/speaker_anonymization_key.json`), keeping the REDCap↔QRA crosswalk **off-repo** (PHI).
+2. **Map `redcap_event_name` → timepoint** (`baseline_arm_1`→`pre`, `week_8_arm_1`→`post` for WIDE; or to `session_number` for LONG).
+3. **Select + rename instrument columns** to stable measure names and pivot to WIDE or keep LONG.
+
+The importer handles REDCap's longitudinal arms/events and flags missingness explicitly rather than silently zero-filling. Target instruments (methodology §8.3): weekly **pain NRS**, **TSK-11** (kinesiophobia — the trial's primary behavioral target, with auto-computed `tsk_change`), **ODI** (disability), **MRPS** (Mindful Reappraisal of Pain Scale — closest to VAAMR Reappraisal), **MAIA-2** (interoception), plus **daily pain / movement / practice** diary metrics, EMA, actigraphy, and QST where available.
+
+### 4.2 Convergent-Validity Analysis (Pre-Registered Directions)
+
+With measures aligned to the linguistic timeline, the VAAMR language index is correlated against the external outcomes. The expected directions are **pre-registered here, before the analysis is run**, so confirmations are falsifiable rather than post-hoc (the same discipline §8.2 commits to for `expected_codes`):
+
+| VAAMR-side measure | External measure | Pre-registered direction |
+|---|---|---|
+| progression slope / adaptive-occupancy trend ↑ | pain NRS change | ↓ pain (negative ρ) |
+| progression slope ↑ | TSK-11 change | ↓ kinesiophobia (negative ρ) |
+| progression slope ↑ | ODI change | ↓ disability (negative ρ) |
+| Reappraisal-stage occupancy ↑ | MRPS change | ↑ reappraisal (positive ρ) |
+| Attention-Regulation / Metacognition occupancy ↑ | MAIA-2 change | ↑ interoception (positive ρ) |
+
+Statistical choices, consistent with the rest of the reframed analysis:
+- **Spearman ρ primary, Pearson secondary.** VAAMR is ordinal and n is small, so a rank correlation is the defensible headline. *(Code change: `link_to_external()` currently computes Pearson only — add Spearman.)*
+- **Report effect size + CI; flag low power.** Reuse `analysis/stats.py` power flagging — with n ≈ 5–8 per cohort, correlations are unstable and must be labelled indicative, not confirmatory.
+- **Temporal coupling.** Test whether *within-week* shifts in VAAMR expression lead or lag daily pain/movement/practice changes (participant-level cross-correlation, mixed-effects pooling via `analysis/stats.py:mixedlm_*`).
+- **Joint displays.** Small-multiples of VAAMR trajectory vs each outcome trajectory per participant, plus the correlation scatter (extend `analysis/efficacy.py:_plot_efficacy` / `program_efficacy.png`).
+
+**What this analysis will *not* claim:** causation, efficacy, or that language change *produced* clinical change. It supports statements of the form *"the language index converges with clinical measures, strengthening its validity as a process marker."* **Deliverable:** the `CONVERGENT VALIDITY` section of `progression_summary.txt` and `efficacy_summary.json` populate automatically once `outcomes.csv` exists, and the executive summary flips from "outcomes NOT yet integrated" to the correlation table — always with the small-n flag.
+
+### 4.3 Per-Participant Qualitative Progression Export to REDCap
+
+The reverse direction: emit each participant's qualitative progression as structured fields a study coordinator can import back into REDCap alongside the quantitative record. Add `qra outcomes export-redcap` producing a wide, one-row-per-participant CSV conforming to a REDCap data dictionary, with fields such as: per-session dominant VAAMR stage and continuous progression coordinate, baseline→endpoint progression slope, Avoidance-barrier-crossing session, adaptive-stage occupancy fraction, liminality summary, dominant PURER cue exposure, and a short auto-generated narrative summary per participant (from the existing participant-summary generator). This turns the qualitative pipeline into a source of *quantified qualitative variables* that live beside pain/TSK/movement in the trial database and can be analyzed with standard trial statistics.
+
+### 4.4 Sequencing
+
+1. Build the REDCap export + crosswalk (PHI-safe, off-repo).
+2. Implement `qra outcomes import` (or hand-produce `outcomes.csv` once to unblock the analysis).
+3. Add Spearman ρ + the pre-registered direction table to `link_to_external()`.
+4. Re-run `qra analyze`; verify the `CONVERGENT VALIDITY` section of `progression_summary.txt` and the executive summary.
+5. Only then describe the result as convergent-validity evidence — with the small-n flag.
+
+**One-paragraph manuscript summary.** *External clinical outcomes (pain NRS, TSK-11, ODI, MRPS, MAIA-2) are maintained in REDCap and will be joined to the QRA corpus on the anonymized participant key to test the convergent validity of the VAAMR language index: whether participants whose coded-language trajectory advances also improve on independently measured outcomes. Correlations (Spearman primary, given the ordinal index and small single-arm n) are reported as validity evidence with explicit low-power flags, **not** as estimates of program efficacy, which the single-arm feasibility design cannot support.*
+
+---
+
+## Phase 5 — The Qualitative Results Paper (Post-Cohort 4)
+
+**Target:** After Cohort 4 completes and the full corpus is human-validated and graph-scaled.
+
+**Prerequisite:** Phases 1–4 — validated classifications across all four cohorts, multi-substrate IRR established (§1.12), and REDCap outcomes integrated (Phase 4).
+
+Distinct from the *methodology* paper (Phase 1, which argues that the pipeline is a valid instrument), the **Qualitative Results paper** reports what the instrument *found* across the complete four-cohort Move-MORE trial. It is the substantive clinical-phenomenological contribution:
+
+- **The developmental arc, observed.** Group and per-participant VAAMR progression across the eight-session protocol over all four cohorts, with the iterative curriculum modifications between cohorts treated as a natural experiment — did the Cohort-3/4 changes recommended from Cohort-1/2 evidence move the distributions as predicted?
+- **The Avoidance barrier and what crosses it.** The central clinical finding: prevalence, timing, and the therapist language (PURER moves and GNN-discovered motifs) empirically associated with crossing from Avoidance toward Attention Regulation.
+- **Mechanism at temporal adjacency.** The PURER→VAAMR mechanism dossier and the emergent-motif findings, with human-reviewed motifs promoted from directional to substantive.
+- **Convergence with quantitative outcomes.** The joint displays from Phase 4 — where linguistic progression and TSK/pain/movement/practice trajectories agree, and where they diverge.
+
+This paper is the scientific payoff of the whole program and the natural showcase for the corpus that Phases 1–4 produce. It also defines the supervised-learning targets that Phase 6 consumes.
+
+---
+
+## Phase 6 — MindfulBERT: Long-Term Vision and Future Research Directions
+
+The long-term, big-picture aim is to distill everything the pipeline has learned into compact, deployable models — first a classifier, ultimately a generator — that carry the validated VAAMR understanding beyond the cost and latency of frontier-LLM inference and beyond the Move-MORE corpus itself.
+
+### 6.1 MindfulBERT-for-Classification (Fine-Tuned VAAMR Stage Classifier)
+
+Fine-tune a psychology-domain encoder — **psych-bert** (a mental-health-pretrained BERT) — into a dedicated classification model, **`mindfulbert-for-classification`**, that identifies the VAAMR stage of a participant response directly, with no LLM in the loop. This is the supervised-learning consummation of the corpus assembled in Phase 2 and validated through §1.12: the training set is the human-adjudicated + LLM-consensus VAAMR labels, session-split to prevent leakage (Phase 2.1), with the multi-substrate IRR statistics defining the performance ceiling to target. Relative to zero-shot LLM classification it offers millisecond inference, better-calibrated probabilities on the corpus's own boundary cases, and a redistributable artifact for ongoing fidelity monitoring. The GNN's graph-distilled classifier (Phase 3) and `mindfulbert-for-classification` are complementary realizations of the same scale-and-cost goal — the graph exploits relational structure within a corpus; the fine-tuned encoder is the portable, context-free baseline.
+
+### 6.2 Graph-Scaled Classification Across Larger Datasets
+
+Use the trained graph (Phase 3) as the scaling engine for classifying datasets far larger than the four-cohort trial. New segments attach inductively to the frozen graph via kNN edges and are labeled by the loaded checkpoint with no LLM calls (`gnn_layer/inference.py:attach_new_segments` + `qra classify --backend gnn`). Applied to additional MORE-family corpora and other MBI trials, this both stress-tests the universality of the VAAMR taxonomy (§6.4) and *manufactures the large, labeled corpus* that the generative model in §6.3 requires — graph-scaled classification is the data-generation step for the next fine-tuning.
+
+### 6.3 MindfulBERT (Generative): Therapeutic Text That Advances VAAMR Progression
+
+The capstone. Using the graph-scaled, VAAMR-labeled corpus and the empirically validated PURER→VAAMR / motif→transition mechanism evidence (Phase 5) as training signal, set up a second fine-tuning dataset and train the final, **generative `MindfulBERT`** model: given a participant's current state (VAAMR stage expression and context), it generates therapeutic instructional language predicted to move the participant *forward* along the VA→MR developmental arc — operationalizing, as a model, the therapist moves the trial showed to work. Each training example pairs a FROM state and the actual therapist cue with the observed Δprogression, so the model learns to propose cues conditioned on producing forward movement (with the Avoidance barrier as the highest-value target). This is an explicitly long-horizon, high-bar goal: any clinical use would demand its own prospective validation, safety review, and human-in-the-loop deployment — it does not inherit the validity of the analysis pipeline that trains it.
+
+### 6.4 Real-Time Therapeutic Feedback System
 
 Deploy the Phase 3 GNN as a real-time inference engine: ingest a partial session transcript as it is produced, classify therapist moves as they occur, and predict the likely participant response distribution. Surface a dashboard to the therapist showing:
 - Current participant VAAMR stage estimate
@@ -352,11 +507,11 @@ Deploy the Phase 3 GNN as a real-time inference engine: ingest a partial session
 - Predicted transition likelihood given alternative next moves
 - Historical comparison: "When you used Reframing at this point in Session 5 with Participant X, the forward transition rate was Y%"
 
-### 4.2 Cross-Trial Generalization
+### 6.5 Cross-Trial Generalization
 
 Apply the trained GNN (fine-tuned on Move-MORE) to transcripts from other MBI trials (e.g., standard MORE for chronic pain, MBSR for chronic pain, MBCT for depression). Measure the domain shift in embedding space and the degradation in classification performance. If the graph structure generalizes, this provides evidence for a universal phenomenological taxonomy of mindfulness-based therapeutic processes.
 
-### 4.3 Multimodal Integration
+### 6.6 Multimodal Integration
 
 Incorporate non-textual features into the graph:
 - **Paralinguistic:** Prosodic features (pitch, rate, pause duration) extracted from audio — attached to segment nodes as additional feature dimensions
@@ -365,7 +520,7 @@ Incorporate non-textual features into the graph:
 
 This extends the analysis from what is said to how it is said and what the body is doing while saying it.
 
-### 4.4 Prospective Clinical Prediction
+### 6.7 Prospective Clinical Prediction
 
 Use the graph to predict clinical outcomes at trial endpoint from early-session data alone:
 - **Task:** Given Session 1–3 segment embeddings and graph structure, predict 8-week change in pain NRS, ODI, or TSK-11
@@ -380,6 +535,7 @@ Use the graph to predict clinical outcomes at trial endpoint from early-session 
 |-------|------|-------------|----------|
 | **1** | Content validity (Text Psychometrics) | Sensitivity table per VAAMR stage | Q2 2026 |
 | **1** | Inter-rater reliability | Kappa, agreement, confusion matrix | Q2 2026 |
+| **1** | Human-coded testset import + multi-substrate IRR | `qra testset import`/`irr`; inter-human, human↔LLM, human↔graph κ per class | Q2 2026 |
 | **1** | Longitudinal progression | Group trajectory, feasibility ribbon | Q2 2026 |
 | **1** | Between-session transitions | Cross-session heatmap, participant trajectories | Q2 2026 |
 | **1** | Within-session cues | Cue-response report, PURER × VAAMR lift matrix | Q2 2026 |
@@ -397,16 +553,23 @@ Use the graph to predict clinical outcomes at trial endpoint from early-session 
 | **3** | GraphSAGE training | Trained model with multi-task objective | Q1–Q2 2027 |
 | **3** | GNN interpretation | Embedding projections, causal structure, archetypes | Q2 2027 |
 | **3** | **GNN manuscript submission** | Therapist–participant dynamics paper | Q3 2027 |
-| **4** | Real-time feedback prototype | Dashboard design + offline simulation | 2027–2028 |
-| **4** | Cross-trial generalization | Application to external MBI corpora | 2028 |
-| **4** | Multimodal integration | Audio + kinematic + physiological fusion | 2028+ |
+| **4** | REDCap outcome import | `qra outcomes import`; daily pain/movement/practice + baseline/follow-up TSK aligned to timeline | Q3 2026 |
+| **4** | Adaptive VAAMR↔quantitative validation | Convergent validity + temporal coupling report; joint displays | Q3–Q4 2026 |
+| **4** | Per-participant REDCap export | `qra outcomes export-redcap`; quantified qualitative variables back into REDCap | Q4 2026 |
+| **5** | **Qualitative Results paper** | Four-cohort substantive findings manuscript | 2027–2028 |
+| **6** | MindfulBERT-for-classification | Fine-tuned psych-bert VAAMR stage classifier | 2027–2028 |
+| **6** | Graph-scaled classification | LLM-free labeling across larger MBI corpora | 2028 |
+| **6** | MindfulBERT (generative) | Therapeutic text generation to advance VAAMR progression | 2028+ |
+| **6** | Real-time feedback prototype | Dashboard design + offline simulation | 2027–2028 |
+| **6** | Cross-trial generalization | Application to external MBI corpora | 2028 |
+| **6** | Multimodal integration | Audio + kinematic + physiological fusion | 2028+ |
 
 ---
 
 ## References
 
 - Low, D. M., Mair, P., Nock, M. K., & Ghosh, S. S. (2024). Text psychometrics: Assessing psychological constructs in text using natural language processing. *Psychological Methods*.
-- Schmidt, F., Hammerfald, K., Jahren, H. H., & Vlassov, V. (2025). CFiCS: Graph-based classification of common factors and microcounseling skills. *Proceedings of CLPsych 2025*, 106–115.
+- Schmidt, F., Hammerfald, K., Jahren, H. H., & Vlassov, V. (2025). CFiCS: Graph-based classification of common factors in clinical psychology. *Proceedings of CLPsych 2025*, 106–115.
 - Wexler, R. S., Balsamo, W., et al. (2026). "Noticing the way that I'm noticing pain": A qualitative analysis of therapeutic progression in MORE for LRP. *Mindfulness*, 17, 819–833.
 - Lindahl, J. R., et al. (2017). The varieties of contemplative experience. *PLOS ONE*, 12(5), e0176239.
 - Garland, E. L. (2024). *Mindfulness-oriented recovery enhancement*. Guilford Press.

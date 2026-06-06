@@ -50,6 +50,10 @@ class EmbeddingClassifierConfig:
     # 8B model: 8 is a safe default on 24 GB VRAM; use 4 if you see OOM errors.
     embedding_batch_size: int = 8
 
+    # Compute device for the embedding model. None → auto (CUDA when available, else CPU);
+    # set e.g. 'cuda', 'cuda:1', or 'cpu' to pin. Passed straight to SentenceTransformer.
+    device: Optional[str] = None
+
     similarity_threshold: float = 1.375           # score must exceed this multiple of per-code baseline
     max_codes_per_sentence: Optional[int] = None  # None = auto (33% of codebook, max 6)
     criteria_weight: float = 0.5

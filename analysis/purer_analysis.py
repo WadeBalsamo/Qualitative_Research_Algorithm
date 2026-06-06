@@ -133,11 +133,10 @@ def compute_cue_block_purer_profiles(df_all: pd.DataFrame) -> List[CueBlock]:
     """
     Build CueBlock objects from a full master_segments DataFrame.
 
-    Uses timestamps (start_time_ms / end_time_ms) to identify therapist segments
-    that fall between two consecutive participant segments. This is consistent with
-    how _collect_therapist_cue works in the formatting module and is robust to
-    datasets where participant and therapist segment_index values are in separate
-    namespaces (each resetting from 0 per speaker type).
+    Uses the shared :func:`process.cue_blocks.cue_blocks_from_records` builder
+    which applies the canonical timestamp-overlap window with an index-position
+    fallback when ``end_time_ms == 0``.  This fixes the former bug where touching
+    timestamps (``from_end == to_start``) incorrectly produced empty blocks.
 
     Parameters
     ----------
@@ -152,7 +151,9 @@ def compute_cue_block_purer_profiles(df_all: pd.DataFrame) -> List[CueBlock]:
     -------
     List[CueBlock]
         One CueBlock per consecutive participant-to-participant pair in each
-        session that both have non-null final_label values.
+        session that both have non-null final_label values.  Empty blocks
+        (no therapist speech) ARE included — they are needed for the
+        empty-cue-rate analysis.
     """
     required = {'session_id', 'speaker', 'final_label', 'start_time_ms', 'end_time_ms'}
     missing = required - set(df_all.columns)
@@ -160,72 +161,48 @@ def compute_cue_block_purer_profiles(df_all: pd.DataFrame) -> List[CueBlock]:
         return []
 
     has_purer = 'purer_primary' in df_all.columns
+
+    from process.cue_blocks import cue_blocks_from_records as _cue_blocks_from_records
+    specs = _cue_blocks_from_records(
+        df_all.to_dict('records'), stage_key='final_label', require_stage=True
+    )
+
     cue_blocks: List[CueBlock] = []
+    for spec in specs:
+        from_row = spec.from_item
+        to_row = spec.to_item
 
-    for session_id, session_df in df_all.groupby('session_id'):
+        # Derive cohort_id from the from_item record
         cohort_id = None
-        if 'cohort_id' in session_df.columns:
-            cids = session_df['cohort_id'].dropna()
-            if len(cids):
-                try:
-                    cohort_id = int(cids.iloc[0])
-                except (ValueError, TypeError):
-                    cohort_id = None
+        raw_cid = from_row.get('cohort_id')
+        if raw_cid is not None:
+            try:
+                f = float(raw_cid)
+                if f == f:  # not NaN
+                    cohort_id = int(f)
+            except (TypeError, ValueError):
+                cohort_id = None
 
-        # Participant rows with valid final_label, sorted by start time
-        participant_mask = (
-            (session_df['speaker'] == 'participant')
-            & session_df['final_label'].notna()
+        if has_purer:
+            purer_labels = [
+                (int(r['purer_primary'])
+                 if r.get('purer_primary') is not None and r['purer_primary'] == r['purer_primary']
+                 else None)
+                for r in spec.therapist_items
+            ]
+        else:
+            purer_labels = [None] * len(spec.therapist_items)
+
+        block = CueBlock(
+            session_id=spec.session_id,
+            cohort_id=cohort_id,
+            from_seg_id=str(from_row.get('segment_id', '')),
+            to_seg_id=str(to_row.get('segment_id', '')),
+            from_stage=spec.from_stage,
+            to_stage=spec.to_stage,
+            purer_labels=purer_labels,
         )
-        participant_rows = (
-            session_df[participant_mask]
-            .sort_values('start_time_ms')
-            .reset_index(drop=True)
-        )
-
-        if len(participant_rows) < 2:
-            continue
-
-        # Therapist rows in this session for fast lookup
-        therapist_rows = session_df[session_df['speaker'] == 'therapist']
-
-        for i in range(len(participant_rows) - 1):
-            from_row = participant_rows.iloc[i]
-            to_row = participant_rows.iloc[i + 1]
-
-            from_end_ms = int(from_row.get('end_time_ms', 0))
-            to_start_ms = int(to_row.get('start_time_ms', 0))
-            from_stage = int(from_row['final_label'])
-            to_stage = int(to_row['final_label'])
-
-            # Collect therapist segments whose timestamps fall within the window
-            if to_start_ms > from_end_ms:
-                between_mask = (
-                    (therapist_rows['start_time_ms'] < to_start_ms)     # segment starts before window ends
-                    & (therapist_rows['end_time_ms'] > from_end_ms)      # segment ends after window starts
-                )
-                between_rows = therapist_rows[between_mask]
-            else:
-                between_rows = therapist_rows.iloc[:0]  # empty slice
-
-            if has_purer:
-                purer_labels = [
-                    (int(v) if pd.notna(v) else None)
-                    for v in between_rows['purer_primary'].tolist()
-                ]
-            else:
-                purer_labels = [None] * len(between_rows)
-
-            block = CueBlock(
-                session_id=str(session_id),
-                cohort_id=cohort_id,
-                from_seg_id=str(from_row.get('segment_id', '')),
-                to_seg_id=str(to_row.get('segment_id', '')),
-                from_stage=from_stage,
-                to_stage=to_stage,
-                purer_labels=purer_labels,
-            )
-            cue_blocks.append(block)
+        cue_blocks.append(block)
 
     return cue_blocks
 
@@ -406,7 +383,7 @@ def generate_purer_report(
     df_all: Optional[pd.DataFrame] = None,
 ) -> Optional[str]:
     """
-    Write report_purer_analysis.txt to 06_reports/.
+    Write purer.txt to 06_reports/02_mechanism/.
 
     Sections:
     0. Overall PURER construct distribution (corpus-wide)
@@ -421,9 +398,9 @@ def generate_purer_report(
     if not cue_blocks:
         return None
 
-    reports_dir = _paths.human_reports_dir(output_dir)
+    reports_dir = _paths.reports_mechanism_dir(output_dir)
     os.makedirs(reports_dir, exist_ok=True)
-    out_path = os.path.join(reports_dir, 'report_purer_analysis.txt')
+    out_path = os.path.join(reports_dir, 'purer.txt')
 
     # Build VAMMR stage name lookup from framework if available.
     # framework may be a ThemeFramework object (has .themes) or a dict
@@ -739,6 +716,185 @@ def generate_purer_report(
         fh.write('\n'.join(lines) + '\n')
 
     return out_path
+
+
+# ── GNN motif cross-reference section ─────────────────────────────────────
+
+def append_gnn_motif_section(output_dir: str) -> Optional[str]:
+    """
+    Read GNN cue_motifs.csv and coupling_factors.csv and append a concise
+    cross-reference section to 06_reports/report_purer_analysis.txt.
+
+    cue_motifs.csv columns (from gnn_layer/reports.py write_cue_motifs):
+        motif_id, n_blocks, influence, mean_pred_forward,
+        dominant_purer, purer_purity, n_exemplars
+
+    coupling_factors.csv columns (from gnn_layer/reports.py write_coupling_factors):
+        factor, explained_variance_ratio, forward_corr,
+        nearest_cf_ic, cf_ic_similarity, n_exemplars
+
+    generate_purer_report() opens report_purer_analysis.txt with mode 'w'
+    (overwrites on each analysis run). This function runs AFTER that step so it
+    appends exactly once per run — no accumulation across re-runs.
+
+    Parameters
+    ----------
+    output_dir : str
+        Pipeline output directory (same root used throughout the analysis).
+
+    Returns
+    -------
+    str
+        The appended section text, if the section was written.
+    None
+        If neither GNN CSV is present (GNN did not run), or on any I/O error.
+    """
+    try:
+        gnn_dir = _paths.gnn_data_dir(output_dir)
+        motifs_path = os.path.join(gnn_dir, 'cue_motifs.csv')
+        factors_path = os.path.join(gnn_dir, 'coupling_factors.csv')
+
+        motifs_present = os.path.isfile(motifs_path)
+        factors_present = os.path.isfile(factors_path)
+
+        if not motifs_present and not factors_present:
+            return None  # GNN didn't run — no-op
+
+        W = 72
+        lines = []
+        lines.append('')
+        lines.append('═' * W)
+        lines.append('GNN-DISCOVERED THERAPIST-LANGUAGE MOTIFS × FORWARD VAAMR MOVEMENT')
+        lines.append('═' * W)
+        lines.append(
+            'Embedding-derived, directional/hypothesis-generating findings independent '
+            'of PURER labels. For human review; not a substitute for PURER classification.'
+        )
+        lines.append(
+            'Influence is scored from-stage-conditioned (preserving the stage-moderation '
+            'hypothesis): the same therapist language can move different participants '
+            'differently depending on where they are in the VA-MR arc. Motifs that lift '
+            'forward movement OUT OF Avoidance — the central MORE barrier — and low-purity '
+            'EMERGENT motifs are the candidate new therapeutic constructs worth human review.'
+        )
+        lines.append('')
+
+        # ── Cue motifs ────────────────────────────────────────────────────────
+        if motifs_present:
+            try:
+                df_m = pd.read_csv(motifs_path)
+                lines.append('TOP CUE MOTIFS BY INFLUENCE ON FORWARD VAAMR TRANSITIONS')
+                lines.append('─' * W)
+                lines.append(
+                    f'  {"Motif":>5}  {"Influence":>9}  {"N blocks":>8}  '
+                    f'{"Fwd pred":>8}  {"Dom PURER":>10}  {"Purity":>6}  Note'
+                )
+                lines.append(
+                    f'  {"─" * 5}  {"─" * 9}  {"─" * 8}  '
+                    f'{"─" * 8}  {"─" * 10}  {"─" * 6}  {"─" * 15}'
+                )
+
+                # Sort descending by influence; cap at 8 rows
+                sort_col = 'influence' if 'influence' in df_m.columns else df_m.columns[0]
+                df_top = df_m.sort_values(sort_col, ascending=False).head(8)
+
+                for _, row in df_top.iterrows():
+                    mid = row.get('motif_id', '?')
+                    infl = row.get('influence')
+                    nb = row.get('n_blocks')
+                    fwd = row.get('mean_pred_forward')
+                    dom_p = row.get('dominant_purer')
+                    purity = row.get('purer_purity')
+
+                    infl_s = f'{float(infl):.4f}' if infl is not None and infl == infl else '   n/a'
+                    nb_s = str(int(nb)) if nb is not None and nb == nb else 'n/a'
+                    fwd_s = f'{float(fwd):.3f}' if fwd is not None and fwd == fwd else '  n/a'
+                    dom_p_s = str(int(dom_p)) if dom_p is not None and dom_p == dom_p else 'n/a'
+                    purity_s = f'{float(purity):.2f}' if purity is not None and purity == purity else ' n/a'
+
+                    # Flag motifs that are poorly captured by PURER labels
+                    try:
+                        is_emergent = (
+                            purity is not None
+                            and purity == purity
+                            and float(purity) < 0.60
+                        )
+                    except (TypeError, ValueError):
+                        is_emergent = False
+                    note = 'EMERGENT (low PURER purity)' if is_emergent else ''
+
+                    lines.append(
+                        f'  {str(mid):>5}  {infl_s:>9}  {nb_s:>8}  '
+                        f'{fwd_s:>8}  {dom_p_s:>10}  {purity_s:>6}  {note}'
+                    )
+                lines.append('')
+                lines.append('  (Influence = GNN-learned weight on forward VAAMR movement.)')
+                lines.append(
+                    '  (Purity < 0.60 = motif spans multiple PURER codes → emergent pattern.)'
+                )
+                lines.append('')
+            except Exception:
+                lines.append('  [cue_motifs.csv present but could not be parsed]')
+                lines.append('')
+
+        # ── Coupling factors ──────────────────────────────────────────────────
+        if factors_present:
+            try:
+                df_f = pd.read_csv(factors_path)
+                lines.append('TOP LATENT COUPLING FACTORS (therapist language → participant progression)')
+                lines.append('─' * W)
+                lines.append(
+                    f'  {"Factor":>6}  {"Var expl":>8}  {"Fwd corr":>8}  '
+                    f'{"Nearest CF/IC concept"}'
+                )
+                lines.append(
+                    f'  {"─" * 6}  {"─" * 8}  {"─" * 8}  {"─" * 30}'
+                )
+
+                # Sort descending by abs(forward_corr); cap at 5 rows
+                if 'forward_corr' in df_f.columns:
+                    df_f['_abs_corr'] = df_f['forward_corr'].abs()
+                    df_top_f = df_f.sort_values('_abs_corr', ascending=False).head(5)
+                else:
+                    df_top_f = df_f.head(5)
+
+                for _, row in df_top_f.iterrows():
+                    fac = row.get('factor', '?')
+                    evr = row.get('explained_variance_ratio')
+                    corr = row.get('forward_corr')
+                    label = row.get('nearest_cf_ic') or ''
+
+                    evr_s = f'{float(evr):.3f}' if evr is not None and evr == evr else '  n/a'
+                    corr_s = f'{float(corr):+.3f}' if corr is not None and corr == corr else '  n/a'
+
+                    lines.append(
+                        f'  {str(int(fac)) if fac == fac else "?":>6}  '
+                        f'{evr_s:>8}  {corr_s:>8}  {str(label)}'
+                    )
+                lines.append('')
+                lines.append(
+                    '  (forward_corr = Pearson r between factor score and subsequent '
+                    'VAAMR forward movement.)'
+                )
+                lines.append('')
+            except Exception:
+                lines.append('  [coupling_factors.csv present but could not be parsed]')
+                lines.append('')
+
+        lines.append('═' * W)
+        section_text = '\n'.join(lines) + '\n'
+
+        # Append to report if it exists
+        reports_dir = _paths.reports_mechanism_dir(output_dir)
+        report_path = os.path.join(reports_dir, 'purer.txt')
+        if os.path.isfile(report_path):
+            with open(report_path, 'a', encoding='utf-8') as fh:
+                fh.write(section_text)
+
+        return section_text
+
+    except Exception:
+        return None
 
 
 # ── Top-level entry point ──────────────────────────────────────────────────

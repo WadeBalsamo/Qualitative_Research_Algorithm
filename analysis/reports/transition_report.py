@@ -248,7 +248,7 @@ def generate_transition_explanation(
     llm_client=None,
     df_all: pd.DataFrame = None,
 ) -> str:
-    """Generate stage_transitions.txt in the output root.
+    """Generate 02_mechanism/transitions.txt.
 
     Explains both within-session and between-session transition heatmaps,
     with example quotes for the most common transitions.
@@ -317,7 +317,7 @@ def generate_transition_explanation(
         liminal_note = ''
         if 'is_liminal' in df.columns and len(df):
             liminal_note = f"  |  liminal (mixed-stage) segments: {100 * float(df['is_liminal'].mean()):.1f}%"
-        lines.append(f'  See 06_reports/report_superposition.txt and report_mechanism.txt.{liminal_note}')
+        lines.append(f'  See 06_reports/02_mechanism/superposition.txt and mechanism.txt.{liminal_note}')
         lines.append('')
 
     # ── PURER × transition correlation table ──
@@ -493,8 +493,8 @@ def generate_transition_explanation(
     lines.append('')
 
     content = '\n'.join(lines)
-    os.makedirs(_paths.human_reports_dir(output_dir), exist_ok=True)
-    path = os.path.join(_paths.human_reports_dir(output_dir), 'stage_transitions.txt')
+    os.makedirs(_paths.reports_mechanism_dir(output_dir), exist_ok=True)
+    path = os.path.join(_paths.reports_mechanism_dir(output_dir), 'transitions.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(content)
     return path
@@ -508,7 +508,7 @@ def generate_therapist_cues_report(
     llm_client,
     df_all: pd.DataFrame = None,
 ) -> str:
-    """Generate report_cue_responses.txt in 02_human_reports/.
+    """Generate 02_mechanism/cue_response.txt.
 
     Iterates all within-session transitions, groups by (from_stage, to_stage),
     and produces averaged FROM / CUE / TO blocks for each transition type.
@@ -682,8 +682,8 @@ def generate_therapist_cues_report(
             lines.append('')
 
     content = '\n'.join(lines)
-    os.makedirs(_paths.human_reports_dir(output_dir), exist_ok=True)
-    path = os.path.join(_paths.human_reports_dir(output_dir), 'report_cue_responses.txt')
+    os.makedirs(_paths.reports_mechanism_dir(output_dir), exist_ok=True)
+    path = os.path.join(_paths.reports_mechanism_dir(output_dir), 'cue_response.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(content)
     return path

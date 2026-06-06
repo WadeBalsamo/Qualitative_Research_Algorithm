@@ -5,7 +5,7 @@ Pure-PyTorch GraphSAGE + multi-task heads for the QRA GNN layer.
 
 NO torch-geometric: mean aggregation is implemented with ``index_add_`` (scatter).
 Heads (on node embeddings): soft_vaamr (5, KL to ballot mixture), progression (1,
-MSE to E[stage]), vce_multilabel (BCE), purer (CE, 5), microskill_multilabel (BCE, 8).
+MSE to E[stage]), vce_multilabel (BCE), purer (CE, 5).
 Auxiliary losses: supervised contrastive (InfoNCE) + temporal-chain link prediction.
 
 torch imported at construction (the package still imports lazily because this module's
@@ -40,49 +40,66 @@ def scatter_weighted_mean(src, index, weight, dim_size):
 
 def _build_modules():
     """Define nn.Module classes lazily (so importing the file needs no torch)."""
+    import math
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
 
+    # softplus(b)=1 at this bias, so a freshly-built gate leaves aggregation identical
+    # to the fixed-weight path until training moves it (backward-compatible init).
+    _NEUTRAL_GATE = math.log(math.e - 1.0)
+
     class SAGEConv(nn.Module):
-        def __init__(self, in_dim, out_dim):
+        def __init__(self, in_dim, out_dim, n_edge_types: int = 0):
             super().__init__()
             self.lin_self = nn.Linear(in_dim, out_dim)
             self.lin_neigh = nn.Linear(in_dim, out_dim)
+            # Learnable per-edge-type gate (Track A1). n_edge_types==0 → no gate, the
+            # aggregation is byte-identical to the original fixed-weight SAGEConv.
+            self.n_edge_types = int(n_edge_types)
+            if self.n_edge_types > 0:
+                self.edge_type_gate = nn.Parameter(
+                    torch.full((self.n_edge_types,), _NEUTRAL_GATE))
+            else:
+                self.edge_type_gate = None
 
-        def forward(self, x, edge_index, edge_weight=None):
+        def forward(self, x, edge_index, edge_weight=None, edge_type_ids=None):
             src, dst = edge_index[0], edge_index[1]
             if edge_index.numel() == 0:
                 agg = torch.zeros(x.size(0), x.size(1), dtype=x.dtype, device=x.device)
             else:
                 w = edge_weight if edge_weight is not None else torch.ones(
                     src.size(0), dtype=x.dtype, device=x.device)
+                if self.edge_type_gate is not None and edge_type_ids is not None:
+                    gate = F.softplus(self.edge_type_gate)[edge_type_ids]
+                    w = w * gate
                 agg = scatter_weighted_mean(x[src], dst, w, x.size(0))
             return self.lin_self(x) + self.lin_neigh(agg)
 
     class MultiTaskGNN(nn.Module):
-        def __init__(self, in_dim, hidden_dim, n_layers, dropout, head_sizes: Dict[str, int]):
+        def __init__(self, in_dim, hidden_dim, n_layers, dropout, head_sizes: Dict[str, int],
+                     n_edge_types: int = 0):
             super().__init__()
             self.convs = nn.ModuleList()
             d = in_dim
             for _ in range(max(1, n_layers)):
-                self.convs.append(SAGEConv(d, hidden_dim))
+                self.convs.append(SAGEConv(d, hidden_dim, n_edge_types=n_edge_types))
                 d = hidden_dim
             self.dropout = dropout
             self.heads = nn.ModuleDict(
                 {name: nn.Linear(hidden_dim, size) for name, size in head_sizes.items()}
             )
 
-        def encode(self, x, edge_index, edge_weight=None):
+        def encode(self, x, edge_index, edge_weight=None, edge_type_ids=None):
             h = x
             for conv in self.convs:
-                h = conv(h, edge_index, edge_weight)
+                h = conv(h, edge_index, edge_weight, edge_type_ids)
                 h = F.relu(h)
                 h = F.dropout(h, p=self.dropout, training=self.training)
             return h
 
-        def forward(self, x, edge_index, edge_weight=None):
-            h = self.encode(x, edge_index, edge_weight)
+        def forward(self, x, edge_index, edge_weight=None, edge_type_ids=None):
+            h = self.encode(x, edge_index, edge_weight, edge_type_ids)
             out = {'emb': h}
             for name, head in self.heads.items():
                 out[name] = head(h)
@@ -91,10 +108,14 @@ def _build_modules():
     return SAGEConv, MultiTaskGNN
 
 
-def build_model(graph, config, n_vce: int = 0, n_microskill: int = 8):
+def build_model(graph, config, n_vce: int = 0):
     """Construct the encoder + the heads implied by ``config.objectives``."""
     _, MultiTaskGNN = _build_modules()
     in_dim = int(graph.meta['embed_dim'])
+    # Learnable per-edge-type gates activate only with typed precipitates edges (Track A1);
+    # otherwise n_edge_types=0 keeps the model parameter-identical to the fixed-weight path.
+    n_edge_types = (len(graph.meta.get('edge_type_vocab', []))
+                    if getattr(config, 'precipitates_edges', False) else 0)
     head_sizes: Dict[str, int] = {}
     obj = set(config.objectives)
     if 'soft_vaamr' in obj:
@@ -105,12 +126,10 @@ def build_model(graph, config, n_vce: int = 0, n_microskill: int = 8):
         head_sizes['vce'] = n_vce
     if 'purer' in obj:
         head_sizes['purer'] = 5
-    if 'microskill_multilabel' in obj:
-        head_sizes['microskill'] = n_microskill
     if not head_sizes:
         head_sizes['soft_vaamr'] = 5  # always have at least one head
     model = MultiTaskGNN(in_dim, int(config.hidden_dim), int(config.n_layers),
-                         float(config.dropout), head_sizes)
+                         float(config.dropout), head_sizes, n_edge_types=n_edge_types)
     return model
 
 
@@ -159,7 +178,7 @@ def compute_losses(outputs, targets, config) -> Dict[str, "object"]:
 
     ``targets`` is a dict of precomputed tensors (assembled in train.py):
       vaamr_idx, vaamr_mix; (progression reuses vaamr_idx + prog_val);
-      vce_idx,vce_target; purer_idx,purer_label; micro_idx,micro_target;
+      vce_idx,vce_target; purer_idx,purer_label;
       contrast_idx,contrast_label; pos_edges,neg_edges.
     """
     import torch
@@ -185,10 +204,6 @@ def compute_losses(outputs, targets, config) -> Dict[str, "object"]:
     if 'purer' in outputs and targets.get('purer_idx') is not None and targets['purer_idx'].numel():
         idx = targets['purer_idx']
         losses['purer'] = F.cross_entropy(outputs['purer'][idx], targets['purer_label'])
-
-    if 'microskill' in outputs and targets.get('micro_idx') is not None and targets['micro_idx'].numel():
-        idx = targets['micro_idx']
-        losses['microskill'] = F.binary_cross_entropy_with_logits(outputs['microskill'][idx], targets['micro_target'])
 
     if 'contrastive' in config.objectives and targets.get('contrast_idx') is not None and targets['contrast_idx'].numel() > 1:
         losses['contrastive'] = supervised_contrastive(

@@ -179,19 +179,19 @@ The clinically actionable question this answers: *is Reframing overrepresented b
 
 Outputs: `purer_transition_profiles.csv`, `purer_vaamr_lift.csv` (with CI/p/effect columns), `purer_empty_cue_rates.csv`.
 
-### Program Efficacy Dossier
+### Program Progression Summary (descriptive — not efficacy)
 
 `analysis/efficacy.py`
 
-The efficacy dossier answers "does the program work?" with statistical inference and, optionally, external clinical outcome linkage.
+A **descriptive, single-arm** summary of how participants' LLM-coded VAAMR language moves across sessions. It is **not** an efficacy estimate: there is no control arm, and the "outcome" is the coded language itself (also shaped by therapist prompting). Read as hypothesis-generating for human validation and Cohort 3–4 replication.
 
-**Internal outcomes:** Per (participant, session) — continuous progression coordinate trajectory, adaptive-stage occupancy (stages 2–4) vs maladaptive (stages 0–1), Avoidance→Attention Regulation barrier crossing (first-passage session), dwell time, progression volatility.
+**Primary (ordinal-safe):** adaptive-stage occupancy (stages 2–4) by session + a rank-based **Mann–Kendall** monotonic trend — no equal-spacing assumption (VAAMR is ordinal).
 
-**Group trajectory inference:** Cluster-bootstrap CI band on the group mean progression curve + `mixedlm_trend` slope test (random participant intercept). Per-participant OLS slopes with sign test against chance.
+**Secondary (sensitivity, interval-scale):** the continuous E[stage] progression coordinate + `mixedlm_trend` linear slope, explicitly flagged as treating the stages as equally spaced. Per-participant slope direction + sign test. p-values/CIs are shown but **flagged when underpowered** (small single-arm n).
 
-**External outcome linkage:** Optional CSV at `02_meta/outcomes.csv` (auto-detects wide pre/post or long per-session format), linked to within-program VAAMR progression via mixed-effects / Pearson correlation with bootstrap CI — *does linguistic phenomenological progression track real-world pain and disability improvement?*
+**Convergent validity (exploratory):** when an external-outcomes CSV is present at `02_meta/outcomes.csv` (auto-detects wide pre/post or long per-session), within-program progression is correlated with measured clinical change — *convergent-validity evidence that the language index tracks something real, still not efficacy*. Integration plan: [`docs/OUTCOME_INTEGRATION_ROADMAP.md`](docs/OUTCOME_INTEGRATION_ROADMAP.md) (REDCap → `outcomes.csv`).
 
-Outputs: `report_program_efficacy.txt` (5-section text dossier), `03_analysis_data/efficacy/*.csv`, `05_figures/program_efficacy.png` (multipanel: group progression with CI band, adaptive occupancy, barrier crossing, VAAMR-vs-outcome scatter).
+Outputs: `06_reports/01_outcomes/progression_summary.txt`, `03_analysis_data/efficacy/*.csv` (incl. `efficacy_summary.json`), `05_figures/program_efficacy.png`.
 
 ### State Transition Matrices
 
@@ -213,9 +213,9 @@ Per-participant reports track the dominant stage, continuous progression coordin
 
 `analysis/reports/language_atlas.py`
 
-The language atlas produces a curriculum-actionable guide to *what therapists actually say* when participants advance through VAAMR stages. For each top-ranked (FDR-significant) PURER move, microskill, emergent motif, and named coupling factor, the atlas renders FROM → CUE → TO exemplar blocks with mixture annotations and stage contexts. Emergent motifs — high-influence, low-PURER-purity language patterns that predict progression but map to no existing PURER category — are highlighted as candidates for new therapeutic constructs.
+The language atlas produces a curriculum-actionable guide to *what therapists actually say* when participants advance through VAAMR stages. For each top-ranked (FDR-significant) PURER move, emergent motif, and named coupling factor, the atlas renders FROM → CUE → TO exemplar blocks with mixture annotations and stage contexts. Emergent motifs — high-influence, low-PURER-purity language patterns that predict progression but map to no existing PURER category — are highlighted as candidates for new therapeutic constructs.
 
-Output: `06_reports/report_language_atlas.txt`.
+Output: `06_reports/02_mechanism/language_atlas.txt` (top forward AND backward/stalling patterns).
 
 ### GNN Representation and Discovery Layer
 
@@ -223,17 +223,17 @@ Output: `06_reports/report_language_atlas.txt`.
 
 The GNN layer provides three capabilities that the LLM-label pipeline alone cannot deliver:
 
-**1. Continuous superposition (Capability A):** A pure-PyTorch GraphSAGE network trained on Qwen3 segment embeddings with soft VAAMR targets (the multi-run ballot distribution), PURER, VCE, and microcounseling heads. Outputs per-segment VAAMR stage-mixture vectors, continuous progression coordinates, and GNN embeddings in a unified embedding space. These are the primary mixture source when the GNN is enabled (`SuperpositionConfig.mixture_source = 'gnn'`). Output: `03_analysis_data/gnn/segment_positions.csv`.
+**1. Continuous superposition (Capability A):** A pure-PyTorch GraphSAGE network trained on Qwen3 segment embeddings with soft VAAMR targets (the multi-run ballot distribution), PURER, and VCE heads. Outputs per-segment VAAMR stage-mixture vectors, continuous progression coordinates, and GNN embeddings in a unified embedding space. These are the primary mixture source when the GNN is enabled (`SuperpositionConfig.mixture_source = 'gnn'`). Output: `03_analysis_data/gnn/segment_positions.csv`.
 
-**2. Cue motif discovery (Capability B):** Cue blocks (therapist language between participant turns) are represented as mean-pooled GNN embeddings and clustered into emergent *motifs* — patterns in therapist language that cut across the five PURER categories. Each motif is scored for influence on forward VAAMR transitions (from-stage-conditioned logistic regression), labeled for PURER and microskill purity, and flagged if it is influential but poorly explained by existing labels (a candidate new therapeutic construct). Exemplar cues are selected by geometry rather than LLM averaging. Outputs: `cue_motifs.csv`, `cue_block_assignments.csv`, `report_gnn_emergent_motifs.txt`.
+**2. Cue motif discovery (Capability B):** Cue blocks (therapist language between participant turns) are represented as mean-pooled GNN embeddings and clustered into emergent *motifs* — patterns in therapist language that cut across the five PURER categories. Each motif is scored for influence on forward VAAMR transitions (from-stage-conditioned logistic regression), labeled for PURER purity, and flagged if it is influential but poorly explained by existing labels (a candidate new therapeutic construct). Exemplar cues are selected by geometry rather than LLM averaging. Outputs: `cue_motifs.csv`, `cue_block_assignments.csv`, `report_gnn_emergent_motifs.txt`.
 
-**3. GNN↔LLM triangulation (Capability C):** GNN-derived VAAMR stage assignments are compared against LLM-ensemble labels and human-coded labels (where available) via Cohen's κ. GNN-lift tables for VAAMR×VCE, PURER×transition, and PURER×microskill are computed from GNN geometry and placed beside LLM-derived tables — **GNN↔LLM convergence is stronger construct-validity evidence than LLM↔LLM**, directly complementing the planned shuffled-stage permutation control. Output: `report_gnn_triangulation.txt`, `gnn_vs_llm_lift.csv`, `purer_microskill_lift.csv`.
+**3. GNN↔LLM triangulation (Capability C):** GNN-derived VAAMR stage assignments are compared against LLM-ensemble labels and human-coded labels (where available) via Cohen's κ. GNN-lift tables for VAAMR×VCE and PURER×transition are computed from GNN geometry and placed beside LLM-derived tables — **GNN↔LLM convergence is stronger construct-validity evidence than LLM↔LLM**, directly complementing the planned shuffled-stage permutation control. Output: `report_gnn_triangulation.txt`, `gnn_vs_llm_lift.csv`.
 
-**4. Construct signal ablation (Capability D, optional):** Each construct head (VCE, PURER, microskill) is removed and the model retrained; the loss increase when a head is removed quantifies how much independent signal that construct family carries. Answers: *is VCE superfluous?* Output: `report_gnn_construct_signal.txt`, `gnn_construct_signal.csv`.
+**4. Construct signal ablation (Capability D, optional):** Each construct head (VCE, PURER) is removed and the model retrained; the loss increase when a head is removed quantifies how much independent signal that construct family carries. Answers: *is VCE superfluous?* Output: `report_gnn_construct_signal.txt`, `gnn_construct_signal.csv`.
 
 **5. Participant↔therapist coupling (Capability E):** Latent NMF/PCA factors of therapist cue language and their correlation with subsequent participant VAAMR forward movement. Factors are interpreted post-hoc against an inline CF/IC alliance-concept reference lexicon — alliance-like structure is *discovered*, not imposed. Exemplar quotes per factor and forward-correlation values are included. Outputs: `coupling_factors.csv`, `report_gnn_coupling.txt`.
 
-The GNN is an **analysis-time layer only** — frozen segments and `master_segments` are never mutated. It runs when `config.gnn_layer.enabled=True` or via `qra analyze --gnn`, and wraps every capability in a separate try/except so one failure never aborts the others. All GNN artifacts go to `03_analysis_data/gnn/`, `06_reports/`, and `02_meta/gnn/model/`.
+The GNN is an **analysis-time layer only** — frozen segments and `master_segments` are never mutated. It is **ON by default** (`config.gnn_layer.enabled=True`; disable per-run or set `False` to skip), and wraps every capability in a separate try/except so one failure never aborts the others. All GNN artifacts go to `03_analysis_data/gnn/` (CSVs), `06_reports/06_gnn/` (reports), `05_figures/gnn_*.png` (figures), and `02_meta/gnn/model/` (weights).
 
 ---
 
@@ -359,8 +359,13 @@ output_dir/
 │   └── testsets/                 # Flat numbered validation test sets
 │       ├── human_classification_testset_worksheet_N.txt  # frozen
 │       └── AI_classification_testset_worksheet_N.txt    # refreshable
-├── 05_figures/
-└── 06_reports/
+├── 05_figures/                  # PNG figures (incl. gnn_*.png)
+└── 06_reports/                  # tiered, numbered human-readable reports
+    ├── 00_executive_summary.txt # start here — program-improvement brief
+    ├── 00_READ_ME.txt           # guide to the tree
+    ├── 01_outcomes/  02_mechanism/  03_per_session/
+    ├── 04_per_participant/  05_per_stage/  06_gnn/
+    └── 07_methods_appendix.txt
 ```
 
 ---
@@ -381,8 +386,9 @@ output_dir/
 | `process/speaker_filter.py` | Speaker inclusion/exclusion rules per classifier |
 | `process/output_paths.py` | Single source of truth for all output directory paths |
 | `process/legacy_migration.py` | Auto-migration: v2.0 → per-session segments; v2.5 → v3 directory layout |
-| `process/cross_validation.py` | VAAMR × VCE lift statistics |
-| `process/setup_wizard.py` | Interactive configuration wizard (14 steps) |
+| `process/cross_validation.py` | VAAMR × VCE lift statistics (hard + mixture-weighted/soft) |
+| `process/anonymization_editor.py` | Speaker-key editor with full downstream cascade (`edit-anonymization` / TUI) |
+| `process/setup_wizard.py` | Interactive configuration wizard (presets + 17-step custom walkthrough) |
 | `process/assembly/master_dataset.py` | `assemble_master_dataset` |
 | `process/assembly/human_forms.py` | Human classification forms, test set freeze/refresh |
 | `process/assembly/content_validity.py` | Content-validity test set freeze/refresh |
@@ -405,7 +411,7 @@ output_dir/
 | `analysis/superposition.py` | Stage-mixture provider: GNN geometry → LLM ballots → secondary_stage fallback; mixture entropy, co-occurrence matrix |
 | `analysis/mechanism.py` | PURER→VAAMR mechanism dossier with full statistical inference (CI, permutation p, FDR) |
 | `analysis/stats.py` | Reusable inference toolkit: Wilson CI, cluster-bootstrap CI, permutation test, effect sizes, BH-FDR, mixed-effects |
-| `analysis/efficacy.py` | Program efficacy dossier: internal progression outcomes + optional external outcome linkage |
+| `analysis/efficacy.py` | Descriptive progression summary (ordinal-safe, single-arm) + convergent-validity external outcome linkage |
 | `analysis/purer_analysis.py` | PURER × VAAMR conditional lift table, cue-response synthesis |
 | `analysis/purer_figures.py` | PURER × VAAMR lift heatmap and figures |
 | `analysis/longitudinal.py` | Longitudinal summary generation |
@@ -423,25 +429,29 @@ output_dir/
 | `gnn_layer/runner.py` | GNN layer entry point — orchestrates all five GNN capabilities |
 | `gnn_layer/embeddings.py` | Qwen3 segment embedding reuse with NPZ cache |
 | `gnn_layer/graph_builder.py` | Heterogeneous graph construction: temporal chain, anchor/label, kNN, cross-framework edges |
-| `gnn_layer/model.py` | Pure-PyTorch GraphSAGE with multi-task heads (soft_vaamr, progression, vce, purer, microskill) |
+| `gnn_layer/model.py` | Pure-PyTorch GraphSAGE with multi-task heads (soft_vaamr, progression, vce, purer) |
 | `gnn_layer/train.py` | Full-batch training, early stopping, checkpoint export |
 | `gnn_layer/inference.py` | Per-segment position inference, cue-block embedding assembly |
 | `gnn_layer/motifs.py` | Cue motif clustering, influence scoring, purity annotation, emergent-motif flagging |
-| `gnn_layer/gnn_lift.py` | GNN-derived lift tables (VAAMR×VCE, PURER×transition, PURER×microskill) vs LLM baseline |
+| `gnn_layer/gnn_lift.py` | GNN-derived lift tables (VAAMR×VCE, PURER×transition) vs LLM baseline |
 | `gnn_layer/triangulation.py` | GNN↔LLM↔human agreement (Cohen's κ), triangulation report |
 | `gnn_layer/ablation.py` | Construct-head ablation: which families carry independent signal? |
 | `gnn_layer/coupling.py` | Latent participant↔therapist coupling factors, CF/IC alliance naming |
 | `gnn_layer/soft_labels.py` | Ballot-to-mixture conversion, progression coordinate, soft target assembly |
 | `gnn_layer/reports.py` | GNN artifact writers: segment_positions.csv, cue_motifs.csv, gnn_vs_llm_lift.csv, coupling reports |
-| `gnn_layer/config.py` | `GnnLayerConfig` dataclass (enabled=False default) |
+| `gnn_layer/validation.py` | Out-of-sample reliability gate: per-stage/per-move κ vs LLM consensus + human; YES/NO scaling verdict |
+| `gnn_layer/config.py` | `GnnLayerConfig` dataclass (enabled=True default) |
 
 ---
 
 ## CLI Reference
 
+QRA exposes a single entry point, `qra.py`, with the subcommands below. Running it with **no subcommand launches the interactive TUI** (`python qra.py`), which reaches every capability listed here through guided menus.
+
 ```bash
-# Interactive setup wizard — creates qra_config.json
-python qra.py setup
+# Interactive TUI (no subcommand) and setup wizard
+python qra.py                                              # menu-driven TUI
+python qra.py setup                                        # config wizard → qra_config.json
 
 # Full pipeline run
 python qra.py run --config ./data/output/02_meta/qra_config.json
@@ -453,15 +463,27 @@ python qra.py run --transcript-dir ./data/input --output-dir ./data/output \
 # Pipeline + auto-generate analysis reports
 python qra.py run --config ./qra_config.json --auto-analyze
 
+# Incrementally add new transcripts to an existing project (frozen segments/testsets untouched)
+python qra.py add-data --config ./qra_config.json
+
 # Post-hoc analysis on completed output
-python qra.py analyze --output-dir ./data/output/
+python qra.py analyze --output-dir ./data/output/          # full analysis suite
+python qra.py analyze -o ./data/output/ --gnn              # force-enable the GNN layer
+python qra.py analyze -o ./data/output/ --no-gnn           # force-disable the GNN layer
 
 # Modular stage execution (Phase 3)
-python qra.py ingest -o ./data/output/                    # segment only
-python qra.py classify -o ./data/output/ --what theme     # VAAMR only
-python qra.py classify -o ./data/output/ --what purer     # PURER only
-python qra.py classify -o ./data/output/ --what codebook  # VCE only
-python qra.py assemble -o ./data/output/                  # join frozen + overlays
+python qra.py ingest -o ./data/output/                     # segment + freeze only
+python qra.py classify -o ./data/output/ --what vaamr      # VAAMR (participant)
+python qra.py classify -o ./data/output/ --what purer      # PURER (therapist)
+python qra.py classify -o ./data/output/ --what codebook   # VCE phenomenology
+python qra.py classify -o ./data/output/ --what cross-validation  # VAAMR × VCE lift overlay
+python qra.py classify -o ./data/output/ --what all        # every configured classifier
+python qra.py classify -o ./data/output/ --backend gnn     # LLM-free graph scale mode
+python qra.py assemble -o ./data/output/                   # join frozen + overlays
+python qra.py validate -o ./data/output/                   # refresh human/AI validation artifacts
+
+# Fix a single classification run without redoing the others
+python qra.py reclassify-run -o ./data/output/ --run 3 --model nvidia/nemotron-3-nano-30b
 
 # Zero-shot content-validity test (skips full pipeline)
 python qra.py run --test-zeroshot --preset small --output-dir ./data/output/
@@ -475,7 +497,14 @@ python qra.py testset list -o ./data/output/
 python qra.py cv create -o ./data/output/ --framework purer --name cv_purer_v1
 python qra.py cv refresh -o ./data/output/ --all
 python qra.py cv list -o ./data/output/
+
+# PHI / speaker anonymization curation
+python qra.py apply-anonymization -o ./data/output/        # retroactively scrub names from frozen text
+python qra.py edit-anonymization -o ./data/output/         # interactive speaker-key editor + cascade
+python qra.py edit-anonymization -o ./data/output/ --rename therapist_1=therapist_9 --yes
 ```
+
+> **GNN scale mode** (`classify --backend gnn`) and **GNN-authoritative labels** are recommended only after the graph passes its out-of-sample reliability gate (`06_reports/06_gnn/validation.txt`). Until then the default flow remains LLM classification. See the [GNN Representation and Discovery Layer](#gnn-representation-and-discovery-layer) section above and `methodology.md` §8.5.
 
 ---
 
@@ -505,7 +534,7 @@ QRA implements a scalable pipeline for maintaining human-validated datasets acro
 1. **Frozen segmentation** — `01_transcripts/segmented/<sid>/segments.jsonl` is written once. No re-segmentation on re-runs. Only raw-segmentation fields are persisted; no classification data in segment files.
 2. **Overlay separation** — re-running any classifier overwrites only its `02_meta/classifications/<key>_labels.jsonl`. Frozen segments are untouched.
 3. **Framework boundary** — VAAMR classifies participants; PURER classifies therapists. Therapist segments appear as read-only context in participant classification prompts but are never VAAMR-classified.
-4. **Auditable provenance** — every segment's final label carries its source (`adjudicated` / `human_consensus` / `llm_zero_shot`). Every LLM call is logged with full prompt and response to `02_meta/auditable_logs/`.
+4. **Auditable provenance** — every segment's final label carries its source. The resolution order is `adjudicated` > `human_consensus` > `gnn_consensus` > `llm_zero_shot`; the `gnn_consensus` tier is engaged only when `gnn_authoritative=True` (after the graph passes its reliability gate), and the raw multi-run LLM ballots remain visible per segment regardless. Every LLM call is logged with full prompt and response to `02_meta/auditable_logs/`.
 5. **Hot markdown definitions** — VAAMR, PURER, and VCE codebook definitions live in human-editable `.md` files, parsed at runtime. Researchers can refine operational definitions between cohorts without touching Python.
 
 ---

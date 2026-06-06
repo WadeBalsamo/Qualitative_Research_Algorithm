@@ -47,7 +47,9 @@ def wilson_ci(k: int, n: int, alpha: float = 0.05) -> Tuple[float, float]:
     denom = 1.0 + z * z / n
     center = (phat + z * z / (2 * n)) / denom
     half = (z * math.sqrt(phat * (1 - phat) / n + z * z / (4 * n * n))) / denom
-    return (max(0.0, center - half), min(1.0, center + half))
+    lo = center - half
+    hi = center + half
+    return (0.0 if lo < 1e-12 else lo, 1.0 if hi > 1 - 1e-12 else min(1.0, hi))
 
 
 def _z(alpha: float) -> float:
@@ -381,3 +383,74 @@ def sign_test(n_positive: int, n_total: int) -> Dict[str, float]:
     if _sps is not None:
         out['p_value'] = float(_sps.binomtest(n_positive, n_total, 0.5).pvalue)
     return out
+
+
+def mann_kendall_trend(values: Sequence[float]) -> Dict[str, float]:
+    """Non-parametric Mann–Kendall test for a MONOTONIC trend in an ordered series.
+
+    Ordinal-safe: it uses only the SIGN of pairwise differences, so it does not
+    assume the VAAMR stages are equally spaced (unlike a linear OLS/mixed slope on
+    E[stage]). Intended for a per-session group series (e.g. mean adaptive-stage
+    occupancy by session). Reports Kendall's tau-b as the effect size and Sen's
+    slope as a robust trend magnitude in the series' own units.
+
+    Returns {n, S, tau, p_value, sen_slope, direction, method}. Degrades to NaNs
+    for n < 3. This is a small-sample test; with very few points the p-value is
+    indicative only — pair it with the underpowered flag in reporting.
+    """
+    out = {'n': 0, 'S': 0.0, 'tau': float('nan'), 'p_value': float('nan'),
+           'sen_slope': float('nan'), 'direction': 'flat', 'method': 'mann_kendall'}
+    v = [float(x) for x in values if x is not None and x == x]
+    n = len(v)
+    out['n'] = n
+    if n < 3:
+        return out
+
+    # Mann–Kendall S statistic = Σ sign(v_j - v_i) for j > i.
+    S = 0
+    for i in range(n - 1):
+        for j in range(i + 1, n):
+            S += np.sign(v[j] - v[i])
+    out['S'] = float(S)
+
+    # Variance with tie correction; normal approximation with continuity correction.
+    from collections import Counter
+    ties = Counter(v)
+    var = (n * (n - 1) * (2 * n + 5)
+           - sum(t * (t - 1) * (2 * t + 5) for t in ties.values())) / 18.0
+    if var > 0:
+        z = (S - np.sign(S)) / math.sqrt(var)
+        if _sps is not None:
+            out['p_value'] = float(2 * (1 - _sps.norm.cdf(abs(z))))
+    # Kendall's tau-b (effect size).
+    if _sps is not None:
+        try:
+            tau, p = _sps.kendalltau(list(range(n)), v)
+            out['tau'] = float(tau)
+            if out['p_value'] != out['p_value']:
+                out['p_value'] = float(p)
+        except Exception:
+            pass
+    # Sen's slope: median of pairwise slopes (robust trend magnitude).
+    slopes = [(v[j] - v[i]) / (j - i) for i in range(n - 1) for j in range(i + 1, n)]
+    if slopes:
+        out['sen_slope'] = float(np.median(slopes))
+    out['direction'] = 'increasing' if S > 0 else ('decreasing' if S < 0 else 'flat')
+    return out
+
+
+def power_flag(n_participants: int, n_sessions: int,
+               min_participants: int = 10, min_sessions: int = 4) -> Dict[str, object]:
+    """Flag (do NOT suppress) when a sample is too small for trustworthy inference.
+
+    Returns {underpowered: bool, note: str}. Reports keep showing point estimates,
+    CIs and p-values, but annotate them so a reader (and a reviewer) is not invited
+    to over-read inference from a handful of participants/sessions.
+    """
+    under = (n_participants < min_participants) or (n_sessions < min_sessions)
+    note = ''
+    if under:
+        note = (f"UNDERPOWERED (n={n_participants} participants, {n_sessions} sessions; "
+                f"targets ≥{min_participants}/≥{min_sessions}) — p-values/CIs are indicative "
+                "only, not confirmatory.")
+    return {'underpowered': bool(under), 'note': note}

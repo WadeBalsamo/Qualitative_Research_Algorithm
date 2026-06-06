@@ -18,16 +18,55 @@ import os
 from typing import Dict, List, Optional
 
 
+# Cache the heavy 8B embedder for the duration of a run so segment AND anchor encoding
+# reuse ONE loaded model (avoids loading the ~8 GB Qwen3 twice on the GPU). Keyed by the
+# settings that determine the model so a config change rebuilds it. release_embedder()
+# frees it (and CUDA memory) before GNN training allocates.
+_EMBEDDER = None
+_EMBEDDER_KEY = None
+
+
 def _make_embedder(config):
-    """Build an EmbeddingCodebookClassifier configured to match ``config``."""
+    """Get (or build, then cache) an EmbeddingCodebookClassifier matching ``config``.
+
+    Honors ``config.device`` (None → auto-CUDA when available) so the documented device
+    knob governs the dominant compute, not just SentenceTransformer's auto-detection.
+    """
+    global _EMBEDDER, _EMBEDDER_KEY
     from codebook.config import EmbeddingClassifierConfig
     from codebook.embedding_classifier import EmbeddingCodebookClassifier
+    key = (config.embedding_model, bool(config.use_query_prefix),
+           int(config.embedding_batch_size), getattr(config, 'device', None))
+    if _EMBEDDER is not None and _EMBEDDER_KEY == key:
+        return _EMBEDDER
     emb_cfg = EmbeddingClassifierConfig(
         embedding_model=config.embedding_model,
         use_query_prefix=config.use_query_prefix,
         embedding_batch_size=config.embedding_batch_size,
+        device=getattr(config, 'device', None),
     )
-    return EmbeddingCodebookClassifier(emb_cfg)
+    _EMBEDDER = EmbeddingCodebookClassifier(emb_cfg)
+    _EMBEDDER_KEY = key
+    return _EMBEDDER
+
+
+def release_embedder():
+    """Drop the cached embedder and free CUDA memory (call before GNN training).
+
+    Mirrors the segmenter's release_gpu_memory so the 8 GB embedder does not coexist with
+    GNN training tensors on the GPU. Safe to call when no embedder is loaded.
+    """
+    global _EMBEDDER, _EMBEDDER_KEY
+    _EMBEDDER = None
+    _EMBEDDER_KEY = None
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def embed_segment_texts(texts: List[str], config):
