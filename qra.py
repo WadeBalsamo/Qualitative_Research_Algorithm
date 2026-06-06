@@ -131,8 +131,8 @@ import os
 import sys
 import traceback
 
-# Ensure the package root is on sys.path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure src/ (where packages live) is on sys.path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
 
 
 # =========================================================================

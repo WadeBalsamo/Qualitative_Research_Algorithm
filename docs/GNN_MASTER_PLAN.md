@@ -1,14 +1,17 @@
 # QRA GNN — Master Implementation Plan & Decision Record
 
 > **Status:** living document. Phases 0–2, Track 0 (baseline stabilization +
-> gate-gated promotion), and **all of Track A (A1–A5: typed cue edges, abstention, calibration +
-> OOD, measured label propagation, scale-mode sim gate)** complete; a cross-cutting **GPU
-> preference** mandate (D11/§6a) is audited and enforced. Tracks B–D pending. This is the single authoritative account of *why*
-> the GNN exists in the form it does, *what* has been built, and *everything* that
-> remains to complete it. It supersedes the deleted `docs/GNN_LAYER_DESIGN.md` /
-> `docs/GNN_IMPLEMENTATION.md`. Companion artifacts: `methodology.md` §8.5 (as-built
-> prose spec), `gnn-influence-to-execution.md` (the original built-vs-designed
-> reconciliation), `ROADMAP.md` Phase 3/6.
+> gate-gated promotion), **all of Track A (A1–A5: typed cue edges, abstention, calibration +
+> OOD, measured label propagation, scale-mode sim gate)**, and **all of Tracks B, C, and D
+> (B: model-counterfactual influence + triangulation; C: the MindfulBERT training-set builder
+> + augmentation-validation harness; D: subtext communities as routines with stability
+> selection)** complete; a cross-cutting **GPU preference** mandate (D11/§6a) is audited and
+> enforced. **All planned tracks are now implemented and unit-tested.** This is the single
+> authoritative account of *why* the GNN exists in the form it does and *what* has been built.
+> It supersedes the deleted `docs/GNN_LAYER_DESIGN.md` / `docs/GNN_IMPLEMENTATION.md`.
+> Companion artifacts: `methodology.md` §8.5 (as-built prose spec),
+> `gnn-influence-to-execution.md` (the original built-vs-designed reconciliation),
+> `ROADMAP.md` Phase 3/6.
 
 ---
 
@@ -515,84 +518,126 @@ without poisoning the MindfulBERT training set. Precondition for "GNN-primary" i
 > label propagation (A4), and an inductive scale-mode gate (A5) — each opt-in and measured, so
 > nothing un-validated reaches the MindfulBERT training set.
 
-### Track B — Therapist→participant progression analysis
+### Track B — Therapist→participant progression analysis ✅ done
 
 **Goal:** the deepest *defensible* understanding of how therapist language progresses
 participant expression. Observed Δprogression leads; the GNN is the contextual/nonlinear lens
 and an independent corroborating method.
 
-- **B1 — Observed Δprogression on cue blocks = ground truth.**
-  - For every cue block compute the participant VAAMR transition before→after (signed Δ on the
-    E[stage] coordinate; categorical advanced/stayed/regressed). Reuse `cue_blocks.py` + the
-    `soft_labels` progression coordinate + the scaled labels. This is the spine of both the
-    analysis and the Track C training labels.
-- **B2 — Rigorous association (LEAD).**
-  - Point/extend `analysis/mechanism.py` at the GNN-scaled corpus: signed Δprogression per
-    (from_stage, PURER move) and (from_stage, motif), participant-clustered bootstrap CIs,
-    within-stage permutation, FDR, mixed-effects. This is the primary "which patterns progress"
-    evidence.
-- **B3 — GNN model-counterfactual (candidate generation + curation; secondary, gated).**
-  - For each cue block, replace the therapist cue's node feature with (i) a different PURER
-    move's centroid and (ii) a neutral/null baseline; rerun the forward pass; measure the shift
-    in the predicted participant VAAMR mixture (and progression coordinate). Aggregate per
-    (PURER move → VAAMR transition) with participant-clustered bootstrap CIs. New
-    `gnn_layer/influence.py`. **Gated** — only from a gate-passing model; suppressed otherwise.
-    **GPU (D11):** the per-block counterfactual re-forwards are the GPU-relevant cost — run them
-    on `_device(config)` (reuse `_graph_tensors_on_model_device`), batch where possible, and cap
-    blocks with a logged note rather than silently truncating.
-- **B4 — Triangulation.**
-  - Align the GNN influence ranking with `mechanism.py`'s signed-Δprogression ranking (rank
-    correlation + per-move convergence/divergence). The GNN is positioned primary **only where**
-    it passes the gate and converges; divergences are flagged for human review. Report under
-    `06_gnn/influence.txt` + CSV, with the non-causal caveat on every figure.
-- **B5 — Context/subgroup sensitivity (only if N supports).** Counterfactual influence by
-  session-number (early vs late) and baseline-kinesiophobia tertile, each with explicit
-  underpowered-N flags; thin cells dropped with a logged note.
+- **B1 — Observed Δprogression on cue blocks = ground truth. ✅ (already built in `analysis/mechanism.py`).**
+  - For every cue block the participant VAAMR transition before→after is computed as a signed Δ
+    on the E[stage] progression coordinate (`_enrich_blocks`), with the continuous deadband
+    classes (progress/stabilize/regress). Reuses `cue_blocks.py` + the `soft_labels`
+    progression coordinate. This is the spine of both the analysis and the Track C training labels.
+- **B2 — Rigorous association (LEAD). ✅ (already built in `analysis/mechanism.py`).**
+  - `analysis/mechanism.py` already runs at analyze-time over the assembled corpus: signed
+    Δprogression per (from_stage, PURER move) and (from_stage, motif), participant-clustered
+    bootstrap CIs, within-stage permutation, FDR, and a mixed-effects model. This is the primary
+    "which patterns progress" evidence and the label of record.
+- **B3 — GNN model-counterfactual (candidate generation + curation; secondary, gated). ✅ done (new `gnn_layer/influence.py`).**
+  - **As built:** `purer_centroids` builds each PURER move's centroid from therapist node
+    *input features* + a neutral null baseline (mean therapist feature). For each mediated cue
+    block, `counterfactual_influence` swaps the block's therapist node feature(s) with each move
+    centroid (vs the null), re-forwards, and records the shift in the FOLLOWING participant's
+    predicted progression coordinate. Aggregated per move and per (from_stage × move) with
+    participant-clustered bootstrap CIs (reusing `analysis/stats.cluster_bootstrap_ci`).
+    **Gated:** the runner invokes it only from a gate-passing model
+    (`validation.gate_ready_for_scaling`); suppressed (logged) otherwise.
+    **GPU (D11):** the per-block re-forwards run on `_device(config)` via
+    `inference._graph_tensors_on_model_device`; block count is capped by
+    `counterfactual_max_blocks` with a logged note (never silent).
+- **B4 — Triangulation. ✅ done.**
+  - `influence.triangulate` aligns the counterfactual influence ranking with `mechanism.py`'s
+    observed signed-Δprogression per PURER move (parsed from `mechanism_delta_progression.csv`):
+    Spearman rank correlation + per-move sign agreement, with a per-move `converges` flag so
+    DIVERGENCES are surfaced for human review, never hidden. Report under
+    `06_gnn/influence.txt` + `gnn_counterfactual_influence.csv`, with the non-causal caveat on
+    every section.
+- **B5 — Context/subgroup sensitivity (only if N supports). ✅ done.** `subgroup_influence`
+  splits counterfactual influence by session-number tertile (early/mid/late) with explicit
+  underpowered flags; thin cells (< 8 blocks) are dropped with a logged note. Gated behind
+  `counterfactual_subgroups`. (Kinesiophobia-tertile split is deferred until the external
+  outcome is wired into the corpus; the session-phase split ships now.)
+- **Tests:** `tests/unit/test_gnn_influence.py` (10) — centroids/null, per-move + per-stage
+  tables, cluster-bootstrap CIs, block cap, triangulation parse + structure, report/CSV writers,
+  subgroup sidecar, OFF defaults.
+- **Files:** `gnn_layer/influence.py` (new), `runner.py`, `config.py`
+  (`counterfactual`, `counterfactual_max_blocks`, `influence_bootstrap_n`,
+  `counterfactual_subgroups`).
 
-### Track C — MindfulBERT training-set builder
+### Track C — MindfulBERT training-set builder ✅ done
 
 **Goal:** the end-goal artifact — a versioned dataset for fine-tuning MindfulBERT to predict
-progression-inducing language. Nothing in the repo builds this yet.
+progression-inducing language. **As built in `process/assembly/mindfulbert_dataset.py`
+(`build_mindfulbert_dataset`), wired into `analysis/runner.py` (§12b, behind
+`config.build_mindfulbert_dataset`).**
 
-- **C1 — Example assembly.** Units = cue blocks. Each example = (preceding participant context
-  + VAAMR state, therapist cue language) → label. Reuse `cue_blocks.py` + scaled labels; export
-  through `process/assembly/training_export.py`.
-- **C2 — Primary labels = observed Δprogression** (B1), with **per-example provenance +
-  confidence** (label source: adjudicated/human/LLM/graph tier; abstention flag; gate verdict).
-- **C3 — GNN-counterfactual augmentation (secondary).** Add model-counterfactual "would-progress"
-  targets as a **separate, provenance-tagged** channel, produced **only by a gate-passing
-  model**; never silently merged with observed labels.
-- **C4 — Augmentation validation (the safeguard).** Ablation: train/eval a lightweight proxy (or
-  MindfulBERT, if in scope) **with vs without** augmentation on a held-out
-  progression-prediction metric; **retain augmentation only if it helps.**
-- **C5 — Export + datasheet.** Versioned dataset + a datasheet recording provenance mix, gate
-  status, augmentation ablation result, and the n≈32/observational caveats. Output under
-  `02_meta/training_data/`.
+- **C1 — Example assembly. ✅** Units = cue blocks (`inference.build_cue_blocks_with_segments`).
+  Each example = (preceding participant `context_text` + `from_stage`, therapist `cue_text`,
+  dominant PURER move, word/segment counts) → label. Output under `02_meta/training_data/`.
+- **C2 — Primary labels = observed Δprogression. ✅** Signed `delta_progression` (E[stage] coord
+  when present, else stage difference — recorded as `label_basis`) + categorical `direction`
+  (advanced/stayed/regressed). **Per-example provenance**: the WEAKEST of the two endpoints'
+  label-source tiers (adjudicated > human_consensus > gnn_consensus > llm_zero_shot), a GNN
+  abstention flag, and the gate verdict.
+- **C3 — GNN-counterfactual augmentation (secondary). ✅** When `augmentation_enabled` AND the
+  gate passed, `_attach_augmentation` adds a `would_progress` value (from
+  `gnn_counterfactual_influence.csv`) as a **separate, provenance-tagged** (`gnn_counterfactual`)
+  channel; suppressed (logged) when the gate has not passed; never merged with the observed label.
+- **C4 — Augmentation validation (the safeguard). ✅** `_augmentation_ablation` trains a
+  lightweight logistic-regression proxy to predict the observed binary outcome from cue features
+  **with vs without** the augmentation channel, using **participant-grouped** CV (`GroupKFold`,
+  no participant leakage). Augmentation is **RETAINED only if the held-out gain exceeds
+  `augmentation_min_gain`** — otherwise the channel is stripped from the exported examples.
+- **C5 — Export + datasheet. ✅** Versioned `mindfulbert_dataset.jsonl` +
+  `mindfulbert_datasheet.{json,txt}` recording dataset version, provenance mix, direction
+  distribution, abstention count, gate status, the C4 ablation result, and the
+  n≈32/observational/non-causal caveats.
+- **Tests:** `tests/unit/test_mindfulbert_dataset.py` (8) — example/provenance build, coord vs
+  stage-difference basis, datasheet write, augmentation suppression without a gate + attachment
+  with one, the C4 ablation proxy (metrics + too-few guard), OFF defaults.
+- **Files:** `process/assembly/mindfulbert_dataset.py` (new), `process/assembly/__init__.py`,
+  `analysis/runner.py`, `config.py` (`build_mindfulbert_dataset`, `augmentation_enabled`,
+  `augmentation_min_gain`).
 
 > **Note on MindfulBERT itself.** Fine-tuning MindfulBERT is ROADMAP Phase 6 (downstream). The
-> deliverable here is the *dataset builder* + the *augmentation-validation harness*; the actual
-> MindfulBERT training may use a lightweight proxy for the C4 ablation until Phase 6.
-> **GPU (D11):** the C4 proxy/MindfulBERT trainer must train on `_device(config)` (CUDA when
-> available, CPU fallback) and free the embedder before training, like the GNN path.
+> deliverable here is the *dataset builder* + the *augmentation-validation harness*; the C4
+> ablation uses a lightweight sklearn proxy (CPU by design per D11) until Phase 6 wires in the
+> real trainer.
 
-### Track D — Subtext communities as routines
+### Track D — Subtext communities as routines ✅ done
 
 **Goal:** the "deepest qualitative analysis" layer — which language *routines/sequences* flow
-together and progress participants (the genuinely-new ~60% vs motifs/coupling). Lower priority.
+together and recur across sessions (the genuinely-new ~60% vs motifs/coupling). **As built in
+`gnn_layer/communities.py` (`run_subtext_communities`), wired into `runner.py` behind
+`config.subtext_communities` — independent of the gate (discovery, hypothesis-generating).**
 
-- **D1 — Subtext similarity graph.** Thresholded (≥0.85) cross-session segment-similarity graph
-  (distinct from per-node kNN). New `gnn_layer/communities.py`.
-- **D2 — Community detection, two algorithms.** Leiden/Louvain
-  (`networkx`/`igraph`/`python-louvain` dependency) **plus** a second method (spectral or
-  hierarchical) to test robustness (real structure vs algorithm artifact).
-- **D3 — Routine/sequence modeling (the novel part).** Community→community transition patterns
-  within sessions ("community X tends to precede Y") — language routines, not isolated moves.
-- **D4 — Stability selection.** Participant-bootstrap resampling; report co-membership
-  stability; **suppress/flag communities below threshold** (n≈32 → unstable). Reuse the
-  `stats.py` bootstrap. Cite community-stability literature (not CFiCS — it has no community
-  detection).
-- **D5 — Semantic naming + drift.** TF-IDF terms + exemplar quotes per community; persistence /
-  prevalence curves across sessions; cross-cohort drift. Hypothesis-generating framing.
+- **D1 — Subtext similarity graph. ✅** `build_subtext_graph` builds a thresholded
+  (cosine ≥ `community_sim_threshold`, default 0.85) similarity graph over the raw Qwen3
+  segment embeddings (distinct from the trained kNN graph), recording the cross-session edge
+  fraction; caps at `max_nodes` with a logged note.
+- **D2 — Community detection, two algorithms. ✅** `detect_communities` partitions with
+  **Louvain** (`networkx.community.louvain_communities` — no `python-louvain` dependency needed)
+  and, as a different algorithmic family, **agglomerative hierarchical clustering** (sklearn,
+  cosine/average linkage); their **adjusted Rand index** is reported so a community counts as
+  structure, not an algorithm artifact.
+- **D3 — Routine/sequence modeling (the novel part). ✅** `community_transitions` counts
+  within-session community→community transitions ("X tends to precede Y") — language routines,
+  not isolated moves.
+- **D4 — Stability selection. ✅** `community_stability` runs participant-bootstrap resampling
+  (rebuild graph → re-detect → measure co-membership), reports each community's co-membership
+  stability, and **suppresses/flags communities below `community_stability_min`** (n≈32 →
+  fragile). The report separates STABLE (findings) from UNSTABLE/SUPPRESSED (flagged, not
+  dropped). Cites stability-selection / consensus-clustering literature (not CFiCS).
+- **D5 — Semantic naming + drift. ✅** `name_communities` adds TF-IDF terms + exemplar quotes
+  per community, per-session prevalence, and the cross-cohort distribution (drift), all
+  hypothesis-generating.
+- **Tests:** `tests/unit/test_gnn_communities.py` (9) — graph edges + cross-session count + cap,
+  two-algorithm partition + ARI, routine transitions, bootstrap stability dict, TF-IDF naming,
+  orchestrator report write, too-few-segments skip, OFF defaults.
+- **Files:** `gnn_layer/communities.py` (new), `runner.py`, `config.py`
+  (`subtext_communities`, `community_sim_threshold`, `community_min_size`,
+  `community_stability_min`, `community_stability_boots`).
 
 ---
 
@@ -643,19 +688,23 @@ Track 0  ─────────────▶ Track A ──────�
 | `process/assembly/training_export.py` | training-data export path (reuse for Track C) |
 | `process/orchestrator.py` | reads `gnn_authoritative` (gate-gate it); `stage_ingest` |
 
-**New (create):**
+**New (all built):**
 
-| Path | Track | Role |
-|------|------|------|
-| `gnn_layer/influence.py` | B3/B4 | model-counterfactual sensitivity + triangulation readout |
-| `gnn_layer/calibration.py` | A3 | temperature/conformal + OOD score |
-| `gnn_layer/propagation.py` | A4 (optional) | post-training soft-label diffusion |
-| `gnn_layer/communities.py` | D | subtext graph + community detection + stability |
-| `process/assembly/mindfulbert_dataset.py` (or similar) | C | training-set builder + datasheet |
+| Path | Track | Role | Status |
+|------|------|------|--------|
+| `gnn_layer/influence.py` | B3/B4/B5 | model-counterfactual sensitivity + triangulation + subgroup readout | ✅ built |
+| `gnn_layer/calibration.py` | A3 | temperature/conformal + OOD score | ✅ built |
+| `gnn_layer/propagation.py` | A4 (optional) | post-training soft-label diffusion | ✅ built |
+| `gnn_layer/communities.py` | D | subtext graph + two-algorithm community detection + stability + naming | ✅ built |
+| `process/assembly/mindfulbert_dataset.py` | C | training-set builder + augmentation-validation harness + datasheet | ✅ built |
 
 **Reports/data:** `06_reports/06_gnn/` (validation, triangulation, triangulation_independence,
-anchor_contribution, influence, communities, scale_sim) and `02_meta/training_data/` (Track C),
-`03_analysis_data/gnn/` (CSVs, persisted gate verdict).
+anchor_contribution, **influence**, **communities**, scale_sim, label_propagation,
+precipitates_contribution); `02_meta/training_data/` (**mindfulbert_dataset.jsonl**,
+**mindfulbert_datasheet.{json,txt}** — Track C); `03_analysis_data/gnn/`
+(**gnn_counterfactual_influence.csv**, **gnn_counterfactual_influence_by_phase.csv**,
+**subtext_communities.csv**, **subtext_community_transitions.csv**, CSVs, persisted gate verdict);
+`03_analysis_data/mechanism/` (observed Δprogression — Track B1/B2 LEAD).
 
 ---
 
@@ -697,9 +746,14 @@ anchor_contribution, influence, communities, scale_sim) and `02_meta/training_da
 | `label_propagation` / `propagation_alpha` / `propagation_iters` | `False` / `0.5` / `20` | **(A4, done)** measured post-training soft-label diffusion (kept only if Δκ ≥ +0.02) |
 | `run_scale_sim` / `scale_sim_holdout_sessions` / `scale_sim_max_gap` | `False` / `1` / `0.10` | **(A5, done)** inductive whole-session holdout vs CV κ; flags domain-shift risk |
 | `device` (GnnLayerConfig + EmbeddingClassifierConfig) | `None` | **(D11, done)** compute device; None → auto-CUDA, else pin (`'cuda'`/`'cuda:1'`/`'cpu'`); governs GNN model AND embedding pass |
-| `counterfactual` / `influence_bootstrap_n` **[planned B3]** | — | model-counterfactual settings |
-| `augmentation_enabled` / `augmentation_min_gain` **[planned C3/C4]** | — | training-set augmentation + retention threshold |
-| `community_sim_threshold` / `community_stability_min` **[planned D]** | 0.85 / — | subtext graph + stability gate |
+| `counterfactual` | `False` | **(B3, done)** run the model-counterfactual influence pass (GATED on the reliability gate) |
+| `counterfactual_max_blocks` / `influence_bootstrap_n` | `None` / `1000` | **(B3, done)** cap on per-block re-forwards (logged when capped); participant-clustered bootstrap resamples |
+| `counterfactual_subgroups` | `False` | **(B5, done)** split counterfactual influence by session-number tertile (underpowered-flagged) |
+| `build_mindfulbert_dataset` | `False` | **(C, done)** build the versioned (cue language → observed Δprogression) MindfulBERT dataset |
+| `augmentation_enabled` / `augmentation_min_gain` | `False` / `0.0` | **(C3/C4, done)** add the GNN-counterfactual channel (gate-passing only); retain only if the held-out C4 gain exceeds this |
+| `subtext_communities` | `False` | **(D, done)** run the subtext-community / routine discovery layer (gate-independent) |
+| `community_sim_threshold` / `community_min_size` | `0.85` / `3` | **(D1/D5, done)** cosine edge threshold; minimum community size to report |
+| `community_stability_min` / `community_stability_boots` | `0.5` / `50` | **(D4, done)** suppress communities below this bootstrap co-membership stability; resamples |
 
 ---
 
@@ -765,11 +819,22 @@ anchor_contribution, influence, communities, scale_sim) and `02_meta/training_da
 | Track 0.2 — gate-gated promotion | ✅ complete |
 | Track A — scalable label engine (A1–A5) | ✅ done |
 | GPU preference (D11 / §6a) — audit + fixes | ✅ done (device knob → embeddings, VRAM hygiene, checkpoint/seed) |
-| Track B — progression analysis (B1–B5) | ⏳ pending (needs gate-passing model) |
-| Track C — MindfulBERT training-set builder (C1–C5) | ⏳ pending (needs B1/B2) |
-| Track D — subtext communities (D1–D5) | ⏳ pending (independent; last) |
+| Track B — progression analysis (B1–B5) | ✅ done (B1/B2 in `mechanism.py`; B3/B4/B5 in `influence.py`, gate-gated) |
+| Track C — MindfulBERT training-set builder (C1–C5) | ✅ done (`mindfulbert_dataset.py`; observed labels + gate-gated augmentation + C4 harness) |
+| Track D — subtext communities (D1–D5) | ✅ done (`communities.py`; two-algorithm partition + stability selection) |
 
-**Unit baseline:** 3109 tests, 0 failures (Track 0 + A1–A5 + GPU/device).
+**All planned tracks complete.** Track B/C/D add 27 unit tests
+(`test_gnn_influence.py` ×10, `test_mindfulbert_dataset.py` ×8, `test_gnn_communities.py` ×9).
+**Unit baseline: 3136 tests, 0 failures, 0 errors (9 skipped)** via `tests/run_unit_tests.py`
+(was 3109; +27). `run_gnn_analysis` was exercised end-to-end (embedding-patched): the gate
+correctly SUPPRESSES counterfactual influence until it passes, and the influence + MindfulBERT
+augmentation paths run cleanly when the gate is satisfied.
+
+**Remaining (downstream / out of this plan's scope):** corpus checkpoints on real data — run the
+GNN with `precipitates_edges` (A1), then once the reliability gate reports `ready_for_scaling`,
+enable `counterfactual` (B) + `build_mindfulbert_dataset`/`augmentation_enabled` (C) and read the
+triangulation (B4) + the C4 ablation verdict; ROADMAP Phase 6 fine-tunes MindfulBERT on the
+exported dataset.
 
 ### Track 0.2 — as built
 
@@ -797,9 +862,30 @@ The reliability gate now persists a machine-readable verdict and promotion is ga
 > gate verdict from a prior run is what licenses promotion on a subsequent run — promotion is
 > inherently a cross-run safeguard, which is exactly the intended LLM-free-scaling workflow.
 
-**Immediate next steps:** (1) run the A1 corpus checkpoint on real data
-(`precipitates_edges=True, run_precipitates_ablation=True`) and read
-`06_gnn/precipitates_contribution.txt` to decide whether the family stays in the main graph;
-(2) Track A3 — confidence calibration for domain shift (temperature/conformal on the soft-VAAMR
-head + an OOD score so genuinely-new transcripts down-weight/abstain instead of over-trusting
-in-distribution softmax).
+### Tracks B/C/D — as built (this session)
+
+All three remaining tracks are now implemented, wired, and unit-tested:
+
+- **Track B (`gnn_layer/influence.py`).** Model-counterfactual influence: per-PURER-move
+  centroid swaps + a null baseline, re-forwarded per cue block to read the shift in the
+  FOLLOWING participant's predicted progression coordinate; participant-clustered bootstrap CIs;
+  Spearman/sign-agreement triangulation against `mechanism.py`'s observed Δprogression (B4) with
+  per-move divergence flags; session-phase subgroup sidecar (B5). Runner-GATED on
+  `validation.gate_ready_for_scaling`. B1/B2 (the observed-Δprogression LEAD) were already in
+  `analysis/mechanism.py`.
+- **Track C (`process/assembly/mindfulbert_dataset.py`).** The end-goal dataset builder: cue-block
+  examples labelled by observed Δprogression with weakest-endpoint provenance tiers + abstention +
+  gate verdict (C1/C2); a separate, gate-gated, provenance-tagged GNN-counterfactual augmentation
+  channel (C3) retained only if a participant-grouped held-out proxy ablation clears
+  `augmentation_min_gain` (C4); versioned JSONL + datasheet with the n≈32 caveats (C5). Wired into
+  `analysis/runner.py` §12b.
+- **Track D (`gnn_layer/communities.py`).** Thresholded subtext-similarity graph (D1), Louvain +
+  agglomerative two-algorithm partition with ARI agreement (D2), within-session
+  community→community routine transitions (D3), participant-bootstrap stability selection that
+  suppresses/flags fragile communities (D4), and TF-IDF naming + per-session prevalence +
+  cross-cohort drift (D5). Gate-independent discovery; wired into `runner.py`.
+
+**Downstream (out of scope here):** run the corpus checkpoints on real data — A1 precipitates,
+then (once the gate reports `ready_for_scaling`) `counterfactual` (B) and
+`build_mindfulbert_dataset`/`augmentation_enabled` (C); ROADMAP Phase 6 fine-tunes MindfulBERT on
+the exported dataset.

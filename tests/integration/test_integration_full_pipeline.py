@@ -10,7 +10,9 @@ import sys
 import shutil
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
+if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from tests.testhelpers import build_tiny_config, integration_test
 from tests.testhelpers.ollama_helper import ensure_ollama_model

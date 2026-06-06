@@ -46,7 +46,7 @@ python qra.py run \
 | `python qra.py run --config config.json` | Execute full pipeline |
 | `python qra.py run --config config.json --auto-analyze` | Run pipeline with automatic analysis reports |
 | `python qra.py ingest -o ./output/` | Segment and freeze transcripts only |
-| `python qra.py classify -o ./output/ --what theme` | Run VAAMR classification only |
+| `python qra.py classify -o ./output/ --what vaamr` | Run VAAMR classification only |
 | `python qra.py analyze -o ./output/` | Generate analysis reports (superposition, mechanism, efficacy, language atlas) |
 | `python qra.py analyze -o ./output/ --gnn` | Analysis + GNN layer (segment positioning, cue motifs, triangulation, coupling) |
 
@@ -129,7 +129,7 @@ Run specific classification stages:
 python qra.py classify -o ./output/ --what codebook
 
 # Re-run existing classifiers for consistency
-python qra.py classify -o ./output/ --what theme
+python qra.py classify -o ./output/ --what vaamr
 ```
 
 ### Example: Adding a Custom Codebook or Additional Framework Analysis
@@ -226,7 +226,7 @@ python qra.py ingest -o ./data/output/
 
 #### Theme Classification Only
 ```bash
-python qra.py classify -o ./data/output/ --what theme
+python qra.py classify -o ./data/output/ --what vaamr
 ```
 
 #### PURER Classification Only 
@@ -261,12 +261,21 @@ Generates comprehensive analysis including:
 - Session and participant LLM summaries
 - Graph-ready CSVs and visualization figures (superposition, mechanism, efficacy)
 
-Optional GNN analysis (add `--gnn` flag):
+GNN representation-and-discovery layer (ON by default; force with `--gnn`, skip with `--no-gnn`):
+
+*Discovery & triangulation (Capabilities A–E):*
 - Per-segment stage-mixture vectors from graph geometry (Capability A)
 - Cue motif discovery: emergent therapist-language clusters + influence scoring (Capability B)
 - GNN↔LLM↔human triangulation + lift comparison (Capability C)
-- Construct signal ablation: which label families carry independent signal (Capability D, `run_gnn_ablation=true`)
+- Construct signal ablation: which label families carry independent signal (Capability D, `run_gnn_ablation=true`); plus the VCE-on-VAAMR test (`test_vce_layer=true`)
 - Latent participant↔therapist coupling factors with alliance naming (Capability E)
+
+*Trustworthy LLM-free classifier:* out-of-sample reliability gate (`06_gnn/validation.txt`, persisted to `gnn_gate.json`) with a rare-stage recall floor and a YES/NO scaling verdict; gate-gated promotion to the `gnn_consensus` label tier; opt-in, individually-measured hardening — abstention/deferral, temperature + OOD calibration, label propagation, scale-mode simulation, typed therapist→participant edges.
+
+*Config-flag–driven advanced analyses (set in the `gnn_layer` config section):*
+- **Track B — model-counterfactual influence** (`counterfactual=true`, gated on the reliability gate): per-PURER-move sensitivity on the following participant's predicted progression, triangulated against the observed Δprogression (`06_gnn/influence.txt`). Sensitivity analysis, not causation.
+- **Track C — MindfulBERT dataset builder** (`build_mindfulbert_dataset=true`; `augmentation_enabled=true` for the gate-gated, ablation-retained counterfactual channel): `02_meta/training_data/mindfulbert_dataset.jsonl` + datasheet.
+- **Track D — subtext communities as routines** (`subtext_communities=true`): two-algorithm partition + ARI, within-session routine transitions, participant-bootstrap stability selection (`06_gnn/communities.txt`).
 
 ## Test Set Management
 
@@ -438,7 +447,7 @@ The menu adapts to detected project state. Available actions:
 | **8 — Refresh Validation Artifacts** | Re-emit human forms, coded transcripts, and AI answer keys without re-classifying |
 | **9 — Edit Configuration** | Change LM Studio URL, models, `n_runs`; toggle codebook / PURER / **GNN layer** / **GNN-authoritative labels**; open `qra_config.json` in `$EDITOR` |
 | **10 — Edit Speaker Anonymization Key** | Launch the anonymization editor (rename/merge/relabel speakers, cascade across all artifacts) |
-| **11 — Classify (Graph Consensus, LLM-Free)** | Label new data with the trained graph — recommended once `report_gnn_validation.txt` reports the graph is ready; warns and asks for confirmation otherwise |
+| **11 — Classify (Graph Consensus, LLM-Free)** | Label new data with the trained graph — recommended once `06_reports/06_gnn/validation.txt` reports the graph is ready; warns and asks for confirmation otherwise |
 
 ### Anonymization Editor (Open Project → option 10)
 A roster TUI listing every speaker as `anonymized_id ⟵ original name (role)`. Per-speaker actions: rename anonymized ID, rename raw name, change role (participant/therapist/staff), merge into another speaker, remove. Roster-level actions: walk through all speakers in sequence (`r`), add a speaker (`a`), toggle NLP name re-removal (`n`), **preview cascade as a dry-run** (`p`), and **apply changes & cascade** (`w`) — which writes a timestamped backup, rewrites frozen segment fields/IDs/tokens, remaps overlays and checkpoints, updates validation worksheets, and regenerates the master dataset and analysis. The same operations are scriptable via `qra edit-anonymization` flags (`--rename`, `--rename-raw`, `--set-role`, `--merge`, `--remove-names`, `--dry-run`, `--yes`).
@@ -774,10 +783,46 @@ The GNN layer is ON by default and runs at analyze-time (set `enabled=False` to 
 | `interpret_against_cf_ic` | bool | true | Name latent factors against the inline CF/IC alliance lexicon |
 | `run_gnn_ablation` | bool | false | Construct-head ablation (Capability D; doubles training cost) |
 | `produce_consensus_labels` | bool | true | Write per-segment graph labels to the `gnn_labels` overlay |
-| `gnn_authoritative` | bool | false | **Promotion switch** — make graph labels the label of record (only after the reliability gate passes) |
+| `gnn_authoritative` | bool | false | **Promotion switch** — make graph labels the label of record. Effective **only** when the persisted gate verdict (`gnn_gate.json`) reports `ready_for_scaling` |
 | `validation_folds` | int | 5 | k for k-fold held-out reliability evaluation |
 | `validation_holdout` | float | 0.2 | Single-holdout fraction when `validation_folds ≤ 1` |
 | `irr_target` | float | 0.70 | κ vs LLM consensus at which LLM-free graph scaling is recommended |
+
+**Track A — classifier hardening (each opt-in + measured; kept only if it raises the gate κ):**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `precipitates_edges` / `run_precipitates_ablation` | bool | false / false | Typed therapist→participant edges + learnable per-edge-type gate (A1); ablation tests Δκ on both axes |
+| `abstain_threshold` / `abstain_rare_stage_threshold` | float\|null | null / null | Global max-prob abstention floor; higher floor for rare stages 3/4 (A2) |
+| `abstain_per_stage` | object\|null | null | Explicit per-stage floors (overrides; also where calibration writes) |
+| `abstain_calibrate` / `abstain_target_precision` | bool / float | false / 0.80 | Derive per-stage floors from held-out CV at target precision (A2) |
+| `calibrate` / `calibration_temperature` | bool / float\|null | false / null | Temperature scaling on the soft-VAAMR head (A3) |
+| `ood_threshold` / `ood_knn_k` | float\|null / int | null / 8 | Scale-mode OOD deferral by mean kNN cosine distance to training (A3) |
+| `label_propagation` / `propagation_alpha` / `propagation_iters` | bool / float / int | false / 0.5 / 20 | Measured post-training soft-label diffusion; kept only if Δκ ≥ +0.02 (A4) |
+| `run_scale_sim` / `scale_sim_holdout_sessions` / `scale_sim_max_gap` | bool / int / float | false / 1 / 0.10 | Inductive whole-session holdout vs CV κ; flags domain-shift risk (A5) |
+
+**Track B — model-counterfactual influence (gated on the reliability gate; sensitivity, not causal):**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `counterfactual` | bool | false | Run per-PURER-move counterfactual influence + triangulation vs observed Δprogression (B3/B4) |
+| `counterfactual_max_blocks` / `influence_bootstrap_n` | int\|null / int | null / 1000 | Cap on per-block re-forwards (logged when capped); participant-clustered bootstrap resamples |
+| `counterfactual_subgroups` | bool | false | Split influence by session-number tertile, underpowered-flagged (B5) |
+
+**Track C — MindfulBERT training-set builder:**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `build_mindfulbert_dataset` | bool | false | Build the versioned (cue language → observed Δprogression) dataset + datasheet (C1/C2/C5) |
+| `augmentation_enabled` / `augmentation_min_gain` | bool / float | false / 0.0 | Add the gate-gated GNN-counterfactual channel (C3); retain only if held-out gain exceeds this (C4) |
+
+**Track D — subtext communities as routines (gate-independent discovery):**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `subtext_communities` | bool | false | Run the subtext-community / routine-discovery layer (D) |
+| `community_sim_threshold` / `community_min_size` | float / int | 0.85 / 3 | Cosine edge threshold; minimum community size to report |
+| `community_stability_min` / `community_stability_boots` | float / int | 0.5 / 50 | Suppress communities below this bootstrap co-membership stability; resamples (D4) |
 
 #### Sub-config: `session_summaries` / `participant_summaries`
 
@@ -877,16 +922,21 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `03_analysis_data/gnn/coupling_factors.csv` | Latent coupling factors with forward correlation (Capability E) |
 | `03_analysis_data/gnn/gnn_construct_signal.csv` | Ablation loss deltas per construct head (Capability D) |
 | `03_analysis_data/gnn/gnn_validation.csv` | Per-class out-of-sample reliability-gate table (machine-readable) |
-| `06_reports/report_superposition.txt` | Corpus superposition summary, cusp density, liminal exemplars |
-| `06_reports/report_mechanism.txt` | PURER→VAAMR mechanism dossier with CI/p/FDR |
-| `06_reports/report_avoidance_barrier.txt` | Avoidance-barrier transition ranking |
-| `06_reports/report_program_efficacy.txt` | Program efficacy dossier (5 sections) |
-| `06_reports/report_language_atlas.txt` | Therapeutic language atlas |
-| `06_reports/report_gnn_emergent_motifs.txt` | Emergent cue motifs flagged for human review (Capability B) |
-| `06_reports/report_gnn_triangulation.txt` | GNN↔LLM↔human agreement and lift comparison (Capability C) |
-| `06_reports/report_gnn_validation.txt` | **Reliability gate** — per-stage/per-move out-of-sample κ vs LLM consensus + human, with the "ready for LLM-free scaling? YES/NO" verdict |
-| `06_reports/report_gnn_construct_signal.txt` | Construct signal ablation ranking (Capability D) |
-| `06_reports/report_gnn_coupling.txt` | Latent coupling factors and alliance naming (Capability E) |
+| `03_analysis_data/gnn/gnn_gate.json` | Persisted gate verdict (`ready_for_scaling`, per-framework κ, rare-stage notes, calibration T) — gates authoritative promotion |
+| `03_analysis_data/gnn/gnn_counterfactual_influence.csv` | Per-PURER-move model-counterfactual influence + CIs (Track B) |
+| `03_analysis_data/gnn/subtext_communities.csv` | Per-community size / stability / top TF-IDF terms (Track D) |
+| `03_analysis_data/gnn/subtext_community_transitions.csv` | Within-session community→community routine transitions (Track D) |
+| `02_meta/training_data/mindfulbert_dataset.jsonl` | MindfulBERT dataset: (cue language → observed Δprogression) + provenance (Track C) |
+| `02_meta/training_data/mindfulbert_datasheet.{json,txt}` | Dataset datasheet: provenance mix, gate status, augmentation ablation, caveats (Track C) |
+| `06_reports/01_outcomes/`, `02_mechanism/`, … | Tiered human-readable reports (superposition, mechanism, avoidance barrier, efficacy, language atlas, per-session/participant/stage) |
+| `06_reports/06_gnn/validation.txt` | **Reliability gate** — per-stage/per-move out-of-sample κ vs LLM consensus + human, with the "ready for LLM-free scaling? YES/NO" verdict |
+| `06_reports/06_gnn/emergent_motifs.txt` | Emergent cue motifs flagged for human review (Capability B) |
+| `06_reports/06_gnn/triangulation.txt` (+ `triangulation_independence.txt`) | GNN↔LLM↔human agreement and lift comparison (Capability C) |
+| `06_reports/06_gnn/construct_signal.txt` / `vce_contribution.txt` | Construct-signal ablation + VCE-on-VAAMR test (Capability D) |
+| `06_reports/06_gnn/coupling.txt` | Latent coupling factors and alliance naming (Capability E) |
+| `06_reports/06_gnn/influence.txt` | Model-counterfactual influence + triangulation vs observed Δprogression (Track B) |
+| `06_reports/06_gnn/communities.txt` | Subtext communities as routines, with stability selection (Track D) |
+| `06_reports/06_gnn/{scale_sim,label_propagation,precipitates_contribution}.txt` | Track A hardening reports (when those instruments are enabled) |
 
 ### Validation Output Files
 
@@ -963,6 +1013,7 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `coded_transcripts.py` | Per-session coded transcript writer |
 | `stats_reports.py` | Per-transcript stats, cumulative report |
 | `training_export.py` | Training data, theme definitions, content validity item export |
+| `mindfulbert_dataset.py` | **Track C** — MindfulBERT (cue language → observed Δprogression) dataset builder + augmentation-validation harness + datasheet |
 | `_shared.py` | Shared helpers for assembly functions |
 
 ### Analysis (`analysis/`)
@@ -1006,9 +1057,14 @@ Each line in `master_segments.jsonl` is a serialized `Segment` dataclass (see `c
 | `motifs.py` | Cue motif clustering, influence scoring, purity annotation, emergent-motif flagging |
 | `gnn_lift.py` | GNN-derived lift tables vs LLM baseline (Capability C) |
 | `triangulation.py` | GNN↔LLM↔human agreement (Cohen's κ), triangulation report |
-| `ablation.py` | Construct-head ablation: which label families carry independent signal? (Capability D) |
+| `ablation.py` | Construct-head ablation + VCE-on-VAAMR test + anchor/precipitates contribution ablations (Capability D / Track A1) |
 | `coupling.py` | Latent participant↔therapist coupling factors, CF/IC alliance naming (Capability E) |
-| `validation.py` | Out-of-sample reliability gate: per-stage/per-move κ vs LLM consensus + human, YES/NO scaling verdict |
+| `anchors.py` | Optional construct-anchor features + similarity/lift edges (opt-in, human-axis ablated) |
+| `calibration.py` | Temperature scaling + ECE + OOD score for domain-shift confidence (Track A3) |
+| `propagation.py` | Measured post-training soft-label diffusion (Track A4) |
+| `influence.py` | **Track B** — model-counterfactual influence + triangulation vs `mechanism.py` (gated; sensitivity, not causal) |
+| `communities.py` | **Track D** — subtext-similarity graph, two-algorithm communities, routine transitions, stability selection |
+| `validation.py` | Out-of-sample reliability gate (per-stage/per-move κ, rare-stage floor) + scale-mode simulation + persisted gate verdict |
 | `reports.py` | GNN artifact writers: CSVs and human-readable reports |
 
 ### Theme Framework (Markdown Source)

@@ -22,11 +22,11 @@ from typing import Optional
 from .markdown_loader import load_framework_md
 from .theme_schema import ThemeFramework
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 FRAMEWORKS: dict[str, Path] = {
-    'vaamr': _REPO_ROOT / 'VAAMR_FRAMEWORK.md',
-    'purer': _REPO_ROOT / 'PURER_FRAMEWORK.md',
+    'vaamr': _REPO_ROOT / 'frameworks' / 'VAAMR_FRAMEWORK.md',
+    'purer': _REPO_ROOT / 'frameworks' / 'PURER_FRAMEWORK.md',
 }
 
 

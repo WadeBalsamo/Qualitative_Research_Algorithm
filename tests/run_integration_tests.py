@@ -20,8 +20,11 @@ import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
+_SRC = os.path.join(_ROOT, 'src')
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+    sys.path.insert(1, _ROOT)
 
 # Integration tier runs the heavy/real-model paths.
 os.environ["QRA_RUN_SLOW"] = "1"

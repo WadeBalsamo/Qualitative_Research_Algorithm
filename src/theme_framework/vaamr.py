@@ -125,7 +125,7 @@ from .markdown_loader import load_framework_md
 
 VAAMR_FRAMEWORK_VERSION = "4.0"
 
-_VAAMR_MD = Path(__file__).resolve().parents[1] / 'VAAMR_FRAMEWORK.md'
+_VAAMR_MD = Path(__file__).resolve().parents[2] / 'frameworks' / 'VAAMR_FRAMEWORK.md'
 
 
 @functools.lru_cache(maxsize=None)

@@ -15,8 +15,11 @@ import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
+_SRC = os.path.join(_ROOT, 'src')
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+    sys.path.insert(1, _ROOT)
 
 # Unit tier is the QUICK tier: force slow/full-model tests OFF so a default run
 # never trains a full GNN, runs the full pipeline, or downloads model weights.

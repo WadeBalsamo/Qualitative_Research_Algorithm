@@ -21,6 +21,7 @@ from .content_validity import (
     list_content_validity_testsets,
     generate_or_refresh_content_validity_testsets,
 )
+from .mindfulbert_dataset import build_mindfulbert_dataset
 
 __all__ = [
     'assemble_master_dataset',
@@ -45,4 +46,6 @@ __all__ = [
     'refresh_cv_answer_key',
     'list_content_validity_testsets',
     'generate_or_refresh_content_validity_testsets',
+    # Track C — MindfulBERT training-set builder
+    'build_mindfulbert_dataset',
 ]

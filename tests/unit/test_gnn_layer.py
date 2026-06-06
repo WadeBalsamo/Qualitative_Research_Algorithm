@@ -16,7 +16,9 @@ import unittest
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
+if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 import gnn_layer.embeddings as emb
 from gnn_layer.config import GnnLayerConfig
