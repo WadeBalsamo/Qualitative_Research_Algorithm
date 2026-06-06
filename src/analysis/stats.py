@@ -35,6 +35,22 @@ except Exception:                     # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
+# Association
+# ---------------------------------------------------------------------------
+
+def lift_ratio(p_conditional: float, p_marginal: float) -> float:
+    """Association lift: P(b|a) / P(b).
+
+    The factor by which observing ``a`` changes the probability of ``b`` over
+    its base rate (1.0 = independence, >1 = positive association). Returns 0.0
+    when the marginal is non-positive — the metric is undefined there and
+    callers treat it as "no association". Rounding and thresholding are left to
+    the caller (sites use different precision/cutoffs).
+    """
+    return p_conditional / p_marginal if p_marginal > 0 else 0.0
+
+
+# ---------------------------------------------------------------------------
 # Proportion CIs
 # ---------------------------------------------------------------------------
 
