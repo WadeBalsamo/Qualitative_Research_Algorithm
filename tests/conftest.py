@@ -1,10 +1,12 @@
 """
-conftest.py — repo-root test configuration.
+conftest.py — test path configuration.
 
-Inserts the repository root onto sys.path so first-party packages
-(``process``, ``gnn_layer``, ``analysis``, ``classification_tools``,
-``codebook``, ``theme_framework``) import without ``pip install -e .``.
-Works for both ``pytest`` and ``python -m unittest discover``.
+Puts ``src/`` on sys.path (so first-party packages — ``process``,
+``gnn_layer``, ``analysis``, ``classification_tools``, ``codebook``,
+``theme_framework`` — import without ``pip install -e .``) and, after it,
+the repository root (so ``import qra``, the root-level CLI module that lives
+outside ``src/``, resolves during tests). Works for both ``pytest`` and
+``python -m unittest discover``.
 """
 import sys
 from pathlib import Path
