@@ -49,10 +49,11 @@ class TestFullPipeline(unittest.TestCase):
         self.assertIsNotNone(df)
         self.assertGreater(len(df), 0)
 
-        # master_segments written
+        # master_segments CSV export written (frozen segments + overlays live in qra.db;
+        # the master dataset is exported only as CSV — no longer master_segments.jsonl)
         train_dir = os.path.join(self.out, "02_meta", "training_data")
-        master = os.path.join(train_dir, "master_segments.jsonl")
-        self.assertTrue(os.path.isfile(master), "master_segments.jsonl missing")
+        master = os.path.join(train_dir, "master_segments.csv")
+        self.assertTrue(os.path.isfile(master), "master_segments.csv missing")
 
         # At least one participant got a VAAMR final_label
         if "final_label" in df.columns and "speaker" in df.columns:
