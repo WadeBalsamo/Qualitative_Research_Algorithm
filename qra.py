@@ -1340,7 +1340,6 @@ def cmd_edit_anonymization(args):
     stats = _ae.apply_key_update(
         output_dir, old_key, new_key,
         remove_names=remove_names,
-        include_locked=getattr(args, 'include_locked', True),
         rescrub_opts=rescrub_opts,
         backup=not getattr(args, 'no_backup', False),
         config=config,
@@ -1683,57 +1682,6 @@ def cmd_validate(args):
         create_missing=False,
     )
     print("Done. Human forms, flagged-for-review, and testset/CV answer keys refreshed.")
-
-
-def cmd_testsets(args):
-    """Generate or refresh validation test set worksheets from existing pipeline output."""
-    from process.assembly import generate_or_refresh_validation_testsets
-    from process import segments_io as _segments_io
-
-    output_dir = args.output_dir
-    if not os.path.isdir(output_dir):
-        print(f"Error: output directory not found: {output_dir}")
-        sys.exit(1)
-
-    print(f"\nLoading segments from: {output_dir}")
-    try:
-        segments = _segments_io.read_master_segments(output_dir)
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    participant_segs = [s for s in segments if s.speaker == 'participant']
-    print(f"Loaded {len(segments)} segments ({len(participant_segs)} participant)")
-
-    # Load framework
-    framework_arg = args.framework
-    if framework_arg is None and args.config:
-        with open(args.config) as f:
-            fw_data = json.load(f)
-        fw = fw_data.get('framework', {})
-        framework_arg = fw.get('custom_path') or fw.get('preset', 'vaamr')
-    framework = _load_framework(framework_arg)
-
-    # Determine codebook status
-    codebook_enabled = args.codebook_enabled
-    if not codebook_enabled and args.config:
-        with open(args.config) as f:
-            cfg_data = json.load(f)
-        codebook_enabled = cfg_data.get('pipeline', {}).get('run_codebook_classifier', False)
-
-    testset_dirs = generate_or_refresh_validation_testsets(
-        segments,
-        framework,
-        output_dir,
-        n_sets=args.n_sets,
-        fraction_per_set=args.fraction,
-        random_seed=args.seed,
-        codebook_enabled=codebook_enabled,
-    )
-
-    print(f"\nGenerated/refreshed {len(testset_dirs)} testset(s):")
-    for p in testset_dirs:
-        print(f"  {os.path.relpath(p, output_dir)}")
 
 
 # =========================================================================
@@ -2295,21 +2243,7 @@ Examples:
     validate_parser.add_argument('--framework', default=None, help='Framework preset or JSON path')
     validate_parser.add_argument('--codebook', default=None, help='Codebook preset or JSON path')
 
-    # ---- testsets (deprecated alias for testset refresh --all) ----
-    testsets_parser = subparsers.add_parser(
-        'testsets',
-        help='[DEPRECATED] Use "testset refresh --all" instead',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    testsets_parser.add_argument('--output-dir', '-o', required=True)
-    testsets_parser.add_argument('--config', '-c', default=None)
-    testsets_parser.add_argument('--framework', default=None)
-    testsets_parser.add_argument('--n-sets', type=int, default=2)
-    testsets_parser.add_argument('--fraction', type=float, default=0.10)
-    testsets_parser.add_argument('--seed', type=int, default=42)
-    testsets_parser.add_argument('--codebook-enabled', action='store_true')
-
-    # ---- testset (new subcommand group) ----
+    # ---- testset (subcommand group) ----
     testset_parser = subparsers.add_parser(
         'testset',
         help='Manage frozen validation testsets (create / refresh / list)',
@@ -2452,8 +2386,6 @@ Examples:
                                   help='Point several raw labels at one anonymized_id (repeatable)')
     edit_anon_parser.add_argument('--remove-names', action='store_true',
                                   help='Re-run the NLP de-id scrub over segment text after remapping')
-    edit_anon_parser.add_argument('--include-locked', action='store_true', default=True,
-                                  help='Rewrite frozen ("locked") segments (default: on)')
     edit_anon_parser.add_argument('--no-spacy', action='store_true',
                                   help='With --remove-names: regex heuristics only (skip NLP engine)')
     edit_anon_parser.add_argument('--model', default=None,
@@ -2498,14 +2430,6 @@ def main():
             cmd_analyze(args)
         elif args.command == 'validate':
             cmd_validate(args)
-        elif args.command == 'testsets':
-            import warnings
-            warnings.warn(
-                "'qra testsets' is deprecated — use 'qra testset refresh --all' instead.",
-                DeprecationWarning,
-                stacklevel=1,
-            )
-            cmd_testsets(args)
         elif args.command == 'testset':
             if args.testset_command == 'create':
                 cmd_testset_create(args)

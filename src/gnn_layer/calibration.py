@@ -144,14 +144,3 @@ def temperature_from_cv(cv: dict, df_all) -> dict:
     T = fit_temperature(L, y)
     ece_after = expected_calibration_error(_softmax(L / T), y)
     return {'temperature': T, 'ece_before': ece_before, 'ece_after': ece_after, 'n': len(y)}
-
-
-def crossval_temperature(graph, targets, config, df_all, n_vce: int = 0) -> dict:
-    """Fit a temperature on held-out CV logits and report ECE before/after.
-
-    Convenience wrapper that runs the gate's k-fold machinery with ``return_logits=True``
-    and delegates to :func:`temperature_from_cv`.
-    """
-    from .train import crossval_predictions
-    cv = crossval_predictions(graph, targets, config, n_vce=n_vce, return_logits=True)
-    return temperature_from_cv(cv, df_all)
