@@ -26,9 +26,9 @@ from pathlib import Path
 
 # Path bootstrap is handled by src/tests/__init__.py
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VAAMR_MD = REPO_ROOT / 'VAAMR_FRAMEWORK.md'
-PURER_MD = REPO_ROOT / 'PURER_FRAMEWORK.md'
-CODEBOOK_MD = REPO_ROOT / 'PHENOMENOLOGY_CODEBOOK.md'
+VAAMR_MD = REPO_ROOT / 'frameworks' / 'VAAMR_FRAMEWORK.md'
+PURER_MD = REPO_ROOT / 'frameworks' / 'PURER_FRAMEWORK.md'
+CODEBOOK_MD = REPO_ROOT / 'frameworks' / 'PHENOMENOLOGY_CODEBOOK.md'
 
 
 # ---------------------------------------------------------------------------

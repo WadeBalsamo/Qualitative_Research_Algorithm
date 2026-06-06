@@ -569,6 +569,24 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                     traceback.print_exc()
 
     # ----------------------------------------------------------------
+    # 12b. MindfulBERT training-set builder (Track C; the end-goal artifact)
+    #      Runs after mechanism (observed Δprogression) + GNN (counterfactual
+    #      augmentation channel). OFF by default; augmentation is gate-gated.
+    # ----------------------------------------------------------------
+    if df_all is not None and _gnn_cfg is not None and getattr(_gnn_cfg, 'build_mindfulbert_dataset', False):
+        try:
+            from process.assembly import build_mindfulbert_dataset
+            log("[12b/8] Building MindfulBERT training set (observed Δprogression)...")
+            mb_result = build_mindfulbert_dataset(df_all, output_dir, config=_gnn_cfg)
+            files_generated.extend(mb_result.get('files_written', []))
+            log(f"    MindfulBERT dataset: {mb_result.get('n_examples', 0)} examples "
+                f"(gate_passed={mb_result.get('gate_passed')}).")
+        except Exception as e:
+            print(f"  Warning: MindfulBERT dataset build failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+    # ----------------------------------------------------------------
     # 13. Top-level synthesis: executive summary, methods appendix, READ_ME.
     #     Written LAST so they can read every artifact the run produced.
     # ----------------------------------------------------------------

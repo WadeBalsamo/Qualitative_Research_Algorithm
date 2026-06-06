@@ -16,9 +16,9 @@ import re
 import unittest
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]  # src/tests/ → src/ → repo root
-VAAMR_MD = REPO_ROOT / 'VAAMR_FRAMEWORK.md'
-PURER_MD = REPO_ROOT / 'PURER_FRAMEWORK.md'
+REPO_ROOT = Path(__file__).resolve().parents[2]  # tests/unit/ → tests/ → repo root
+VAAMR_MD = REPO_ROOT / 'frameworks' / 'VAAMR_FRAMEWORK.md'
+PURER_MD = REPO_ROOT / 'frameworks' / 'PURER_FRAMEWORK.md'
 
 
 def _normalize(s: str) -> str:
@@ -311,7 +311,7 @@ class TestPURERMarkdownLoader(unittest.TestCase):
 # Phase 2 — drop dead fields
 # ---------------------------------------------------------------------------
 
-CODEBOOK_MD = REPO_ROOT / 'PHENOMENOLOGY_CODEBOOK.md'
+CODEBOOK_MD = REPO_ROOT / 'frameworks' / 'PHENOMENOLOGY_CODEBOOK.md'
 
 
 class TestCodebookMarkdownLoader(unittest.TestCase):
