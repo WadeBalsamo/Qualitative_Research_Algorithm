@@ -346,5 +346,261 @@ class TestIndependencePassReport(unittest.TestCase):
         self.assertIn('DISTILLATION FIDELITY', text)
 
 
+# ===========================================================================
+# PRE-REGISTERED cue→transition triangulation (gnn_layer/influence.py §1A/§9)
+# ---------------------------------------------------------------------------
+# These exercise the mechanism-vs-GNN counterfactual triangulation metric — a
+# DIFFERENT object from the GNN↔LLM↔human construct triangulation above. Purely
+# synthetic / hermetic: no model weights, no data/, no network. They validate the
+# join against mechanism.py's real CSV schema and the §1A success arithmetic.
+# ===========================================================================
+
+from unittest import mock
+
+from gnn_layer import influence as INF
+from process import output_paths as _paths
+
+
+def _mech_df(cells, include_motif=True):
+    """Synthetic mechanism_delta_progression.csv rows matching mechanism.py's real schema.
+
+    ``cells``: {(from_stage:int, move:int): (mean_delta_prog:float, fdr_significant:bool)}.
+    """
+    rows = []
+    for (s, m), (d, f) in cells.items():
+        rows.append({
+            'grouping': 'purer', 'from_stage': s, 'from_stage_name': f'stage{s}',
+            'behavior': f'{INF.PURER_NAMES.get(m, m)}({m})',
+            'n': 6, 'n_participants': 3,
+            'mean_delta_prog': d, 'sd_delta_prog': 0.1,
+            'ci_lo': (d - 0.1 if d == d else float('nan')),
+            'ci_hi': (d + 0.1 if d == d else float('nan')),
+            'perm_p': 0.02, 'n_progress': 3, 'n_stabilize': 2, 'n_regress': 1,
+            'mean_from_entropy': 0.5, 'fdr_q': 0.03, 'fdr_significant': bool(f),
+        })
+    if include_motif:                     # motif rows must be EXCLUDED by the purer filter
+        rows.append({
+            'grouping': 'motif', 'from_stage': 1, 'from_stage_name': 'stage1',
+            'behavior': 7, 'n': 4, 'n_participants': 2, 'mean_delta_prog': 0.9,
+            'sd_delta_prog': 0.1, 'ci_lo': 0.8, 'ci_hi': 1.0, 'perm_p': 0.5,
+            'n_progress': 2, 'n_stabilize': 1, 'n_regress': 1, 'mean_from_entropy': 0.4,
+            'fdr_q': 0.5, 'fdr_significant': False,
+        })
+    return pd.DataFrame(rows)
+
+
+def _influence_result(gnn_cells, n_participants=5):
+    """Synthetic GNN influence dict: per-cell means + block rows (identical per participant).
+
+    Block rows are identical across participants per cell, so the participant-clustered
+    bootstrap reproduces the per-cell means on every resample → a deterministic, tight CI.
+    """
+    rows, per_stage_move = [], []
+    for (s, m), val in gnn_cells.items():
+        per_stage_move.append({'from_stage': s, 'move': m,
+                               'mean_influence': float(val), 'n_blocks': n_participants})
+        for pi in range(n_participants):
+            rows.append({'from_stage': s, 'move': m, 'influence': float(val),
+                         'participant_id': f'p{pi}'})
+    return {'per_stage_move': per_stage_move, 'rows': rows}
+
+
+def _observed(spec):
+    """{(s,m): (mean_delta, fdr_bool)} → the parsed-observed mapping shape."""
+    return {k: {'mean_delta': float(d), 'fdr_significant': bool(f)}
+            for k, (d, f) in spec.items()}
+
+
+# Shared cell geometry: obs and GNN rank-identical → Spearman ρ = 1.0.
+_OBS_CONVERGE = {(0, 0): (0.10, False), (1, 1): (0.40, True),
+                 (2, 2): (-0.20, True), (3, 3): (0.25, False)}
+_GNN_CONVERGE = {(0, 0): 0.05, (1, 1): 0.30, (2, 2): -0.15, (3, 3): 0.20}
+
+
+class TestMechanismObservedParse(unittest.TestCase):
+    """The (from_stage × move) join against mechanism.py's real CSV schema."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_parse_stage_move_keys_signed_effect_and_fdr_flag(self):
+        cells = {(1, 1): (0.4, True), (2, 2): (-0.2, True),
+                 (0, 0): (0.1, False), (4, 4): (float('nan'), False)}
+        mdir = _paths.mechanism_dir(self.tmp)
+        os.makedirs(mdir, exist_ok=True)
+        _mech_df(cells).to_csv(os.path.join(mdir, 'mechanism_delta_progression.csv'), index=False)
+
+        obs = INF._observed_per_stage_move(self.tmp)
+        # Keyed on (from_stage, move); signed effect = mean_delta_prog; flag = fdr_significant.
+        self.assertEqual(set(obs), {(1, 1), (2, 2), (0, 0)})
+        self.assertAlmostEqual(obs[(1, 1)]['mean_delta'], 0.4, places=6)
+        self.assertAlmostEqual(obs[(2, 2)]['mean_delta'], -0.2, places=6)
+        self.assertTrue(obs[(1, 1)]['fdr_significant'])
+        self.assertTrue(obs[(2, 2)]['fdr_significant'])
+        self.assertFalse(obs[(0, 0)]['fdr_significant'])
+        self.assertNotIn((4, 4), obs)              # NaN effect skipped
+        self.assertNotIn((1, 7), obs)              # motif grouping excluded
+
+    def test_read_observed_csv_explicit_path(self):
+        path = os.path.join(self.tmp, 'mech.csv')
+        _mech_df({(1, 1): (0.4, True)}, include_motif=False).to_csv(path, index=False)
+        obs = INF._read_observed_csv(path)
+        self.assertIn((1, 1), obs)
+        self.assertTrue(obs[(1, 1)]['fdr_significant'])
+        self.assertEqual(INF._read_observed_csv(os.path.join(self.tmp, 'missing.csv')), {})
+
+    def test_triangulate_v2_none_without_csv(self):
+        res = _influence_result(_GNN_CONVERGE)
+        self.assertIsNone(INF.triangulate_v2(res, tempfile.mkdtemp()))
+
+
+class TestTriangulationMetric(unittest.TestCase):
+    """The §1A success arithmetic: Spearman ρ + bootstrap CI + FDR-restricted sign agreement."""
+
+    def test_spearman_value_is_real_rank_correlation(self):
+        # Swap two GNN ranks vs observed → ρ should be exactly 0.8 (not merely sign-based).
+        gnn = {(0, 0): 0.05, (1, 1): 0.20, (2, 2): -0.15, (3, 3): 0.30}
+        m = INF.triangulation_metric(_influence_result(gnn), _observed(_OBS_CONVERGE),
+                                     n_boot=200, seed=42)
+        self.assertEqual(m['unit'], 'cue_transition (from_stage × PURER move)')
+        self.assertEqual(m['n_cells'], 4)
+        self.assertAlmostEqual(m['spearman_rho'], 0.8, places=4)
+
+    def test_bootstrap_ci_returned_and_excludes_zero(self):
+        m = INF.triangulation_metric(_influence_result(_GNN_CONVERGE), _observed(_OBS_CONVERGE),
+                                     n_boot=200, seed=42)
+        self.assertAlmostEqual(m['spearman_rho'], 1.0, places=4)
+        self.assertIsNotNone(m['ci_lo'])
+        self.assertIsNotNone(m['ci_hi'])
+        self.assertLessEqual(m['ci_lo'], m['ci_hi'])
+        self.assertTrue(m['ci_excludes_zero'])
+        self.assertEqual(m['n_participants'], 5)
+
+    def test_sign_agreement_restricted_to_fdr_significant(self):
+        # 3 FDR-significant cells, GNN sign disagrees on exactly one → 2/3 ≈ 0.667.
+        obs = {(0, 0): (0.10, False), (1, 1): (0.40, True),
+               (2, 2): (-0.20, True), (3, 3): (0.25, True)}
+        gnn = {(0, 0): 0.05, (1, 1): 0.30, (2, 2): 0.02, (3, 3): 0.20}   # (2,2) flips sign
+        m = INF.triangulation_metric(_influence_result(gnn), _observed(obs),
+                                     n_boot=200, seed=42)
+        self.assertEqual(m['n_fdr_significant'], 3)
+        self.assertAlmostEqual(m['sign_agreement'], 2.0 / 3.0, places=4)
+        self.assertGreater(m['spearman_rho'], 0)      # ρ stays positive (ranks unchanged)
+        self.assertTrue(m['ci_excludes_zero'])
+        self.assertFalse(m['converges'])              # fails ONLY the sign gate
+
+    def test_converges_true_when_all_three_conditions_met(self):
+        m = INF.triangulation_metric(_influence_result(_GNN_CONVERGE), _observed(_OBS_CONVERGE),
+                                     n_boot=200, seed=42)
+        self.assertTrue(m['spearman_rho'] > 0)
+        self.assertTrue(m['ci_excludes_zero'])
+        self.assertGreaterEqual(m['sign_agreement'], 0.70)
+        self.assertTrue(m['converges'])
+
+    def test_converges_false_when_rho_negative(self):
+        gnn = {k: -v for k, v in _GNN_CONVERGE.items()}     # anti-correlated → ρ = -1
+        obs = {(0, 0): (0.10, True), (1, 1): (0.40, True),
+               (2, 2): (-0.20, True), (3, 3): (0.25, True)}
+        m = INF.triangulation_metric(_influence_result(gnn), _observed(obs),
+                                     n_boot=200, seed=42)
+        self.assertLess(m['spearman_rho'], 0)
+        self.assertFalse(m['converges'])              # fails the ρ>0 gate
+
+    def test_converges_false_when_no_fdr_significant_cells(self):
+        obs = {k: (d, False) for k, (d, f) in _OBS_CONVERGE.items()}   # nothing FDR-significant
+        m = INF.triangulation_metric(_influence_result(_GNN_CONVERGE), _observed(obs),
+                                     n_boot=200, seed=42)
+        self.assertAlmostEqual(m['spearman_rho'], 1.0, places=4)
+        self.assertTrue(m['ci_excludes_zero'])
+        self.assertEqual(m['n_fdr_significant'], 0)
+        self.assertIsNone(m['sign_agreement'])
+        self.assertFalse(m['converges'])              # cannot claim convergence w/o FDR cells
+
+    def test_per_cell_detail_shape(self):
+        m = INF.triangulation_metric(_influence_result(_GNN_CONVERGE), _observed(_OBS_CONVERGE),
+                                     n_boot=100, seed=42)
+        self.assertEqual(len(m['per_cell']), 4)
+        for r in m['per_cell']:
+            self.assertEqual(set(r) >= {'from_stage', 'move', 'move_name', 'observed_delta',
+                                        'counterfactual_influence', 'fdr_significant',
+                                        'sign_match'}, True)
+
+    def test_too_few_common_cells_degrades(self):
+        m = INF.triangulation_metric(_influence_result({(0, 0): 0.1}),
+                                     _observed({(0, 0): (0.2, True)}), n_boot=50)
+        self.assertEqual(m['n_cells'], 1)
+        self.assertIsNone(m['spearman_rho'])
+        self.assertFalse(m['converges'])
+
+
+class TestRunCounterfactualExperiment(unittest.TestCase):
+    """Un-gated experiment entry point — gate κ echoed as trust context, swap logic reused."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.csv = os.path.join(self.tmp, 'mech.csv')
+        _mech_df(_OBS_CONVERGE, include_motif=False).to_csv(self.csv, index=False)
+        self.cfg = GnnLayerConfig(influence_bootstrap_n=200, seed=42)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_runs_ungated_and_triangulates_against_csv(self):
+        infl = _influence_result(_GNN_CONVERGE)
+        with mock.patch.object(INF, 'counterfactual_influence', return_value=infl) as cf:
+            res = INF.run_counterfactual_experiment(
+                model='M', graph='G', df_all='D', config=self.cfg,
+                gate_kappa=0.21, mechanism_csv=self.csv)
+        cf.assert_called_once()                        # reuses the existing swap logic
+        self.assertIs(res['influence'], infl)
+        self.assertEqual(res['gate_kappa'], 0.21)      # echoed trust context, unmodified
+        self.assertIsNotNone(res['triangulation'])
+        self.assertTrue(res['triangulation']['converges'])
+
+    def test_no_mechanism_csv_means_no_triangulation(self):
+        infl = _influence_result(_GNN_CONVERGE)
+        with mock.patch.object(INF, 'counterfactual_influence', return_value=infl):
+            res = INF.run_counterfactual_experiment(None, None, None, self.cfg, gate_kappa=0.5)
+        self.assertIsNone(res['triangulation'])
+        self.assertEqual(res['gate_kappa'], 0.5)
+
+    def test_status_passthrough_when_no_centroids(self):
+        with mock.patch.object(INF, 'counterfactual_influence',
+                               return_value={'status': 'skipped: no centroids'}):
+            res = INF.run_counterfactual_experiment(None, None, None, self.cfg,
+                                                    gate_kappa=0.3, mechanism_csv=self.csv)
+        self.assertEqual(res['status'], 'skipped: no centroids')
+        self.assertIsNone(res['triangulation'])
+        self.assertEqual(res['gate_kappa'], 0.3)
+
+
+class TestTriangulateBackwardCompat(unittest.TestCase):
+    """Legacy triangulate() keeps its keys and additively carries cue_transition."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        mdir = _paths.mechanism_dir(self.tmp)
+        os.makedirs(mdir, exist_ok=True)
+        _mech_df(_OBS_CONVERGE).to_csv(
+            os.path.join(mdir, 'mechanism_delta_progression.csv'), index=False)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_legacy_keys_preserved_plus_cue_transition(self):
+        per_move = [{'move': m, 'mean_influence': v}
+                    for (s, m), v in _GNN_CONVERGE.items()]
+        res = {**_influence_result(_GNN_CONVERGE), 'per_move': per_move}
+        tri_out = INF.triangulate(res, self.tmp)
+        self.assertIsNotNone(tri_out)
+        for k in ('n_moves', 'spearman', 'sign_agreement', 'per_move'):
+            self.assertIn(k, tri_out)                  # legacy contract intact
+        self.assertIn('cue_transition', tri_out)       # additive §1A metric
+        self.assertTrue(tri_out['cue_transition']['converges'])
+
+
 if __name__ == '__main__':
     unittest.main()
