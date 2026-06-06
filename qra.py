@@ -462,7 +462,7 @@ def _flatten_wizard_config(data: dict) -> dict:
     for key in ('segmentation', 'speaker_filter', 'theme_classification', 'codebook_embedding',
                 'codebook_llm', 'codebook_ensemble', 'validation', 'confidence_tiers',
                 'test_sets', 'content_validity', 'purer_classification', 'purer_cue',
-                'therapist_cues', 'session_summaries', 'participant_summaries'):
+                'therapist_cues', 'session_summaries', 'participant_summaries', 'gnn_layer'):
         if key in data:
             result[key] = data[key]
 
@@ -1351,14 +1351,13 @@ def cmd_classify(args):
         stage_classify_theme,
         stage_classify_purer,
         stage_classify_codebook,
-        stage_classify_microskill,
         stage_cross_validation,
     )
     from process._freeze import FrozenArtifactError
 
     output_dir = args.output_dir
     what = getattr(args, 'what', 'all') or 'all'
-    valid = {'vaamr', 'purer', 'codebook', 'microskill', 'cross-validation', 'all'}
+    valid = {'vaamr', 'purer', 'codebook', 'cross-validation', 'all'}
     if what not in valid:
         print(f"Error: --what must be one of {sorted(valid)}, got {what!r}")
         sys.exit(2)
@@ -1387,14 +1386,40 @@ def cmd_classify(args):
     print(f"  Output: {output_dir}")
     print(f"  Sessions: {len(sessions)}")
 
-    to_run = {what} if what != 'all' else {'vaamr', 'purer', 'codebook', 'microskill', 'cross-validation'}
+    to_run = {what} if what != 'all' else {'vaamr', 'purer', 'codebook', 'cross-validation'}
 
     # Load frozen segments once (raw); apply overlays selectively per stage below.
     from process import classifications_io as _cio
     segments = _segments_io.load_segments_for_stage(output_dir, apply=())
     # Apply all existing overlays up-front so each stage sees the current on-disk state.
     by_id = {s.segment_id: s for s in segments}
-    _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'microskill', 'cv'))
+    _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv'))
+
+    # --backend gnn: LLM-FREE classification with the trained graph (scale mode).
+    # Routes around the LLM classifiers entirely; labels only segments lacking an LLM
+    # label, using the checkpoint trained on prior LLM/human-labeled data.
+    if str(getattr(args, 'backend', '') or '').lower() == 'gnn':
+        import pandas as _pd
+        from gnn_layer.runner import run_gnn_classify
+        df_all = _pd.DataFrame([{
+            'segment_id': s.segment_id, 'text': s.text, 'speaker': s.speaker,
+            'session_id': s.session_id,
+            'start_time_ms': s.start_time_ms, 'end_time_ms': s.end_time_ms,
+            'final_label': s.final_label, 'primary_stage': s.primary_stage,
+            'purer_primary': getattr(s, 'purer_primary', None),
+        } for s in segments])
+        print("  Backend: GNN (graph-only, no LLM calls)")
+        if not config.gnn_layer.enabled:
+            print("  Note: gnn_layer.enabled is False in config; classifying with the "
+                  "existing checkpoint anyway.")
+        res = run_gnn_classify(df_all, output_dir, framework=framework,
+                               config=config.gnn_layer, verbose=True)
+        print(f"  status: {res['status']}; classified {res.get('n_classified', 0)} segment(s)")
+        if not getattr(args, 'no_downstream', False):
+            print("\nRunning downstream pipeline...")
+            cmd_assemble(args)
+            cmd_analyze(args)
+        return
 
     if 'vaamr' in to_run:
         print("  Running VAAMR classifier...")
@@ -1411,13 +1436,6 @@ def cmd_classify(args):
         print("  Running codebook classifier...")
         stage_classify_codebook(config, codebook, segments=segments, output_dir=output_dir)
         print(f"  codebook_labels.jsonl written")
-
-    if 'microskill' in to_run:
-        from codebook.microcounseling_codebook import get_microcounseling_codebook
-        micro_cb = get_microcounseling_codebook()
-        print("  Running microcounseling-skill classifier...")
-        stage_classify_microskill(config, micro_cb, segments=segments, output_dir=output_dir)
-        print(f"  microskill_labels.jsonl written")
 
     if 'cross-validation' in to_run:
         print("  Running cross-validation...")
@@ -2170,13 +2188,12 @@ Examples:
     classify_parser.add_argument(
         '--what',
         default='all',
-        choices=['vaamr', 'purer', 'codebook', 'microskill', 'cross-validation', 'all'],
+        choices=['vaamr', 'purer', 'codebook', 'cross-validation', 'all'],
         help=(
             'Which classifier to run (default: all).\n'
             '  vaamr            — VAAMR participant-stage classification\n'
             '  purer            — PURER therapist-move classification\n'
             '  codebook         — VCE phenomenology codebook\n'
-            '  microskill       — therapist microcounseling-skill codebook\n'
             '  cross-validation — cross-validation overlay\n'
             '  all              — run every enabled classifier'
         ),

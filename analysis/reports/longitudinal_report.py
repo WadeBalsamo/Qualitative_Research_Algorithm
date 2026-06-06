@@ -210,7 +210,7 @@ def generate_longitudinal_text_report(
     framework: dict,
     output_dir: str,
 ) -> str:
-    """Generate comprehensive longitudinal_analysis.txt report.
+    """Generate comprehensive 01_outcomes/longitudinal.txt report.
 
     Covers: VAAMR trajectory with emphasis on trend, stage distributions,
     regression patterns, PURER influence (if available), codebook relationships
@@ -562,8 +562,8 @@ def generate_longitudinal_text_report(
     # Write to file
     # ─────────────────────────────────────────────────────────────────
     content = '\n'.join(lines)
-    os.makedirs(_paths.human_reports_dir(output_dir), exist_ok=True)
-    path = os.path.join(_paths.human_reports_dir(output_dir), 'longitudinal_analysis.txt')
+    os.makedirs(_paths.reports_outcomes_dir(output_dir), exist_ok=True)
+    path = os.path.join(_paths.reports_outcomes_dir(output_dir), 'longitudinal.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(content)
     return path

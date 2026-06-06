@@ -79,7 +79,7 @@ from pathlib import Path
 from theme_framework.theme_schema import ThemeDefinition, ThemeFramework  # noqa: F401
 from theme_framework.markdown_loader import load_framework_md
 
-_PURER_MD = Path(__file__).resolve().parents[2] / "PURER_FRAMEWORK.md"
+_PURER_MD = Path(__file__).resolve().parents[1] / "PURER_FRAMEWORK.md"
 
 PURER_FRAMEWORK_VERSION = "3.0"
 

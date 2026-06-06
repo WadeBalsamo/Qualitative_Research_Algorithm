@@ -112,12 +112,13 @@ def compute_session_stage_progression(
     os.makedirs(out_dir, exist_ok=True)
 
     # Serialize dict columns to JSON strings before writing CSV
-    result['stage_distribution_json'] = result['stage_distribution'].apply(
-        lambda d: json.dumps(d) if isinstance(d, dict) else '{}'
-    )
-    result['secondary_distribution_json'] = result['secondary_distribution'].apply(
-        lambda d: json.dumps(d) if isinstance(d, dict) else '{}'
-    )
+    if not result.empty:
+        result['stage_distribution_json'] = result['stage_distribution'].apply(
+            lambda d: json.dumps(d) if isinstance(d, dict) else '{}'
+        )
+        result['secondary_distribution_json'] = result['secondary_distribution'].apply(
+            lambda d: json.dumps(d) if isinstance(d, dict) else '{}'
+        )
 
     path = os.path.join(out_dir, 'session_stage_progression.csv')
     result.to_csv(path, index=False)

@@ -297,6 +297,48 @@ class LLMClient:
         return self._CONTEXT_LENGTH_FALLBACK
 
     # ------------------------------------------------------------------
+    # Shared retry loop
+    # ------------------------------------------------------------------
+
+    def _make_request_with_retries(
+        self,
+        do_request,
+        label: str,
+    ) -> Tuple[Optional[str], Optional[Dict]]:
+        """
+        Run ``do_request`` under the common retry/backoff/error-print loop.
+
+        ``do_request`` performs a single HTTP attempt and must return a
+        ``(text, metadata)`` tuple — exactly what the public backend method
+        returns on success or on an "exhausted context" outcome (both of which
+        are terminal: the loop returns the tuple immediately and does not
+        retry).  Any exception raised by ``do_request`` is treated as a
+        retryable failure: the loop sleeps ``retry_base_delay * 2**attempt``
+        seconds (only between attempts, never after the last one) and retries
+        up to ``self.config.max_retries`` total attempts.
+
+        ``label`` reproduces the backend-specific wording in the per-attempt
+        and final "after N attempts" error messages (e.g. ``"API"``,
+        ``"Ollama"``, ``"LM Studio"``).
+
+        When every attempt fails, returns ``(None, None)`` — matching the
+        all-failed contract of all three backends.
+        """
+        last_error = None
+        for attempt in range(self.config.max_retries):
+            try:
+                return do_request()
+            except Exception as e:
+                last_error = e
+                if attempt < self.config.max_retries - 1:
+                    delay = self.config.retry_base_delay * (2 ** attempt)
+                    print(f"  {label} error (attempt {attempt + 1}): {e}, retrying in {delay:.0f}s")
+                    time.sleep(delay)
+
+        print(f"  {label} error after {self.config.max_retries} attempts: {last_error}")
+        return None, None
+
+    # ------------------------------------------------------------------
     # Backend request methods
     # ------------------------------------------------------------------
 
@@ -307,47 +349,38 @@ class LLMClient:
         import requests
 
         max_tokens = self._get_context_length()
-        last_error = None
 
-        for attempt in range(self.config.max_retries):
-            try:
-                response = requests.post(
-                    url="https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.config.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self.config.model,
-                        "temperature": self.config.temperature,
-                        "max_tokens": max_tokens,
-                        "response_format": {"type": "json_object"},
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                    timeout=self.config.timeout,
+        def do_request() -> Tuple[Optional[str], Optional[Dict]]:
+            response = requests.post(
+                url="https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.config.model,
+                    "temperature": self.config.temperature,
+                    "max_tokens": max_tokens,
+                    "response_format": {"type": "json_object"},
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=self.config.timeout,
+            )
+
+            metadata = response.json()
+            choice = metadata['choices'][0]
+            result_text, exhausted = self._extract_content(choice)
+
+            if exhausted:
+                print(
+                    f"  Warning: OpenRouter context window exhausted "
+                    f"(max_tokens={max_tokens}). Prompt may be too long."
                 )
+                return None, metadata
 
-                metadata = response.json()
-                choice = metadata['choices'][0]
-                result_text, exhausted = self._extract_content(choice)
+            return result_text, metadata
 
-                if exhausted:
-                    print(
-                        f"  Warning: OpenRouter context window exhausted "
-                        f"(max_tokens={max_tokens}). Prompt may be too long."
-                    )
-                    return None, metadata
-
-                return result_text, metadata
-            except Exception as e:
-                last_error = e
-                if attempt < self.config.max_retries - 1:
-                    delay = self.config.retry_base_delay * (2 ** attempt)
-                    print(f"  API error (attempt {attempt + 1}): {e}, retrying in {delay:.0f}s")
-                    time.sleep(delay)
-
-        print(f"  API error after {self.config.max_retries} attempts: {last_error}")
-        return None, None
+        return self._make_request_with_retries(do_request, "API")
 
     def _ollama_request(
         self, prompt: str,
@@ -361,63 +394,54 @@ class LLMClient:
         # "use the full window"; the server caps generation at whatever tokens
         # remain after the prompt.
         num_ctx = self._get_context_length()
-        last_error = None
 
-        for attempt in range(self.config.max_retries):
-            try:
-                ollama_options = {
-                    "temperature": self.config.temperature,
-                    "num_ctx": num_ctx,
-                    # num_predict -1 means "generate until stop or context full"
-                    "num_predict": -1,
-                }
-                if self.config.no_reasoning:
-                    ollama_options["think"] = False  # Qwen3/thinking model: disable CoT
-                response = requests.post(
-                    url=f"{base_url}/api/chat",
-                    json={
-                        "model": self.config.model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        "format": "json",
-                        "options": ollama_options,
-                    },
-                    timeout=self.config.timeout,
+        def do_request() -> Tuple[Optional[str], Optional[Dict]]:
+            ollama_options = {
+                "temperature": self.config.temperature,
+                "num_ctx": num_ctx,
+                # num_predict -1 means "generate until stop or context full"
+                "num_predict": -1,
+            }
+            if self.config.no_reasoning:
+                ollama_options["think"] = False  # Qwen3/thinking model: disable CoT
+            response = requests.post(
+                url=f"{base_url}/api/chat",
+                json={
+                    "model": self.config.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "format": "json",
+                    "options": ollama_options,
+                },
+                timeout=self.config.timeout,
+            )
+
+            data = response.json()
+
+            # Ollama uses a flat message structure, not OpenAI choices[].
+            # Build a synthetic choice dict so _extract_content works uniformly.
+            message = data.get('message', {})
+            synthetic_choice = {
+                'message': message,
+                'finish_reason': 'length' if data.get('done_reason') == 'length' else 'stop',
+            }
+            result_text, exhausted = self._extract_content(synthetic_choice)
+
+            if exhausted:
+                print(
+                    f"  Warning: Ollama context window exhausted "
+                    f"(num_ctx={num_ctx}). Prompt may be too long."
                 )
+                return None, data
 
-                data = response.json()
+            metadata = {
+                'model': self.config.model,
+                'done': data.get('done', False),
+                'total_duration': data.get('total_duration'),
+            }
+            return result_text, metadata
 
-                # Ollama uses a flat message structure, not OpenAI choices[].
-                # Build a synthetic choice dict so _extract_content works uniformly.
-                message = data.get('message', {})
-                synthetic_choice = {
-                    'message': message,
-                    'finish_reason': 'length' if data.get('done_reason') == 'length' else 'stop',
-                }
-                result_text, exhausted = self._extract_content(synthetic_choice)
-
-                if exhausted:
-                    print(
-                        f"  Warning: Ollama context window exhausted "
-                        f"(num_ctx={num_ctx}). Prompt may be too long."
-                    )
-                    return None, data
-
-                metadata = {
-                    'model': self.config.model,
-                    'done': data.get('done', False),
-                    'total_duration': data.get('total_duration'),
-                }
-                return result_text, metadata
-            except Exception as e:
-                last_error = e
-                if attempt < self.config.max_retries - 1:
-                    delay = self.config.retry_base_delay * (2 ** attempt)
-                    print(f"  Ollama error (attempt {attempt + 1}): {e}, retrying in {delay:.0f}s")
-                    time.sleep(delay)
-
-        print(f"  Ollama error after {self.config.max_retries} attempts: {last_error}")
-        return None, None
+        return self._make_request_with_retries(do_request, "Ollama")
 
     def _lmstudio_request(
         self, prompt: str,
@@ -437,56 +461,47 @@ class LLMClient:
 
         base_url = self.config.lmstudio_base_url.rstrip('/')
         max_tokens = self._get_context_length()
-        last_error = None
 
-        for attempt in range(self.config.max_retries):
-            try:
-                json_body = {
-                    "model": self.config.model,
-                    "temperature": self.config.temperature,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": max_tokens,
-                }
-                if self.config.no_reasoning:
-                    json_body["include_reasoning"] = False
-                response = requests.post(
-                    url=f"{base_url}/chat/completions",
-                    headers={
-                        "Authorization": "Bearer lm-studio",
-                        "Content-Type": "application/json",
-                    },
-                    json=json_body,
-                    timeout=self.config.timeout,
+        def do_request() -> Tuple[Optional[str], Optional[Dict]]:
+            json_body = {
+                "model": self.config.model,
+                "temperature": self.config.temperature,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+            }
+            if self.config.no_reasoning:
+                json_body["include_reasoning"] = False
+            response = requests.post(
+                url=f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": "Bearer lm-studio",
+                    "Content-Type": "application/json",
+                },
+                json=json_body,
+                timeout=self.config.timeout,
+            )
+            data = response.json()
+
+            if not isinstance(data, dict) or 'choices' not in data or not data['choices']:
+                if isinstance(data, dict):
+                    err_obj = data.get('error') or {}
+                    err_msg = (err_obj.get('message', '') if isinstance(err_obj, dict) else str(err_obj)) or str(data)[:200]
+                else:
+                    err_msg = str(data)[:200]
+                raise ValueError(f"LM Studio returned no choices: {err_msg}")
+
+            result_text, exhausted = self._extract_content(data['choices'][0])
+
+            if exhausted:
+                print(
+                    f"  Warning: model context window exhausted "
+                    f"(max_tokens={max_tokens}). Prompt may be too long."
                 )
-                data = response.json()
+                return None, data
 
-                if not isinstance(data, dict) or 'choices' not in data or not data['choices']:
-                    if isinstance(data, dict):
-                        err_obj = data.get('error') or {}
-                        err_msg = (err_obj.get('message', '') if isinstance(err_obj, dict) else str(err_obj)) or str(data)[:200]
-                    else:
-                        err_msg = str(data)[:200]
-                    raise ValueError(f"LM Studio returned no choices: {err_msg}")
+            return result_text, data
 
-                result_text, exhausted = self._extract_content(data['choices'][0])
-
-                if exhausted:
-                    print(
-                        f"  Warning: model context window exhausted "
-                        f"(max_tokens={max_tokens}). Prompt may be too long."
-                    )
-                    return None, data
-
-                return result_text, data
-            except Exception as e:
-                last_error = e
-                if attempt < self.config.max_retries - 1:
-                    delay = self.config.retry_base_delay * (2 ** attempt)
-                    print(f"  LM Studio error (attempt {attempt + 1}): {e}, retrying in {delay:.0f}s")
-                    time.sleep(delay)
-
-        print(f"  LM Studio error after {self.config.max_retries} attempts: {last_error}")
-        return None, None
+        return self._make_request_with_retries(do_request, "LM Studio")
 
 
 def extract_json(output_str: str) -> Dict:

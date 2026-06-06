@@ -166,6 +166,7 @@ def _detect_state(output_dir: str) -> dict:
                 has_cv_testsets.append(name)
 
     has_analysis = _dir_non_empty(_paths.analysis_data_dir(output_dir))
+    gnn_status = _gnn_status(output_dir)
 
     # Look for config
     config_path = None
@@ -188,8 +189,31 @@ def _detect_state(output_dir: str) -> dict:
         has_testsets=has_testsets,
         has_cv_testsets=has_cv_testsets,
         has_analysis=has_analysis,
+        gnn_status=gnn_status,
         config_path=config_path,
     )
+
+
+def _gnn_status(output_dir: str) -> str:
+    """Reliability state of the GNN consensus layer.
+
+    'ready'     — passed its out-of-sample gate; LLM-free scaling recommended
+    'not_ready' — trained + gate run, but not yet reliable enough
+    'trained'   — checkpoint exists but no validation report yet
+    'absent'    — GNN layer has not been run
+    """
+    from . import output_paths as _paths
+    rep = os.path.join(_paths.reports_gnn_dir(output_dir), 'validation.txt')
+    weights = os.path.join(_paths.gnn_model_dir(output_dir), 'weights.pt')
+    if os.path.isfile(rep):
+        try:
+            for line in open(rep, encoding='utf-8'):
+                if 'LLM-FREE SCALING?' in line:
+                    return 'ready' if 'YES' in line else 'not_ready'
+        except OSError:
+            pass
+        return 'trained'
+    return 'trained' if os.path.isfile(weights) else 'absent'
 
 
 def _print_project_state(state: dict) -> None:
@@ -210,6 +234,13 @@ def _print_project_state(state: dict) -> None:
     _flag(bool(state['has_testsets']),    f'Frozen validation testsets ({len(state["has_testsets"])})')
     _flag(bool(state['has_cv_testsets']), f'Content-validity testsets ({len(state["has_cv_testsets"])})')
     _flag(state['has_analysis'], 'Analysis data / reports')
+    _gnn_state_labels = {
+        'ready': '✓  GNN consensus graph — ready for LLM-free scaling',
+        'not_ready': '·  GNN consensus graph — trained, gate not yet reliable',
+        'trained': '·  GNN consensus graph — trained, gate not run',
+        'absent': '·  GNN consensus graph — not run',
+    }
+    print(f'    {_gnn_state_labels.get(state.get("gnn_status", "absent"))}')
     if state['config_path']:
         print(f'       Config: {state["config_path"]}')
     print()
@@ -308,6 +339,61 @@ def _action_classify_theme(config, output_dir: str, framework) -> None:
     stage_classify_theme(config, framework, output_dir=output_dir)
     print()
     _ok('theme_labels.jsonl written. Run Assemble to rebuild master_segments.')
+    _pause()
+
+
+def _gnn_tag(status: str) -> str:
+    """Menu suffix reflecting the GNN reliability gate."""
+    return {
+        'ready': '  ★ ready (recommended)',
+        'not_ready': '  (gate: not yet reliable)',
+        'trained': '  (trained — gate not run)',
+        'absent': '  (needs GNN layer first)',
+    }.get(status, '')
+
+
+def _action_classify_gnn(config, output_dir: str, framework, state: dict) -> None:
+    """LLM-free classification of new segments using the trained graph (scale mode)."""
+    import pandas as _pd
+    from . import segments_io as _sio
+    from . import classifications_io as _cio
+    from gnn_layer.runner import run_gnn_classify
+
+    _section('Classify — Graph consensus (LLM-free)')
+    status = state.get('gnn_status', 'absent')
+    if status == 'absent':
+        _warn('No trained graph yet. Run "Analysis & Reports" with the GNN layer enabled')
+        _warn('(set gnn_layer.enabled in config, or run: qra analyze --gnn), then return.')
+        _pause()
+        return
+    if status != 'ready':
+        _warn('The graph has NOT passed its reliability gate yet')
+        _warn('(see 06_reports/06_gnn/validation.txt). Labels may be unreliable.')
+        if not _confirm('Classify with the graph anyway?', default=False):
+            return
+    else:
+        _ok('Graph passed its reliability gate — safe to label new data without LLMs.')
+
+    _info('Labels only segments that lack an LLM label; raw LLM ballots are untouched.')
+    print()
+
+    segments = _sio.load_segments_for_stage(output_dir, apply=())
+    by_id = {s.segment_id: s for s in segments}
+    _cio.apply_overlays(output_dir, by_id,
+                        keys=('theme', 'purer', 'codebook', 'cv', 'gnn'))
+    df_all = _pd.DataFrame([{
+        'segment_id': s.segment_id, 'text': s.text, 'speaker': s.speaker,
+        'session_id': s.session_id,
+        'start_time_ms': s.start_time_ms, 'end_time_ms': s.end_time_ms,
+        'final_label': s.final_label, 'primary_stage': s.primary_stage,
+        'purer_primary': getattr(s, 'purer_primary', None),
+    } for s in segments])
+
+    res = run_gnn_classify(df_all, output_dir, framework=framework,
+                           config=config.gnn_layer, verbose=True)
+    _ok(f"Status: {res['status']}; classified {res.get('n_classified', 0)} segment(s) "
+        "with no LLM calls.")
+    _info('Run "Assemble master dataset" to fold the new labels into master_segments.')
     _pause()
 
 
@@ -805,6 +891,9 @@ def _action_edit_config(config_path: str) -> None:
         ('Change number of classification runs', 'n_runs controls the multi-model ensemble size.'),
         ('Toggle codebook (VCE) classifier', 'Enable or disable the 59-code phenomenology codebook.'),
         ('Toggle PURER classifier', 'Enable or disable PURER therapist cue classification.'),
+        ('Toggle GNN layer', 'Enable or disable the GNN discovery + consensus-distillation layer.'),
+        ('Toggle GNN authoritative labels', 'Make graph-consensus labels the label of record\n'
+         '(recommended only after the reliability gate reports the graph is ready).'),
         ('Open config in $EDITOR', 'Open the raw JSON in your system editor.'),
     ]
     choice = _menu('Config Edits', opts)
@@ -855,6 +944,19 @@ def _action_edit_config(config_path: str) -> None:
         raw['run_purer_labeler'] = new_val
         changed = True
     elif choice == 6:
+        cur = raw.get('gnn_layer', {}).get('enabled', False)
+        new_val = _confirm(f'Enable GNN layer? (currently {"ON" if cur else "OFF"})', not cur)
+        raw.setdefault('gnn_layer', {})['enabled'] = new_val
+        changed = True
+    elif choice == 7:
+        cur = raw.get('gnn_layer', {}).get('gnn_authoritative', False)
+        if not cur:
+            _warn('Recommended only after 06_reports/06_gnn/validation.txt reports YES.')
+        new_val = _confirm(
+            f'Make GNN labels authoritative? (currently {"ON" if cur else "OFF"})', not cur)
+        raw.setdefault('gnn_layer', {})['gnn_authoritative'] = new_val
+        changed = True
+    elif choice == 8:
         editor = os.environ.get('EDITOR', 'nano')
         os.system(f'{editor} "{config_path}"')
         return
@@ -942,6 +1044,10 @@ def _existing_project_flow() -> None:
             ('Edit Speaker Anonymization Key',
              'Rename / merge / relabel speakers and cascade the change across\n'
              'segments, overlays, checkpoints, validation, and analysis.'),
+            ('Classify — Graph consensus (LLM-free)' + _gnn_tag(state.get('gnn_status', 'absent')),
+             'Label new data with the trained graph — no LLM calls. Distilled from the\n'
+             'LLM/human consensus; recommended once the reliability gate\n'
+             '(06_reports/06_gnn/validation.txt) reports the graph is ready.'),
         ]
 
         choice = _menu(f'Project: {os.path.basename(output_dir)}', opts, back_label='Back to main menu')
@@ -985,6 +1091,12 @@ def _existing_project_flow() -> None:
             elif choice == 10:
                 from .anonymization_editor import run_anonymization_tui
                 run_anonymization_tui(output_dir, config=config)
+            elif choice == 11:
+                if not state['has_segments']:
+                    _warn('No frozen segments yet — run Ingest first.')
+                    _pause()
+                else:
+                    _action_classify_gnn(config, output_dir, framework, state)
         except KeyboardInterrupt:
             print()
             _warn('Action interrupted.')

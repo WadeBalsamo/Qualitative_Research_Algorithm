@@ -14,8 +14,8 @@ and the participant TO segment) we compute a continuous
 
     Δprogression = progression_coord(TO) − progression_coord(FROM)
 
-and aggregate it by the therapist behaviour in the block (dominant PURER move,
-dominant microskill, and — when the GNN ran — emergent cue motif), conditioned
+and aggregate it by the therapist behaviour in the block (dominant PURER move
+and — when the GNN ran — emergent cue motif), conditioned
 on the FROM stage. Three lenses follow:
 
   1. Δprogression mechanism table — which behaviours move participants furthest,
@@ -75,21 +75,18 @@ def _slope(ys: List[float]) -> float:
 
 
 def _seg_lookup(df_all: pd.DataFrame) -> Dict[str, dict]:
-    """segment_id → {progression_coord, mixture, mixture_entropy, purer, microskills}."""
+    """segment_id → {progression_coord, mixture, mixture_entropy, purer}."""
     out: Dict[str, dict] = {}
     has_purer = 'purer_primary' in df_all.columns
-    has_micro = 'microskill_labels_ensemble' in df_all.columns
     for _, r in df_all.iterrows():
         sid = str(r.get('segment_id', ''))
         if not sid:
             continue
-        micro = r.get('microskill_labels_ensemble') if has_micro else None
         out[sid] = {
             'progression_coord': float(r['progression_coord']) if pd.notna(r.get('progression_coord')) else None,
             'mixture': r.get('mixture'),
             'mixture_entropy': float(r['mixture_entropy']) if pd.notna(r.get('mixture_entropy')) else None,
             'purer': r.get('purer_primary') if has_purer else None,
-            'microskills': micro if isinstance(micro, list) else [],
             'participant_id': r.get('participant_id'),
         }
     return out
@@ -123,15 +120,10 @@ def _enrich_blocks(blocks: List[dict], lookup: Dict[str, dict],
             continue
         delta = tl['progression_coord'] - fl['progression_coord']
 
-        # Dominant therapist PURER move + microskill across the block's therapist segments.
+        # Dominant therapist PURER move across the block's therapist segments.
         purers = [lookup[s]['purer'] for s in b['therapist_seg_ids']
                   if s in lookup and lookup[s]['purer'] not in (None, '') and not (isinstance(lookup[s]['purer'], float) and pd.isna(lookup[s]['purer']))]
-        micros = []
-        for s in b['therapist_seg_ids']:
-            if s in lookup:
-                micros.extend([m for m in lookup[s]['microskills'] if m])
         dom_purer = _purer_label(Counter(purers).most_common(1)[0][0]) if purers else None
-        dom_micro = Counter(micros).most_common(1)[0][0] if micros else None
 
         # Continuous move direction (deadband around 0 = "stabilize/deepen within-stage").
         if delta > 0.15:
@@ -148,7 +140,6 @@ def _enrich_blocks(blocks: List[dict], lookup: Dict[str, dict],
             'from_entropy': fl['mixture_entropy'],
             'from_mixture': fl['mixture'],
             'dominant_purer': dom_purer,
-            'dominant_microskill': dom_micro,
             'cue_motif': block_motifs.get((b['from_seg_id'], b['to_seg_id'])),
             'n_therapist_segments': len(b['therapist_seg_ids']),
             'delta_direction': ddir,           # continuous-coordinate movement class
@@ -269,18 +260,46 @@ def _liminality_leverage(blocks: List[dict]) -> dict:
     return summary
 
 
+def _into_avoidance_moves(blocks: List[dict]) -> List[dict]:
+    """Therapist moves co-occurring with participants sliding INTO Avoidance.
+
+    Counterpart to the cross-OUT ranking: blocks that land in Avoidance from a
+    different (usually higher) stage. Ranked most-negative Δprogression first so
+    the strongest backward pulls surface at the top.
+    """
+    into_blocks = [b for b in blocks
+                   if b.get('to_stage') == AVOIDANCE and b.get('from_stage') not in (None, AVOIDANCE)]
+    by_move: Dict[object, List[float]] = {}
+    for b in into_blocks:
+        mv = b.get('dominant_purer')
+        if mv is None:
+            continue
+        by_move.setdefault(mv, []).append(b['delta_prog'])
+    rows = [{'behavior': mv, 'n': len(ds), 'mean_delta_prog': round(float(np.mean(ds)), 4)}
+            for mv, ds in by_move.items() if len(ds) >= 2]
+    rows.sort(key=lambda r: r['mean_delta_prog'])  # most negative (strongest pull back) first
+    return rows, len(into_blocks)
+
+
 def _avoidance_barrier(blocks: List[dict], framework: dict) -> dict:
-    """What therapist language crosses participants out of Avoidance, ranked by Δprog."""
+    """What therapist language moves participants out of — and back into — Avoidance.
+
+    The OUT-of-Avoidance rankings (`by_*`) carry signed Δprogression, so the report
+    can show BOTH the forward language (helps cross the barrier) and the language
+    associated with stalling/backsliding. `into_avoidance` is the complementary view
+    of moves co-occurring with regressions INTO Avoidance from higher stages.
+    """
     av_blocks = [b for b in blocks if b['from_stage'] == AVOIDANCE]
     by_purer = _agg_delta(av_blocks, framework, 'dominant_purer', 'avoidance_purer', min_n=2)
-    by_micro = _agg_delta(av_blocks, framework, 'dominant_microskill', 'avoidance_microskill', min_n=2)
     by_motif = _agg_delta(av_blocks, framework, 'cue_motif', 'avoidance_motif', min_n=2)
+    into_rows, n_into = _into_avoidance_moves(blocks)
     return {
         'n_avoidance_blocks': len(av_blocks),
         'mean_delta_from_avoidance': round(float(np.mean([b['delta_prog'] for b in av_blocks])), 4) if av_blocks else None,
         'by_purer': by_purer,
-        'by_microskill': by_micro,
         'by_motif': by_motif,
+        'n_into_avoidance': n_into,
+        'into_avoidance': into_rows,
     }
 
 
@@ -456,7 +475,7 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
     L.append("  at the same starting stage); * = survives Benjamini–Hochberg FDR (q<.05).")
     L.append("  prog/stab/reg = blocks that progressed / stabilized within-stage / regressed.")
     if delta_rows:
-        for grouping in ('purer', 'microskill', 'motif'):
+        for grouping in ('purer', 'motif'):
             grows = [r for r in delta_rows if r['grouping'] == grouping]
             if not grows:
                 continue
@@ -493,7 +512,7 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
     L.append("-" * 78)
     L.append(f"  Avoidance cue blocks: {avoidance['n_avoidance_blocks']}  "
              f"(mean Δprogression from Avoidance: {avoidance['mean_delta_from_avoidance']})")
-    for label, key in (('PURER', 'by_purer'), ('Microskill', 'by_microskill'), ('Motif', 'by_motif')):
+    for label, key in (('PURER', 'by_purer'), ('Motif', 'by_motif')):
         ranked = [r for r in avoidance[key] if r['mean_delta_prog'] > 0][:6]
         if ranked:
             L.append(f"\n  Top {label} movers out of Avoidance:")
@@ -565,22 +584,43 @@ def _write_avoidance_report(avoidance, cusp_density, framework, path) -> str:
     L.append("This report ranks therapist language by the continuous Δprogression it is")
     L.append("associated with when participants begin in Avoidance, and tracks how the")
     L.append("Avoidance↔Attention-Regulation cusp density shifts across the program.")
+    L.append("Reported in BOTH directions: language associated with crossing FORWARD out of")
+    L.append("Avoidance, and language associated with STALLING or sliding back into it — so")
+    L.append("the barrier can be read as something to lean into, not only as failures.")
     L.append("DIRECTIONAL — associational, curriculum-actionable hypotheses, not causal claims.")
     L.append("")
     L.append(f"Avoidance cue blocks analysed: {avoidance['n_avoidance_blocks']}")
     L.append(f"Mean Δprogression out of Avoidance: {avoidance['mean_delta_from_avoidance']}")
+    L.append(f"Blocks landing back IN Avoidance from a higher stage: {avoidance.get('n_into_avoidance', 0)}")
     L.append("")
-    for label, key in (('PURER move', 'by_purer'), ('Microskill', 'by_microskill'), ('Cue motif', 'by_motif')):
+
+    def _emit(rows, title):
+        L.append("-" * 78)
+        L.append(title)
+        L.append("-" * 78)
+        if not rows:
+            L.append("  (none meeting the minimum-count threshold)")
+            L.append("")
+            return
+        for r in rows:
+            L.append(f"  {str(r['behavior'])[:34]:<34} Δ={r['mean_delta_prog']:+.3f} "
+                     f"(±{r.get('sd_delta_prog', 0):.2f}, n={r['n']})")
+        L.append("")
+
+    for label, key in (('PURER move', 'by_purer'), ('Cue motif', 'by_motif')):
         ranked = avoidance[key]
         if not ranked:
             continue
-        L.append("-" * 78)
-        L.append(f"{label} ranked by Δprogression from Avoidance")
-        L.append("-" * 78)
-        for r in ranked:
-            L.append(f"  {str(r['behavior'])[:34]:<34} Δ={r['mean_delta_prog']:+.3f} "
-                     f"(±{r['sd_delta_prog']:.2f}, n={r['n']})")
-        L.append("")
+        forward = [r for r in ranked if r['mean_delta_prog'] > 0]
+        stuck = sorted([r for r in ranked if r['mean_delta_prog'] <= 0],
+                       key=lambda r: r['mean_delta_prog'])  # most negative first
+        _emit(forward, f"{label} — HELPS CROSS FORWARD out of Avoidance (Δ>0)")
+        _emit(stuck, f"{label} — STALLS / PULLS BACK while in Avoidance (Δ≤0)")
+
+    into_rows = avoidance.get('into_avoidance') or []
+    if into_rows:
+        _emit(into_rows, "Therapist moves co-occurring with sliding BACK INTO Avoidance (from a higher stage)")
+
     if cusp_density:
         L.append("-" * 78)
         L.append("Avoidance↔Attention-Regulation cusp density by session")
@@ -620,7 +660,6 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
     # 1. Δprogression mechanism table.
     delta_rows = []
     delta_rows += _agg_delta(enriched, framework, 'dominant_purer', 'purer')
-    delta_rows += _agg_delta(enriched, framework, 'dominant_microskill', 'microskill')
     delta_rows += _agg_delta(enriched, framework, 'cue_motif', 'motif')
     p = _write_csv(delta_rows, os.path.join(mech_dir, 'mechanism_delta_progression.csv'))
     if p:
@@ -637,7 +676,7 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
     # 3. Avoidance barrier + cusp density.
     avoidance = _avoidance_barrier(enriched, framework)
     cusp_density = _cusp_density_by_session(df)
-    av_rows = avoidance['by_purer'] + avoidance['by_microskill'] + avoidance['by_motif']
+    av_rows = avoidance['by_purer'] + avoidance['by_motif']
     p = _write_csv(av_rows, os.path.join(mech_dir, 'mechanism_avoidance_barrier.csv'))
     if p:
         files_written.append(p)
@@ -661,17 +700,20 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
     # 6. Construct validity (GNN↔LLM convergence triangulation).
     construct = _construct_validity(output_dir)
 
-    # Reports.
-    rep_dir = _paths.human_reports_dir(output_dir)
-    os.makedirs(rep_dir, exist_ok=True)
+    # Reports. Mechanism lives under 02_mechanism/, the avoidance-barrier dossier
+    # is a program-outcome question, so it lives under 01_outcomes/.
+    mech_dir = _paths.reports_mechanism_dir(output_dir)
+    out_dir = _paths.reports_outcomes_dir(output_dir)
+    os.makedirs(mech_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
     files_written.append(_write_mechanism_report(
         delta_rows, liminality, avoidance, cusp_density, trajectories, construct,
-        framework, os.path.join(rep_dir, 'report_mechanism.txt'),
+        framework, os.path.join(mech_dir, 'mechanism.txt'),
         mixed_rows=mixed_rows,
     ))
     files_written.append(_write_avoidance_report(
         avoidance, cusp_density, framework,
-        os.path.join(rep_dir, 'report_avoidance_barrier.txt'),
+        os.path.join(out_dir, 'avoidance_barrier.txt'),
     ))
 
     # Figures that depend on the CSVs just written.

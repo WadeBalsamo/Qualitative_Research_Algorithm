@@ -250,7 +250,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
         ref_path = generate_codebook_text_report(df, framework, output_dir)
         if ref_path:
             files_generated.append(ref_path)
-            log("    Codebook exemplars: 06_reports/per_theme/codebook_exemplars.txt")
+            log("    Codebook exemplars: 06_reports/05_per_stage/codebook_exemplars.txt")
     except Exception as e:
         print(f"  Warning: codebook exemplars report failed: {e}")
         if verbose:
@@ -370,7 +370,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                 )
                 from process import output_paths as _paths2
                 txt_paths.append(_paths2.session_summaries_json_path(output_dir))
-                txt_paths.append(os.path.join(_paths2.human_reports_dir(output_dir), 'session_summaries.txt'))
+                txt_paths.append(os.path.join(_paths2.reports_per_session_dir(output_dir), 'session_summaries.txt'))
                 log(f"    Session summaries generated for {len(session_summaries)} sessions.")
             except Exception as _e:
                 print(f"  Warning: session summaries generation failed: {_e}")
@@ -457,6 +457,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
         if _gnn_cfg is None and force_gnn:
             from gnn_layer.config import GnnLayerConfig
             _gnn_cfg = GnnLayerConfig(enabled=True)
+    _gnn_ran = False
     if df_all is not None and _gnn_cfg is not None and _gnn_enabled:
         try:
             from gnn_layer.runner import run_gnn_analysis
@@ -466,8 +467,22 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             )
             files_generated.extend(gnn_result.get('files_written', []))
             log(f"    GNN layer status: {gnn_result.get('status', 'ok')}")
+            _gnn_ran = gnn_result.get('status', '') != 'error'
         except Exception as e:
             print(f"  Warning: GNN layer failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+    # Append GNN motif cross-reference section to the PURER report (after GNN
+    # writes cue_motifs.csv / coupling_factors.csv; no-op if files absent).
+    if _gnn_ran:
+        try:
+            from .purer_analysis import append_gnn_motif_section
+            gnn_motif_section = append_gnn_motif_section(output_dir)
+            if gnn_motif_section is not None:
+                log("    GNN motif section appended to 06_reports/02_mechanism/purer.txt.")
+        except Exception as e:
+            print(f"  Warning: GNN motif section append failed: {e}")
             if verbose:
                 traceback.print_exc()
 
@@ -499,7 +514,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             sp_path = generate_superposition_report(df, framework, output_dir)
             if sp_path:
                 files_generated.append(sp_path)
-                log("    Superposition report: 06_reports/report_superposition.txt")
+                log("    Superposition report: 06_reports/02_mechanism/superposition.txt")
         except Exception as e:
             print(f"  Warning: superposition report failed: {e}")
             if verbose:
@@ -522,7 +537,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                 log("    Running program-efficacy analysis...")
                 eff_result = run_efficacy_analysis(df, framework, output_dir, config=_eff_cfg)
                 files_generated.extend(eff_result.get('files_written', []))
-                log("    Efficacy report: 06_reports/report_program_efficacy.txt")
+                log("    Progression summary: 06_reports/01_outcomes/progression_summary.txt")
             except Exception as e:
                 print(f"  Warning: efficacy analysis failed: {e}")
                 if verbose:
@@ -547,11 +562,39 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                 atlas_path = generate_language_atlas(df, df_all, framework, output_dir)
                 if atlas_path:
                     files_generated.append(atlas_path)
-                    log("    Language atlas: 06_reports/report_language_atlas.txt")
+                    log("    Language atlas: 06_reports/02_mechanism/language_atlas.txt")
             except Exception as e:
                 print(f"  Warning: language atlas failed: {e}")
                 if verbose:
                     traceback.print_exc()
+
+    # ----------------------------------------------------------------
+    # 13. Top-level synthesis: executive summary, methods appendix, READ_ME.
+    #     Written LAST so they can read every artifact the run produced.
+    # ----------------------------------------------------------------
+    log("[13/8] Writing executive summary, methods appendix, and reports READ_ME...")
+    try:
+        from .reports.executive_summary import generate_executive_summary
+        es_path = generate_executive_summary(output_dir, df, framework, df_all=df_all)
+        if es_path:
+            files_generated.append(es_path)
+            log("    Executive summary: 06_reports/00_executive_summary.txt")
+    except Exception as e:
+        print(f"  Warning: executive summary failed: {e}")
+        if verbose:
+            traceback.print_exc()
+    try:
+        from .reports.reports_guide import generate_methods_appendix, generate_reports_readme
+        ma_path = generate_methods_appendix(output_dir)
+        if ma_path:
+            files_generated.append(ma_path)
+        rm_path = generate_reports_readme(output_dir)
+        if rm_path:
+            files_generated.append(rm_path)
+    except Exception as e:
+        print(f"  Warning: reports guide failed: {e}")
+        if verbose:
+            traceback.print_exc()
 
     try:
         from process.output_index import write_index

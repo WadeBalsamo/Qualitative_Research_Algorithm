@@ -110,7 +110,7 @@ class ContentValiditySpec:
 class ContentValidityConfig:
     """Multi-kind content-validity configuration."""
     vaamr: ContentValiditySpec = field(
-        default_factory=lambda: ContentValiditySpec(enabled=False, name='cv_vaamr_v1')
+        default_factory=lambda: ContentValiditySpec(enabled=True, name='cv_vaamr_v1')
     )
     purer: ContentValiditySpec = field(
         default_factory=lambda: ContentValiditySpec(enabled=False, name='cv_purer_v1')
@@ -118,10 +118,6 @@ class ContentValidityConfig:
 
     def any_enabled(self) -> bool:
         return self.vaamr.enabled or self.purer.enabled
-
-
-# Phase 1 back-compat alias — remove with legacy_migration.py
-TestSetConfig = TestSetsConfig
 
 
 @dataclass
@@ -178,11 +174,21 @@ class PurerCueConfig:
         but with a wider window driven by ``purer_classification.context_window_segments``
         (default 6, vs 2 for VAAMR).  Increase this if therapist cue text is long
         and preceding exchanges are being truncated too aggressively.
+
+    max_cue_words : int
+        Word budget per sub-cue when splitting an over-long cue block.  Cue
+        blocks whose total therapist word count exceeds this value are split
+        along therapist turn boundaries into contiguous sub-cues, each staying
+        within the budget, before being sent to the LLM.  A single therapist
+        turn that alone exceeds the budget is sent as a singleton sub-cue.
+        Splitting produces finer-grained PURER labels (one per sub-cue) rather
+        than dropping or monolithically sending the block.
     """
     skip_lesson_content: bool = True
     max_lesson_words: int = 400
     therapist_max_gap_seconds: float = 120.0
     max_context_words: int = 1000
+    max_cue_words: int = 300   # words; cue blocks longer than this are split into contiguous sub-cues (along turn boundaries) before LLM classification, instead of being sent as one over-long prompt
 
 
 @dataclass
@@ -219,10 +225,12 @@ class SuperpositionConfig:
 
 @dataclass
 class EfficacyConfig:
-    """Program-efficacy dossier settings.
+    """Progression-summary settings (descriptive single-arm dossier).
 
-    Anchors the 'does it work' analysis on internal VAAMR progression and, when an
-    external clinical-outcomes CSV is provided, correlates progression against it.
+    Describes internal VAAMR language progression and, when an external clinical-
+    outcomes CSV is provided, correlates progression against it for CONVERGENT
+    VALIDITY (not efficacy — single-arm, observational). Keeps the 'efficacy' name
+    for config back-compat; the report is 06_reports/01_outcomes/progression_summary.txt.
     """
     enabled: bool = True
     # Participant-keyed CSV; absolute, or relative to the output dir. Default 02_meta/outcomes.csv.
@@ -251,7 +259,6 @@ class PipelineConfig:
     run_theme_labeler: bool = True
     run_codebook_classifier: bool = False
     run_purer_labeler: bool = True
-    run_microskill_classifier: bool = False
 
     # Sub-configs
     segmentation: SegmentationConfig = field(default_factory=SegmentationConfig)
@@ -263,10 +270,6 @@ class PipelineConfig:
     codebook_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
     codebook_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
     codebook_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
-    # Therapist microcounseling-skill codebook (sub-layer of PURER; mirrors VCE codebook config)
-    microskill_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
-    microskill_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
-    microskill_ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     test_sets: TestSetsConfig = field(default_factory=TestSetsConfig)
     content_validity: ContentValidityConfig = field(default_factory=ContentValidityConfig)
@@ -340,9 +343,6 @@ class PipelineConfig:
             'codebook_embedding': EmbeddingClassifierConfig,
             'codebook_llm': LLMCodebookConfig,
             'codebook_ensemble': EnsembleConfig,
-            'microskill_embedding': EmbeddingClassifierConfig,
-            'microskill_llm': LLMCodebookConfig,
-            'microskill_ensemble': EnsembleConfig,
             'validation': ValidationConfig,
             'confidence_tiers': ConfidenceTierConfig,
             'therapist_cues': TherapistCueConfig,
