@@ -73,24 +73,24 @@ class TestDeviceResolution(unittest.TestCase):
 
     def test_device_none_resolves_to_available(self):
         import torch
-        from gnn_layer.train import _device
+        from gnn_layer.classifier.train import _device
         dev = _device(GnnLayerConfig())
         expected = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.assertEqual(dev.type, expected)
 
     def test_explicit_device_honored(self):
-        from gnn_layer.train import _device
+        from gnn_layer.classifier.train import _device
         self.assertEqual(_device(GnnLayerConfig(device='cpu')).type, 'cpu')
 
     def test_set_seed_no_crash(self):
-        from gnn_layer.train import set_seed
+        from gnn_layer.classifier.train import set_seed
         set_seed(123)  # must seed CPU (and CUDA when available) without error
 
 
 class TestCheckpointDevice(unittest.TestCase):
 
     def test_load_checkpoint_on_configured_device(self):
-        from gnn_layer import graph_builder as gb, train as tr
+        from gnn_layer.classifier import graph_builder as gb, train as tr
         from gnn_layer.soft_labels import build_soft_targets
         cfg = GnnLayerConfig(hidden_dim=16, n_layers=2, knn_k=3, epochs=4,
                              cache_embeddings=False, seed=1,

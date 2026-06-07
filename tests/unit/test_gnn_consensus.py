@@ -118,7 +118,7 @@ class TestProvenanceTier(unittest.TestCase):
 
 class TestReliabilityGate(unittest.TestCase):
     def test_per_class_and_verdict(self):
-        from gnn_layer import validation as val
+        from gnn_layer.classifier import validation as val
         from gnn_layer.config import GnnLayerConfig
 
         # Build a tiny df with known LLM labels; cv_preds reproduce most of them.
@@ -144,7 +144,7 @@ class TestReliabilityGate(unittest.TestCase):
         self.assertAlmostEqual(m['vaamr_overall']['percent_agreement'], 0.8, places=3)
 
     def test_reports_written(self):
-        from gnn_layer import validation as val
+        from gnn_layer.classifier import validation as val
         from gnn_layer.config import GnnLayerConfig
         df = pd.DataFrame([dict(segment_id=f's{i}', final_label=i % 2,
                                 purer_primary=np.nan, in_human_coded_subset=False,
@@ -160,7 +160,7 @@ class TestReliabilityGate(unittest.TestCase):
 
     def test_gate_verdict_persisted_and_read_back(self):
         """write_gate_verdict persists ready_for_scaling; gate_ready_for_scaling reads it."""
-        from gnn_layer import validation as val
+        from gnn_layer.classifier import validation as val
         from gnn_layer.config import GnnLayerConfig
         # Perfect reproduction → gate passes.
         df = pd.DataFrame([dict(segment_id=f's{i}', final_label=i % 2,
@@ -177,14 +177,14 @@ class TestReliabilityGate(unittest.TestCase):
 
     def test_gate_ready_false_when_no_verdict_file(self):
         """A missing verdict file means not-ready (safe default — no promotion)."""
-        from gnn_layer import validation as val
+        from gnn_layer.classifier import validation as val
         out = tempfile.mkdtemp()
         self.assertIsNone(val.read_gate_verdict(out))
         self.assertFalse(val.gate_ready_for_scaling(out))
 
     def test_gate_verdict_records_failing_gate(self):
         """A failing gate (κ below target) persists ready_for_scaling=False."""
-        from gnn_layer import validation as val
+        from gnn_layer.classifier import validation as val
         from gnn_layer.config import GnnLayerConfig
         # Graph disagrees with LLM on half the rows → κ below a high target.
         df = pd.DataFrame([dict(segment_id=f's{i}', final_label=i % 2,
@@ -200,7 +200,7 @@ class TestReliabilityGate(unittest.TestCase):
 class TestCrossvalHoldout(unittest.TestCase):
     def test_subset_targets_masks_rows(self):
         import torch
-        from gnn_layer.train import _subset_targets
+        from gnn_layer.classifier.train import _subset_targets
         targets = {
             'vaamr_idx': torch.tensor([10, 11, 12, 13]),
             'vaamr_mix': torch.zeros((4, 5)),
@@ -237,7 +237,7 @@ class TestScaleModeNoLLM(unittest.TestCase):
         from gnn_layer.config import GnnLayerConfig
 
         df = T.synthetic_df(n_sessions=3)
-        cfg = GnnLayerConfig(enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=10,
+        cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=10,
                              n_motif_clusters=3, cache_embeddings=False, seed=1,
                              interpret_against_cf_ic=False, validation_folds=2,
                              objectives=['soft_vaamr', 'progression', 'purer'])

@@ -87,7 +87,7 @@ def build_vaamr_anchors(df_all, embeddings: Dict[str, "object"], config
     Returns ``({}, [])`` if the framework/embedder is unavailable (the arm then
     degrades to the plain ``run_gnn_arm`` graph).
     """
-    from gnn_layer import anchors as _anchors
+    from gnn_layer.classifier import anchors as _anchors
     return _anchors.build_anchors(df_all, embeddings, _vaamr_anchor_config(config))
 
 
@@ -115,9 +115,9 @@ def run_anchored_gnn_arm(df_all, embeddings: Dict[str, "object"],
     """
     import torch
     import torch.nn.functional as F
-    from gnn_layer import graph_builder as _gb
+    from gnn_layer.classifier import graph_builder as _gb
     from gnn_layer import soft_labels as _sl
-    from gnn_layer import train as _train
+    from gnn_layer.classifier import train as _train
     from gnn_layer.runner import _vocabs
 
     n_classes = int(getattr(config, 'vaamr_n_classes', 5))

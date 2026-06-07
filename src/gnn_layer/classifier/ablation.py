@@ -68,7 +68,7 @@ def vce_vaamr_contribution(graph, df_all, config) -> dict:
     from copy import deepcopy
     from .train import assemble_targets, crossval_predictions
     from .validation import evaluate_crossval
-    from . import soft_labels as _sl
+    from .. import soft_labels as _sl
 
     try:
         from codebook.phenomenology_codebook import get_phenomenology_codebook
@@ -150,7 +150,7 @@ def anchor_contribution(df_all, segment_embeddings: Dict[str, "object"], config,
     from copy import deepcopy
     from .train import assemble_targets, crossval_predictions
     from .validation import evaluate_crossval
-    from . import soft_labels as _sl
+    from .. import soft_labels as _sl
     from . import graph_builder as _gb
     from . import anchors as _anc
 
@@ -248,7 +248,7 @@ def precipitates_contribution(df_all, segment_embeddings: Dict[str, "object"], c
     from copy import deepcopy
     from .train import assemble_targets, crossval_predictions
     from .validation import evaluate_crossval
-    from . import soft_labels as _sl
+    from .. import soft_labels as _sl
     from . import graph_builder as _gb
 
     vce_codes = []

@@ -641,7 +641,7 @@ def _write_avoidance_report(avoidance, cusp_density, framework, path) -> str:
 def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
                            output_dir: str, framework: dict) -> dict:
     """Run the full mechanistic analysis. Returns {files_written, n_blocks}."""
-    from gnn_layer.inference import build_cue_blocks_with_segments
+    from gnn_layer.cue_features import build_cue_blocks_with_segments
 
     files_written: List[str] = []
     mech_dir = _paths.mechanism_dir(output_dir)

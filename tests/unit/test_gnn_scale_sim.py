@@ -22,7 +22,7 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from tests.testhelpers import synthetic_df
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer import validation as VAL
+from gnn_layer.classifier import validation as VAL
 
 
 def _seg_emb(df, dim=16, seed=0):
