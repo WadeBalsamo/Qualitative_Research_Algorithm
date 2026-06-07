@@ -77,6 +77,16 @@ def gnn_data_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '03_analysis_data', 'gnn')
 
 
+def probe_model_dir(run_dir: str) -> str:
+    """Persisted probe scaler bundle (per-rater LogReg probes + manifest)."""
+    return os.path.join(run_dir, '02_meta', 'probe')
+
+
+def probe_data_dir(run_dir: str) -> str:
+    """Machine-readable probe artifacts (probe_gate.json reliability verdict)."""
+    return os.path.join(run_dir, '03_analysis_data', 'probe')
+
+
 def mechanism_dir(run_dir: str) -> str:
     """Machine-readable mechanistic-analysis artifacts (Δprogression, liminality, trajectory types)."""
     return os.path.join(run_dir, '03_analysis_data', 'mechanism')
@@ -221,6 +231,11 @@ def reports_per_participant_dir(run_dir: str) -> str:
 def reports_gnn_dir(run_dir: str) -> str:
     """GNN discovery & validation reports (validation, triangulation, motifs, coupling)."""
     return os.path.join(run_dir, '06_reports', '06_gnn')
+
+
+def reports_classifier_dir(run_dir: str) -> str:
+    """LLM-free classifier (probe) reliability reports — separate from 06_gnn (mechanism)."""
+    return os.path.join(run_dir, '06_reports', '06_classifier')
 
 
 def executive_summary_path(run_dir: str) -> str:
