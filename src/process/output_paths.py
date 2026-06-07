@@ -322,6 +322,7 @@ def classification_overlay_path(run_dir: str, key: str) -> str:
         'codebook': 'codebook_labels.jsonl',
         'cv': 'cross_validation_labels.jsonl',
         'gnn': 'gnn_labels.jsonl',
+        'probe': 'probe_labels.jsonl',
     }
     return os.path.join(classifications_dir(run_dir), _filenames[key])
 
