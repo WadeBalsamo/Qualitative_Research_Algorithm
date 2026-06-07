@@ -75,21 +75,62 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
 
     from process import output_paths as _paths
     from . import embeddings as _emb
-    from . import soft_labels as _sl
-    from . import graph_builder as _gb
-    from . import train as _train
-    from . import inference as _inf
 
-    # ---- embeddings (reuse Qwen3; cache to 02_meta/gnn) ----
+    # ---- embeddings (RAW; the shared substrate for BOTH concerns; cache to 02_meta/gnn) ----
     cache_path = os.path.join(_paths.gnn_model_dir(output_dir), 'segment_embeddings.npz')
     try:
         seg_emb = _emb.load_or_build_segment_embeddings(df_all, config, cache_path=cache_path)
     except Exception as e:
         _log(verbose, f"embeddings unavailable ({e}); skipping layer.")
-        return {'files_written': files, 'status': 'skipped: embeddings unavailable',
-                'n_segments': len(df_all)}
+        return {'files_written': files, 'status': 'skipped: embeddings unavailable', 'n_segments': len(df_all)}
     if not seg_emb:
         return {'files_written': files, 'status': 'skipped: no embeddings', 'n_segments': len(df_all)}
+
+    # ---- GNN consensus-distillation CLASSIFIER (separate concern; DEFAULT OFF) ----
+    # The pilot refuted its scaler role (H5: grouped-CV kappa 0.05-0.14, below human-human; a Qwen
+    # probe ties/beats it). The LLM consensus / probe remain the labels of record. See
+    # gnn_layer/classifier/__init__.py, docs/graph_experiments.md, methodology Section 8.5. Enable
+    # to re-adjudicate at Cohorts 3-4 scale (config.gnn_classifier_enabled=True).
+    if getattr(config, 'gnn_classifier_enabled', False):
+        _log(verbose, "GNN classifier ENABLED (non-default; H5-refuted at pilot scale).")
+        try:
+            _run_classifier_layer(df_all, seg_emb, output_dir, framework, config, files, verbose)
+        except Exception as e:
+            _log(verbose, f"GNN classifier layer failed: {e}")
+            if verbose:
+                traceback.print_exc()
+    else:
+        _log(verbose, "GNN classifier OFF (default; LLM consensus / probe are labels of record). "
+                      "Running discovery + mechanism work-streams on raw embeddings.")
+
+    # ---- Discovery + mechanism work-streams (DEFAULT ON; raw embeddings, no trained model) ----
+    _run_discovery_layer(df_all, seg_emb, output_dir, framework, config, files, verbose)
+
+    # ---- Figures (render whatever GNN data exists; each plotter is guarded) ----
+    try:
+        from . import figures as _gfigs
+        fig_paths = _gfigs.generate_gnn_figures(output_dir, irr_target=getattr(config, 'irr_target', 0.70))
+        files.extend(fig_paths)
+        if fig_paths:
+            _log(verbose, f"GNN figures: {[os.path.basename(p) for p in fig_paths]}")
+    except Exception as e:
+        _log(verbose, f"GNN figures failed: {e}")
+
+    return {'files_written': files, 'status': 'ok', 'n_segments': len(df_all), 'n_files': len(files)}
+
+
+def _run_classifier_layer(df_all, seg_emb, output_dir, framework, config, files, verbose):
+    """GraphSAGE consensus-distillation classifier + reliability gate + its capabilities — a
+    SEPARATE CONCERN, default OFF (gnn_classifier_enabled). Mutates ``files``. Pilot-refuted as a
+    scaler (H5); kept as the documented gate/distillation instrument, re-adjudicable at Cohorts
+    3-4 scale. See gnn_layer/classifier/__init__.py."""
+    import os
+    from process import output_paths as _paths
+    from . import embeddings as _emb
+    from . import soft_labels as _sl
+    from .classifier import graph_builder as _gb
+    from .classifier import train as _train
+    from .classifier import inference as _inf
 
     # ---- graph + soft targets + train ----
     try:
@@ -99,7 +140,7 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
         anchor_features = anchor_edges = None
         if getattr(config, 'use_anchor_nodes', False):
             try:
-                from . import anchors as _anc
+                from .classifier import anchors as _anc
                 anchor_features, anchor_edges = _anc.build_anchors(df_all, seg_emb, config)
                 if anchor_features:
                     _log(verbose, f"anchors ON: {len(anchor_features)} nodes, "
@@ -129,12 +170,12 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
         _log(verbose, f"graph/training failed: {e}")
         if verbose:
             traceback.print_exc()
-        return {'files_written': files, 'status': f'failed: {e}', 'n_segments': len(df_all)}
+        return  # graph/training failed; discovery layer still runs
 
     # ---- Reliability gate: out-of-sample per-stage / per-move κ vs LLM consensus ----
     # This is the over-smoothing safeguard and the trigger for LLM-free scaling.
     try:
-        from . import validation as _val
+        from .classifier import validation as _val
         # Request held-out logits so A3 temperature calibration can reuse this CV.
         # Participant-grouped CV (honest default): hold out WHOLE participants so the gate κ
         # is not inflated by transcript-graph leakage (graph_experiments.md §4.5). Participant
@@ -154,7 +195,7 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
             # ---- A3 temperature calibration (fit on the same held-out CV) ----
             if getattr(config, 'calibrate', False):
                 try:
-                    from . import calibration as _cal
+                    from .classifier import calibration as _cal
                     cal = _cal.temperature_from_cv(cv, df_all)
                     config.calibration_temperature = cal['temperature']
                     vm['calibration'] = cal
@@ -184,7 +225,7 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     # GNN<->LLM by construction, so that axis is reported but never decisive).
     if getattr(config, 'run_anchor_ablation', False):
         try:
-            from . import ablation as _abl
+            from .classifier import ablation as _abl
             anc_res = _abl.anchor_contribution(df_all, seg_emb, config, framework=framework)
             files.append(_abl.write_anchor_contribution_report(anc_res, output_dir))
             _log(verbose, f"anchor ablation: verdict={anc_res.get('verdict')}, "
@@ -199,7 +240,7 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     # folds/seed and compares out-of-sample κ on BOTH the human and LLM axes.
     if getattr(config, 'run_precipitates_ablation', False):
         try:
-            from . import ablation as _abl
+            from .classifier import ablation as _abl
             prec_res = _abl.precipitates_contribution(df_all, seg_emb, config, framework=framework)
             files.append(_abl.write_precipitates_contribution_report(prec_res, output_dir))
             _log(verbose, f"precipitates ablation: verdict={prec_res.get('verdict')}, "
@@ -212,7 +253,7 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     # ---- A4: semi-supervised label propagation (measured) ----
     if getattr(config, 'label_propagation', False):
         try:
-            from . import propagation as _prop
+            from .classifier import propagation as _prop
             prop_res = _prop.propagation_contribution(graph, targets, config, df_all,
                                                       n_vce=len(vce_codes))
             files.append(_prop.write_propagation_report(prop_res, output_dir))
@@ -226,7 +267,7 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     # ---- A5: scale-mode simulation gate (inductive whole-session holdout) ----
     if getattr(config, 'run_scale_sim', False):
         try:
-            from . import validation as _val
+            from .classifier import validation as _val
             sim_res = _val.scale_mode_simulation(df_all, seg_emb, config,
                                                  framework=framework, vce_codes=vce_codes)
             files.append(_val.write_scale_sim_report(sim_res, output_dir))
@@ -250,7 +291,7 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     # ---- Capability C(i): extract trained head predictions + triangulate ----
     try:
         from . import reports as _rep
-        from . import triangulation as _tri
+        from .classifier import triangulation as _tri
         head_preds = _inf.infer_head_predictions(model, graph, config)
         if any(k.startswith('gnn_') for k in head_preds):
             files.append(_rep.write_gnn_head_predictions(head_preds, output_dir))
@@ -272,7 +313,7 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     # "independent measurement" claim.
     if getattr(config, 'report_independence_pass', True):
         try:
-            from . import triangulation as _tri
+            from .classifier import triangulation as _tri
             ind_mode = _independence_mode(config, df_all)
             if ind_mode:
                 ind_soft = _sl.build_soft_targets(df_all, ind_mode)
@@ -357,12 +398,67 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
             if mix is not None and positions['node_type'][i] == 'participant_segment':
                 gnn_stage_by_id[sid] = int(np.argmax(mix[i]))
 
+    # ---- Capability C: GNN-vs-LLM lift ----
+    try:
+        from .classifier import gnn_lift as _lift
+        from . import reports as _rep
+        if gnn_stage_by_id:
+            gnn_t = _lift.gnn_vaamr_vce_lift(df_all, gnn_stage_by_id)
+            llm_t = _lift.llm_vaamr_vce_lift(df_all)
+            files.append(_rep.write_gnn_vs_llm_lift(_lift.compare_gnn_vs_llm(gnn_t, llm_t), output_dir))
+    except Exception as e:
+        _log(verbose, f"lift tables failed: {e}")
+
+    # ---- Capability D: ablation — which construct heads carry signal? ----
+    if getattr(config, 'run_gnn_ablation', False):
+        try:
+            from .classifier import ablation as _abl
+            from . import reports as _rep
+            abl_rows = []
+            for head in ('vce', 'purer'):
+                obj = {'vce': 'vce_multilabel', 'purer': 'purer'}[head]
+                if obj not in config.objectives:
+                    continue
+                abl_rows.append(_abl.run_ablation(
+                    graph, targets, config, ablate=head, n_vce=len(vce_codes)))
+            if abl_rows:
+                files.append(_rep.write_gnn_construct_signal(abl_rows, output_dir))
+                _log(verbose, f"ablation: ranked {len(abl_rows)} construct heads by signal")
+        except Exception as e:
+            _log(verbose, f"ablation failed: {e}")
+
+    # ---- VCE-on-VAAMR hypothesis: does the granular codebook sharpen the arc? ----
+    # Direct A/B: held-out VAAMR κ with vs without the VCE multi-label layer (§3.3/§5.2).
+    if getattr(config, 'test_vce_layer', False):
+        try:
+            from .classifier import ablation as _abl
+            from . import reports as _rep
+            vce_res = _abl.vce_vaamr_contribution(graph, df_all, config)
+            path = _rep.write_vce_contribution(vce_res, output_dir)
+            if path:
+                files.append(path)
+                _log(verbose, f"VCE-on-VAAMR test: Δκ={vce_res.get('delta_kappa')} "
+                              f"({vce_res.get('verdict')})")
+            else:
+                _log(verbose, f"VCE-on-VAAMR test {vce_res.get('status', 'produced no report')}")
+        except Exception as e:
+            _log(verbose, f"VCE-on-VAAMR test failed: {e}")
+
+
+def _run_discovery_layer(df_all, seg_emb, output_dir, framework, config, files, verbose):
+    """Discovery + mechanism work-streams on RAW embeddings, independent of the classifier:
+    cue motifs, coupling factors, the dyadic transition model (mechanism), confound localization,
+    subtext communities + dyadic routines, and H6 discriminant validity. Mutates ``files``."""
+    import os
+    from collections import Counter
+    from . import cue_features as _cue
+
     # ---- Capability B: cue motifs ----
     try:
         from . import motifs as _mot
         from . import reports as _rep
-        blocks = _inf.build_cue_blocks_with_segments(df_all)
-        rows, cue_X = _inf.cue_block_embeddings(blocks, seg_gnn_emb)
+        blocks = _cue.build_cue_blocks_with_segments(df_all)
+        rows, cue_X = _cue.cue_block_embeddings(blocks, seg_emb)  # raw embeddings — discovery decoupled from classifier training (H6/§4.7)
         if len(rows) >= 2:
             motif_ids = _mot.cluster_cue_motifs(cue_X, config)
             from_stages = [r['from_stage'] for r in rows]
@@ -390,23 +486,12 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
         if verbose:
             traceback.print_exc()
 
-    # ---- Capability C: GNN-vs-LLM lift ----
-    try:
-        from . import gnn_lift as _lift
-        from . import reports as _rep
-        if gnn_stage_by_id:
-            gnn_t = _lift.gnn_vaamr_vce_lift(df_all, gnn_stage_by_id)
-            llm_t = _lift.llm_vaamr_vce_lift(df_all)
-            files.append(_rep.write_gnn_vs_llm_lift(_lift.compare_gnn_vs_llm(gnn_t, llm_t), output_dir))
-    except Exception as e:
-        _log(verbose, f"lift tables failed: {e}")
-
     # ---- Capability E: coupling / latent factors ----
     try:
         from . import coupling as _cp
         from . import reports as _rep
-        blocks = _inf.build_cue_blocks_with_segments(df_all)
-        rows, cue_X = _inf.cue_block_embeddings(blocks, seg_gnn_emb)
+        blocks = _cue.build_cue_blocks_with_segments(df_all)
+        rows, cue_X = _cue.cue_block_embeddings(blocks, seg_emb)  # raw embeddings — discovery decoupled from classifier training (H6/§4.7)
         if len(rows) >= 2:
             forward = [1 if r['to_stage'] > r['from_stage'] else 0 for r in rows]
             factors = _cp.extract_latent_factors(cue_X, forward, config)
@@ -432,70 +517,41 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
     except Exception as e:
         _log(verbose, f"coupling failed: {e}")
 
-    # ---- Capability D: ablation — which construct heads carry signal? ----
-    if getattr(config, 'run_gnn_ablation', False):
+    # ---- Mechanism: dyadic FROM→CUE→TO transition model (the rebuild) ----
+    # Replaces the mis-specified mechanism-on-classifier counterfactual. A small learned response
+    # function over cue-block triples (NO kNN; FROM-stage conditioned), validated by its own
+    # earns-its-place participant-grouped CV and triangulated against the observed Δprogression
+    # (analysis/mechanism.py LEAD). Gate-INDEPENDENT — it is its own instrument, not a readout of
+    # the classifier. Sensitivity analysis, NOT causation (§9.4).
+    _trans_result = None
+    if getattr(config, 'transition_model', False):
         try:
-            from . import ablation as _abl
-            from . import reports as _rep
-            abl_rows = []
-            for head in ('vce', 'purer'):
-                obj = {'vce': 'vce_multilabel', 'purer': 'purer'}[head]
-                if obj not in config.objectives:
-                    continue
-                abl_rows.append(_abl.run_ablation(
-                    graph, targets, config, ablate=head, n_vce=len(vce_codes)))
-            if abl_rows:
-                files.append(_rep.write_gnn_construct_signal(abl_rows, output_dir))
-                _log(verbose, f"ablation: ranked {len(abl_rows)} construct heads by signal")
+            from . import transition as _trans
+            _trans_result = _trans.run_transition_model(df_all, output_dir, config,
+                                                        seg_emb=seg_emb, verbose=verbose)
+            files.extend(_trans_result.get('files_written', []))
+            d = (_trans_result.get('cv') or {}).get('delta_cue_minus_from', {})
+            _log(verbose, f"transition model: {_trans_result.get('status')}"
+                 + (f"; held-out Δ(cue−from) KL={d.get('kl')}"
+                    if _trans_result.get('status') == 'ok' else ''))
         except Exception as e:
-            _log(verbose, f"ablation failed: {e}")
+            _log(verbose, f"transition model failed: {e}")
+            if verbose:
+                traceback.print_exc()
 
-    # ---- VCE-on-VAAMR hypothesis: does the granular codebook sharpen the arc? ----
-    # Direct A/B: held-out VAAMR κ with vs without the VCE multi-label layer (§3.3/§5.2).
-    if getattr(config, 'test_vce_layer', False):
+    # ---- WS3: confound localization — learned counterfactual vs observed Δprogression ----
+    # Signed-divergence map per (from_stage × move): where responsiveness most distorts the
+    # observed mechanism table. A caveat instrument, NOT a claim. Reuses the transition result.
+    if getattr(config, 'confound_localization', False):
         try:
-            from . import ablation as _abl
-            from . import reports as _rep
-            vce_res = _abl.vce_vaamr_contribution(graph, df_all, config)
-            path = _rep.write_vce_contribution(vce_res, output_dir)
-            if path:
-                files.append(path)
-                _log(verbose, f"VCE-on-VAAMR test: Δκ={vce_res.get('delta_kappa')} "
-                              f"({vce_res.get('verdict')})")
-            else:
-                _log(verbose, f"VCE-on-VAAMR test {vce_res.get('status', 'produced no report')}")
+            from . import confound as _conf
+            cres = _conf.run_confound_localization(df_all, output_dir, config,
+                                                   transition_result=_trans_result,
+                                                   seg_emb=seg_emb, verbose=verbose)
+            files.extend(cres.get('files_written', []))
+            _log(verbose, f"confound localization: {cres.get('status')}")
         except Exception as e:
-            _log(verbose, f"VCE-on-VAAMR test failed: {e}")
-
-    # ---- Track B3/B4/B5: model-counterfactual influence (GATED on the reliability gate) ----
-    # The observed Δprogression (analysis/mechanism.py) is the LEAD signal; this is the GNN's
-    # secondary, corroborating lens. It runs ONLY from a gate-passing model — an un-gated
-    # graph's counterfactuals are not trustworthy enough to inform the MindfulBERT dataset.
-    if getattr(config, 'counterfactual', False):
-        try:
-            from . import validation as _val
-            if not _val.gate_ready_for_scaling(output_dir):
-                _log(verbose, "counterfactual influence suppressed: reliability gate not passed "
-                              "(needs ready_for_scaling=YES)")
-            else:
-                from . import influence as _infl
-                infl_res = _infl.counterfactual_influence(model, graph, df_all, config)
-                if infl_res.get('status'):
-                    _log(verbose, f"counterfactual influence {infl_res['status']}")
-                else:
-                    tri = _infl.triangulate(infl_res, output_dir)
-                    p = _infl.write_influence_csv(infl_res, output_dir)
-                    if p:
-                        files.append(p)
-                    files.append(_infl.write_influence_report(infl_res, tri, output_dir))
-                    if getattr(config, 'counterfactual_subgroups', False):
-                        sp = _infl.subgroup_influence(infl_res, df_all, output_dir)
-                        if sp:
-                            files.append(sp)
-                    _log(verbose, f"counterfactual influence: {infl_res.get('n_blocks')} blocks"
-                                  + (f", Spearman ρ={tri.get('spearman')}" if tri else ""))
-        except Exception as e:
-            _log(verbose, f"counterfactual influence failed: {e}")
+            _log(verbose, f"confound localization failed: {e}")
             if verbose:
                 traceback.print_exc()
 
@@ -516,18 +572,23 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
             if verbose:
                 traceback.print_exc()
 
-    # ---- Figures (render whatever GNN data exists; each plotter is guarded) ----
-    try:
-        from . import figures as _gfigs
-        fig_paths = _gfigs.generate_gnn_figures(output_dir, irr_target=getattr(config, 'irr_target', 0.70))
-        files.extend(fig_paths)
-        if fig_paths:
-            _log(verbose, f"GNN figures: {[os.path.basename(p) for p in fig_paths]}")
-    except Exception as e:
-        _log(verbose, f"GNN figures failed: {e}")
+    # ---- H6 discriminant validity (construct validation; gate-independent; raw Qwen) ----
+    # Packages the H5-refutation as the positive H6 finding (probe recovers VAAMR while a
+    # content-similarity model ≈ chance on the SAME embeddings) + the homophily geometry that
+    # justifies dropping kNN for the mechanism model. Reuses the reliability harness.
+    if getattr(config, 'discriminant_validity', False):
+        try:
+            from . import discriminant as _disc
+            dres = _disc.run_discriminant_validity(df_all, output_dir, config,
+                                                   seg_emb=seg_emb, verbose=verbose)
+            files.extend(dres.get('files_written', []))
+            _log(verbose, f"H6 discriminant validity: {dres.get('status')}")
+        except Exception as e:
+            _log(verbose, f"discriminant validity failed: {e}")
+            if verbose:
+                traceback.print_exc()
 
-    return {'files_written': files, 'status': 'ok', 'n_segments': len(df_all),
-            'n_files': len(files)}
+
 
 
 def _is_int(v):
@@ -577,9 +638,9 @@ def run_gnn_classify(df_all, output_dir, framework=None, config=None,
 
     from process import output_paths as _paths
     from . import embeddings as _emb
-    from . import graph_builder as _gb
-    from . import train as _train
-    from . import inference as _inf
+    from .classifier import graph_builder as _gb
+    from .classifier import train as _train
+    from .classifier import inference as _inf
     from process import classifications_io as _cio
     from classification_tools.data_structures import Segment as _Seg
 
@@ -615,7 +676,7 @@ def run_gnn_classify(df_all, output_dir, framework=None, config=None,
         # Reuse the temperature fitted at analyze time (A3) so scale-mode confidences are
         # calibrated identically to the gate; the persisted verdict is the source of truth.
         if getattr(config, 'calibrate', False) and getattr(config, 'calibration_temperature', None) is None:
-            from . import validation as _val
+            from .classifier import validation as _val
             _v = _val.read_gate_verdict(output_dir) or {}
             if _v.get('calibration_temperature') is not None:
                 config.calibration_temperature = float(_v['calibration_temperature'])
@@ -643,7 +704,7 @@ def run_gnn_classify(df_all, output_dir, framework=None, config=None,
     if _ood_thr is not None and base_graph is not None:
         try:
             import numpy as np
-            from . import calibration as _cal
+            from .classifier import calibration as _cal
             new_ids = [sid for sid in seg_emb if sid not in base_graph.index_of]
             if new_ids:
                 base_X = base_graph.x.detach().cpu().numpy()

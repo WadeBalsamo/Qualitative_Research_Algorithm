@@ -13,9 +13,9 @@ with a label:
 
   PRIMARY label  = the OBSERVED Δprogression of the block (signed E[stage] change + a
                    categorical direction). This is the label of record (master plan D6/D8).
-  AUGMENTATION   = an OPTIONAL, provenance-tagged GNN model-counterfactual "would-progress"
-                   channel (C3), produced ONLY from a gate-passing model and never silently
-                   merged with the observed labels.
+  AUGMENTATION   = an OPTIONAL, provenance-tagged transition-model counterfactual "would-progress"
+                   channel (C3), sourced from gnn_layer/transition.py and never silently merged
+                   with the observed labels.
 
 Every example carries per-example **provenance + confidence** (label source tier, abstention
 flag, gate verdict). The augmentation channel is kept only if a held-out ablation (C4) shows
@@ -25,8 +25,8 @@ augmentation ablation result, and the n≈32 / observational / non-causal caveat
 
 Output: ``02_meta/training_data/mindfulbert_dataset.jsonl`` + ``mindfulbert_datasheet.{json,txt}``.
 
-GPU (D11): the optional C4 proxy is sklearn/CPU by design; only the upstream counterfactual
-channel (gnn_layer/influence.py) is GPU-relevant and follows the device mandate there.
+GPU (D11): the optional C4 proxy is sklearn/CPU by design; only the upstream transition-model
+counterfactual (gnn_layer/transition.py) is GPU-relevant and follows the device mandate there.
 """
 
 import datetime
@@ -141,7 +141,7 @@ def _direction(delta: float) -> str:
 
 def _build_examples(df_all, gate_passed: bool) -> List[dict]:
     """C1/C2 — one example per mediated cue block with observed-Δprogression labels + provenance."""
-    from gnn_layer.inference import build_cue_blocks_with_segments
+    from gnn_layer.cue_features import build_cue_blocks_with_segments
 
     lookup = _seg_index(df_all)
     blocks = build_cue_blocks_with_segments(df_all)
@@ -269,14 +269,16 @@ def _build_sft_view(examples) -> List[dict]:
 
 
 def _attach_augmentation(examples, output_dir: str) -> int:
-    """C3 — attach the GNN-counterfactual 'would-progress' channel (separate, provenance-tagged).
+    """C3 — attach the transition-model counterfactual 'would-progress' channel (provenance-tagged).
 
-    Reads the per-move counterfactual influence (gnn_layer/influence.py output) and tags each
-    example with the model's would-progress estimate for its dominant move. Returns the number
-    of examples that received the channel. Never overwrites the observed label.
+    Reads the per-move learned counterfactual influence from the dyadic transition model
+    (gnn_layer/transition.py → ``transition_per_move.csv``) and tags each example with the model's
+    would-progress estimate for its dominant move. Self-gates on the CSV existing (the transition
+    model having run). Returns the number of examples that received the channel; never overwrites
+    the observed label. Replaces the retired classifier-counterfactual source (influence.py).
     """
     import pandas as pd
-    path = os.path.join(_paths.gnn_data_dir(output_dir), 'gnn_counterfactual_influence.csv')
+    path = os.path.join(_paths.gnn_data_dir(output_dir), 'transition_per_move.csv')
     if not os.path.isfile(path):
         return 0
     try:
@@ -291,7 +293,7 @@ def _attach_augmentation(examples, output_dir: str) -> int:
         m = ex.get('dominant_purer')
         if m is not None and m in infl_by_move:
             ex['augmentation'] = {
-                'provenance': 'gnn_counterfactual',
+                'provenance': 'transition_counterfactual',
                 'would_progress': round(infl_by_move[m], 5),
             }
             n += 1
@@ -456,9 +458,10 @@ def build_mindfulbert_dataset(df_all, output_dir: str, config=None,
                               gate_passed: Optional[bool] = None, verbose: bool = True) -> dict:
     """Assemble + export the versioned MindfulBERT (cue language → Δprogression) dataset.
 
-    ``gate_passed`` overrides the persisted gate verdict (None → read it). Augmentation (C3)
-    is attached only when ``config.augmentation_enabled`` AND the gate passed, and RETAINED in
-    the exported examples only when the C4 ablation clears ``augmentation_min_gain``.
+    ``gate_passed`` overrides the persisted classifier-gate verdict (None → read it); it governs
+    the ``gnn_consensus`` provenance tier only. Augmentation (C3) is attached when
+    ``config.augmentation_enabled`` AND the transition model has run (``transition_per_move.csv``),
+    and RETAINED in the exported examples only when the C4 ablation clears ``augmentation_min_gain``.
 
     Returns {files_written, n_examples, status}.
     """
@@ -472,7 +475,7 @@ def build_mindfulbert_dataset(df_all, output_dir: str, config=None,
 
     if gate_passed is None:
         try:
-            from gnn_layer.validation import gate_ready_for_scaling
+            from gnn_layer.classifier.validation import gate_ready_for_scaling
             gate_passed = gate_ready_for_scaling(output_dir)
         except Exception:
             gate_passed = False
@@ -482,10 +485,15 @@ def build_mindfulbert_dataset(df_all, output_dir: str, config=None,
     if not examples:
         return {'files_written': files, 'n_examples': 0, 'status': 'skipped: no mediated cue blocks'}
 
-    # ---- C3/C4: augmentation channel (gate-passing only) ----
+    # ---- C3/C4: augmentation channel (transition-model counterfactual; C4-retained) ----
+    # Sourced from the dyadic transition model (gnn_layer/transition.py), NOT the retired
+    # classifier-counterfactual, so it is gated on the transition instrument having run
+    # (transition_per_move.csv present) rather than on the classifier gate. Retained in the
+    # export ONLY when the C4 held-out ablation clears augmentation_min_gain — at n≈32 the
+    # transition cue is under-identified, so this honestly tends to drop the channel.
     aug_meta = {'enabled': bool(getattr(config, 'augmentation_enabled', False)),
                 'n_augmented': 0, 'retained': False, 'ablation': {}}
-    if aug_meta['enabled'] and gate_passed:
+    if aug_meta['enabled']:
         n_aug = _attach_augmentation(examples, output_dir)
         aug_meta['n_augmented'] = n_aug
         if n_aug:
@@ -493,12 +501,13 @@ def build_mindfulbert_dataset(df_all, output_dir: str, config=None,
             aug_meta['ablation'] = abl
             aug_meta['retained'] = bool(abl.get('retain'))
             _log(f"augmentation ablation: {abl.get('status')} (retain={aug_meta['retained']})")
+        else:
+            _log("augmentation requested but no transition_per_move.csv found — skipped "
+                 "(run the transition model first).")
         if not aug_meta['retained']:
             # Drop the channel from the exported examples (never ship un-validated augmentation).
             for ex in examples:
                 ex.pop('augmentation', None)
-    elif aug_meta['enabled'] and not gate_passed:
-        _log("augmentation requested but the reliability gate has not passed — suppressed.")
 
     # ---- C5: export dataset JSONL ----
     tdir = _paths.training_data_dir(output_dir)

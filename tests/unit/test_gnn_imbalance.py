@@ -28,9 +28,10 @@ if _QRA_ROOT not in sys.path:
     sys.path.insert(1, _QRA_ROOT)
 
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer.model import build_model, compute_losses
-from gnn_layer import soft_labels, graph_builder
-from gnn_layer.train import assemble_targets, train_model
+from gnn_layer.classifier.model import build_model, compute_losses
+from gnn_layer import soft_labels
+from gnn_layer.classifier import graph_builder
+from gnn_layer.classifier.train import assemble_targets, train_model
 
 from tests.testhelpers.fixtures import synthetic_df
 

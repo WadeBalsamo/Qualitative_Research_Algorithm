@@ -143,8 +143,8 @@ class TestOrchestratorAndDefaults(unittest.TestCase):
 
     def test_off_by_default(self):
         c = GnnLayerConfig()
-        self.assertFalse(c.subtext_communities)
-        self.assertEqual(c.community_sim_threshold, 0.85)
+        self.assertTrue(c.subtext_communities)   # part of the default discovery build
+        self.assertEqual(c.community_sim_threshold, 0.6)  # calibrated for Qwen (probe: 0.85 -> noise)
 
 
 if __name__ == '__main__':

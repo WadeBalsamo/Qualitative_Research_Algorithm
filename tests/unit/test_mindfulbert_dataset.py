@@ -93,20 +93,22 @@ class TestAugmentationGating(unittest.TestCase):
         rows = _read_jsonl(os.path.join(_paths.training_data_dir(out), 'mindfulbert_dataset.jsonl'))
         self.assertFalse(any('augmentation' in r for r in rows))
 
-    def test_augmentation_attached_when_gate_passed(self):
+    def test_augmentation_attached_from_transition_model(self):
         df = make_master_df(n_sessions=3, n_participants=2)
         out = tempfile.mkdtemp()
-        # Provide a counterfactual influence CSV (as influence.py would write).
+        # The dyadic transition model's per-move learned counterfactual (replaces the retired
+        # influence.py CSV). Augmentation is now sourced here and DECOUPLED from the classifier
+        # gate — note gate_passed=False below still yields the channel.
         gdir = _paths.gnn_data_dir(out)
         os.makedirs(gdir, exist_ok=True)
         import pandas as pd
-        pd.DataFrame([{'move': m, 'mean_influence': 0.1 * m} for m in range(5)]).to_csv(
-            os.path.join(gdir, 'gnn_counterfactual_influence.csv'), index=False)
+        pd.DataFrame([{'move': m, 'move_name': str(m), 'mean_influence': 0.1 * m}
+                      for m in range(5)]).to_csv(
+            os.path.join(gdir, 'transition_per_move.csv'), index=False)
         cfg = GnnLayerConfig(augmentation_enabled=True)
-        res = build_mindfulbert_dataset(df, out, config=cfg, gate_passed=True, verbose=False)
+        res = build_mindfulbert_dataset(df, out, config=cfg, gate_passed=False, verbose=False)
         with open(os.path.join(_paths.training_data_dir(out), 'mindfulbert_datasheet.json')) as f:
             sheet = json.load(f)
-        self.assertTrue(res['gate_passed'])
         self.assertGreater(sheet['augmentation']['n_augmented'], 0)
         self.assertIn('ablation', sheet['augmentation'])
 
@@ -127,7 +129,7 @@ class TestAblationProxy(unittest.TestCase):
                 'n_therapist_segments': int(rng.integers(1, 4)),
                 'direction': 'advanced' if adv else 'stayed',
                 'participant_id': f'P{i % 4}',
-                'augmentation': {'provenance': 'gnn_counterfactual', 'would_progress': float(wp)},
+                'augmentation': {'provenance': 'transition_counterfactual', 'would_progress': float(wp)},
             })
         return exs
 

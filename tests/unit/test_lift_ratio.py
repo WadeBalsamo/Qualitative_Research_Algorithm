@@ -18,8 +18,8 @@ import pandas as pd
 
 from analysis.stats import lift_ratio
 from analysis.theme import _compute_lift
-from gnn_layer.gnn_lift import _lift_table
-from gnn_layer.graph_builder import compute_cross_framework_lift
+from gnn_layer.classifier.gnn_lift import _lift_table
+from gnn_layer.classifier.graph_builder import compute_cross_framework_lift
 
 
 class TestLiftRatioKernel(unittest.TestCase):
