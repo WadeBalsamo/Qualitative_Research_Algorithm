@@ -281,6 +281,7 @@ class SetupWizard:
         self._step_11b_therapist_cues()
         self._step_11c_report_summaries()
         self._step_11d_gnn()
+        self._step_11e_probe()
         config_path = self._step_12_save()
 
         return {
@@ -1506,6 +1507,26 @@ class SetupWizard:
         print("    --- Full knob reference (expert knobs stay in qra_config.json) ---")
         for line in _GNN_KNOB_REFERENCE:
             print(f"      {line}")
+        print()
+
+    def _step_11e_probe(self):
+        """Step 11e — the LLM-free probe scaling tier (methodology §8.6).
+
+        Independent of the GNN: OFF by default. When enabled, the per-rater ensemble probe
+        FILLS unlabeled participant segments BELOW the LLM (tagged probe_consensus), gated on
+        this project's human subset. The multi-run LLM stays the label of record.
+        """
+        print("--- Step 11e/17: Probe Scaling Tier (LLM-free) ---")
+        print("    The PROBE is an LLM-free, gated, abstention-aware VAAMR classifier that")
+        print("    labels segments the LLM has NOT labeled (e.g. bulk/new cohorts). It is")
+        print("    assistive: gated on this project's human subset and provenance-tagged")
+        print("    BELOW the LLM (probe_consensus), never overriding an LLM/human label.")
+        print("    At pilot scale it is rarely needed (the multi-run LLM is affordable and")
+        print("    human-level); its payoff is prospective. Default OFF.")
+        print()
+        probe_enabled = _prompt_yes_no(
+            "Enable the probe scaling tier? (LLM-free, gated; default OFF)", False)
+        self.config_data['probe'] = {'enabled': probe_enabled}
         print()
 
     # -----------------------------------------------------------------

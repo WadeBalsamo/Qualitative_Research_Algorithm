@@ -95,8 +95,9 @@ class Segment:
 
     # GNN consensus-distillation fields (populated by the GNN layer when
     # gnn_layer.produce_consensus_labels=True). gnn_vaamr_* apply to participant
-    # segments, gnn_purer_* to therapist segments. These become the label of record
-    # only when gnn_layer.gnn_authoritative=True (provenance tier 'gnn_consensus').
+    # segments, gnn_purer_* to therapist segments. DEMOTED (methodology §8.6): they FILL
+    # only segments the LLM left unlabeled (provenance tier 'gnn_consensus', below the LLM)
+    # and can never override an LLM/human label.
     gnn_vaamr_pred: Optional[int] = None
     gnn_vaamr_conf: Optional[float] = None
     gnn_purer_pred: Optional[int] = None
