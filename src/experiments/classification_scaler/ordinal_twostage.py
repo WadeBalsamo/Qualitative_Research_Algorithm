@@ -1,6 +1,6 @@
 """
-experiments/scaler/ordinal_twostage.py
---------------------------------------
+experiments/classification_scaler/ordinal_twostage.py
+-----------------------------------------------------
 Label-STRUCTURE arm for the cheap-VAAMR-classifier hunt.
 
 Baseline to beat: A1n = Qwen class-weighted *flat* 6-class linear probe

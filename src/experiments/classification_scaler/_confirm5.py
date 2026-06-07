@@ -1,8 +1,11 @@
 """Multi-seed confirmation of the LLM-axis champion (5-class soft MLP) + sharpening push."""
-import sys, time
-sys.path.insert(0, 'src'); sys.path.insert(0, '.')
+import os, sys, time
+_SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo src/
+for _p in (os.path.dirname(_SRC), _SRC):  # repo root then src/ -> src/ ends up first on sys.path
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 from experiments.gnn_reliability import harness as H
-from experiments.gnn_reliability import run_softlabel as S
+from experiments.classification_scaler import run_softlabel as S
 ABS = S.ABS
 df = H.load_corpus(ABS); folds = H.build_folds(df, seed=42, verbose=False)
 emb = H.get_embeddings(df, 'qwen', ABS)

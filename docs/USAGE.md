@@ -267,7 +267,7 @@ GNN representation-and-discovery layer (ON by default; force with `--gnn`, skip 
 *Trustworthy LLM-free classifier:* out-of-sample reliability gate (`06_gnn/validation.txt`, persisted to `gnn_gate.json`) with a rare-stage recall floor and a YES/NO scaling verdict; gate-gated promotion to the `gnn_consensus` label tier; opt-in, individually-measured hardening — abstention/deferral, temperature + OOD calibration, label propagation, scale-mode simulation, typed therapist→participant edges.
 
 *Config-flag–driven advanced analyses (set in the `gnn_layer` config section):*
-- **Track B — model-counterfactual influence** (`counterfactual=true`, gated on the reliability gate): per-PURER-move sensitivity on the following participant's predicted progression, triangulated against the observed Δprogression (`06_gnn/influence.txt`). Sensitivity analysis, not causation.
+- **Track B — dyadic FROM→CUE→TO transition model** (default-on, no flag; replaces the retired `counterfactual` / `influence.py` per-segment counterfactual): per-PURER-move learned response on the following participant's predicted progression, triangulated against the observed Δprogression (`06_gnn/transition_model.txt`, `confound_localization.txt`). Sensitivity analysis of a model, not causation.
 - **Track C — MindfulBERT dataset builder** (`build_mindfulbert_dataset=true`; `augmentation_enabled=true` for the gate-gated, ablation-retained counterfactual channel): `02_meta/training_data/mindfulbert_dataset.jsonl` + datasheet.
 - **Track D — subtext communities as routines** (`subtext_communities=true`): two-algorithm partition + ARI, within-session routine transitions, participant-bootstrap stability selection (`06_gnn/communities.txt`).
 
@@ -885,13 +885,15 @@ The GNN layer is ON by default and runs at analyze-time (set `enabled=False` to 
 | `label_propagation` / `propagation_alpha` / `propagation_iters` | bool / float / int | false / 0.5 / 20 | Measured post-training soft-label diffusion; kept only if Δκ ≥ +0.02 (A4) |
 | `run_scale_sim` / `scale_sim_holdout_sessions` / `scale_sim_max_gap` | bool / int / float | false / 1 / 0.10 | Inductive whole-session holdout vs CV κ; flags domain-shift risk (A5) |
 
-**Track B — model-counterfactual influence (gated on the reliability gate; sensitivity, not causal):**
+**Track B — dyadic FROM→CUE→TO transition model (mechanism instrument; default-on discovery, no flag):**
+
+The former per-segment model-counterfactual (`counterfactual` / `gnn_layer/influence.py`) was **retired** — on the pilot it inverted the observed ranking (Spearman ρ = −0.13) and was mis-specified for a *process* question. It is **rebuilt** as the dyadic transition model (`gnn_layer/transition.py`), which runs **by default** at `qra analyze` (no flag) and triangulates *positively* (ρ ≈ +0.34), with a confound-localization map (`gnn_layer/confound.py`). The `counterfactual` / `counterfactual_max_blocks` / `influence_bootstrap_n` / `counterfactual_subgroups` flags were removed (a legacy `qra_config.json` carrying them is safe — config deserialization is field-filtered).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `counterfactual` | bool | false | Run per-PURER-move counterfactual influence + triangulation vs observed Δprogression (B3/B4) |
-| `counterfactual_max_blocks` / `influence_bootstrap_n` | int\|null / int | null / 1000 | Cap on per-block re-forwards (logged when capped); participant-clustered bootstrap resamples |
-| `counterfactual_subgroups` | bool | false | Split influence by session-number tertile, underpowered-flagged (B5) |
+| `transition_bootstrap_n` | int | 1000 | participant-clustered bootstrap resamples for the transition-model counterfactual CIs |
+
+Outputs: `06_gnn/{transition_model,confound_localization}.txt`, `03_analysis_data/gnn/{transition_counterfactual,transition_per_move,confound_localization}.csv`. Sensitivity analysis of a model, **not causation**.
 
 **Track C — MindfulBERT training-set builder:**
 
@@ -1005,7 +1007,7 @@ Each row in `master_segments.csv` (and each segment row joined from `qra.db`) is
 | `03_analysis_data/gnn/gnn_construct_signal.csv` | Ablation loss deltas per construct head (Capability D) |
 | `03_analysis_data/gnn/gnn_validation.csv` | Per-class out-of-sample reliability-gate table (machine-readable) |
 | `03_analysis_data/gnn/gnn_gate.json` | Persisted gate verdict (`ready_for_scaling`, per-framework κ, rare-stage notes, calibration T) — gates authoritative promotion |
-| `03_analysis_data/gnn/gnn_counterfactual_influence.csv` | Per-PURER-move model-counterfactual influence + CIs (Track B) |
+| `03_analysis_data/gnn/transition_per_move.csv` | Per-PURER-move transition-model counterfactual + CIs (Track B); `transition_counterfactual.csv`, `confound_localization.csv` alongside |
 | `03_analysis_data/gnn/subtext_communities.csv` | Per-community size / stability / top TF-IDF terms (Track D) |
 | `03_analysis_data/gnn/subtext_community_transitions.csv` | Within-session community→community routine transitions (Track D) |
 | `02_meta/training_data/mindfulbert_dataset.jsonl` | MindfulBERT dataset: (cue language → observed Δprogression) + provenance (Track C) |
@@ -1016,7 +1018,7 @@ Each row in `master_segments.csv` (and each segment row joined from `qra.db`) is
 | `06_reports/06_gnn/triangulation.txt` (+ `triangulation_independence.txt`) | GNN↔LLM↔human agreement and lift comparison (Capability C) |
 | `06_reports/06_gnn/construct_signal.txt` / `vce_contribution.txt` | Construct-signal ablation + VCE-on-VAAMR test (Capability D) |
 | `06_reports/06_gnn/coupling.txt` | Latent coupling factors and alliance naming (Capability E) |
-| `06_reports/06_gnn/influence.txt` | Model-counterfactual influence + triangulation vs observed Δprogression (Track B) |
+| `06_reports/06_gnn/transition_model.txt` (+ `confound_localization.txt`) | Dyadic transition-model counterfactual + triangulation vs observed Δprogression + confound map (Track B) |
 | `06_reports/06_gnn/communities.txt` | Subtext communities as routines, with stability selection (Track D) |
 | `06_reports/06_gnn/{scale_sim,label_propagation,precipitates_contribution}.txt` | Track A hardening reports (when those instruments are enabled) |
 
@@ -1144,7 +1146,7 @@ Each row in `master_segments.csv` (and each segment row joined from `qra.db`) is
 | `anchors.py` | Optional construct-anchor features + similarity/lift edges (opt-in, human-axis ablated) |
 | `calibration.py` | Temperature scaling + ECE + OOD score for domain-shift confidence (Track A3) |
 | `propagation.py` | Measured post-training soft-label diffusion (Track A4) |
-| `influence.py` | **Track B** — model-counterfactual influence + triangulation vs `mechanism.py` (gated; sensitivity, not causal) |
+| `transition.py` / `confound.py` | **Track B** — dyadic FROM→CUE→TO transition model + counterfactual triangulation vs `mechanism.py` + confound-localization map (default-on discovery; replaces the retired `influence.py`; sensitivity, not causal) |
 | `communities.py` | **Track D** — subtext-similarity graph, two-algorithm communities, routine transitions, stability selection |
 | `validation.py` | Out-of-sample reliability gate (per-stage/per-move κ, rare-stage floor) + scale-mode simulation + persisted gate verdict |
 | `reports.py` | GNN artifact writers: CSVs and human-readable reports |

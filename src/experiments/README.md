@@ -5,12 +5,17 @@
 > scaler distillation campaign** — including the *failed* attempts. It exists so that no trialed method
 > is lost and every reported number is reproducible.
 >
-> **Purely additive / non-disruptive.** This directory only *adds* `src/experiments/`. It does **not**
-> move, rename, or modify anything the pipeline or test suite already uses. In particular the live
-> reliability apparatus stays at repo-root **`experiments/gnn_reliability/`** (where the unit tests and
-> the concurrent GNN construct-validation work-stream import it from); this archive holds a *consolidated
-> copy* of it plus the unique scaler code, the result files, and the documentation. **Nothing in the
-> pipeline** (`src/process`, `src/analysis`, `src/gnn_layer`, `qra.py`) imports `src/experiments/`.
+> **Inert research code.** **Nothing in the pipeline** (`src/process`, `src/analysis`, `src/gnn_layer`,
+> `qra.py`) imports `src/experiments/`. The live reliability apparatus stays at repo-root
+> **`experiments/gnn_reliability/`** (where the unit tests and the GNN construct-validation work-stream
+> import it from); this archive holds a *consolidated mirror* of that apparatus (kept **byte-identical**
+> by `tests/unit/test_experiments_catalog_sync.py`) plus the unique scaler code, the result files, and the
+> documentation. So the catalog is a self-contained, reproducible record, and it can never drift from —
+> or silently shadow a stale version of — the live apparatus.
+>
+> **Start here, then:** [`CATALOG.md`](CATALOG.md) (the master experiment table + promotion decisions) ·
+> [`WORKFLOW.md`](WORKFLOW.md) (the systematic architectural-refinement process + the assessment rubric
+> each arm is scored against) · the per-campaign `RESULTS.md` for full detail.
 
 ---
 
@@ -41,8 +46,9 @@ The headline of the whole archive:
 **Verdict:** the winner *dominates* the prior probe on both axes but is **not LLM-equivalent**; it ships
 as an **assistive, gated, abstention-aware pre-labeler**, not an autonomous LLM replacement. The ceiling
 is *data* (the rare stages Avoidance/Metacognition stay stuck at recall ≈.28–.35; n≈32 participants),
-so fidelity is expected to rise as labeled participants accrue. Smoke-verified on the live corpus:
-A1n reproduces 0.283/0.365 and `ens_softavg` (C=1 default) reproduces 0.325/0.389.
+so fidelity is expected to rise as labeled participants accrue. Reproduced on the live corpus
+(`data/Meta`): A1n = 0.283/0.365, `ens_softavg` C=1 = 0.325/0.389, and the headline **C=4 winner =
+0.361/0.450** (`_csweep.py` → committed `classification_scaler/_csweep_results.json`).
 
 ---
 
@@ -50,7 +56,9 @@ A1n reproduces 0.283/0.365 and `ens_softavg` (C=1 default) reproduces 0.325/0.38
 
 ```
 src/experiments/
-├── README.md                         ← this file (comprehensive method catalog + index)
+├── README.md                         ← this file (index — start here)
+├── CATALOG.md                        ← master experiment table (both campaigns) + promotion decisions
+├── WORKFLOW.md                       ← the experimental-architectural-refinement process + assessment rubric
 ├── __init__.py
 ├── gnn_reliability/                  ← Campaign 1: GNN reliability battery (probe ≥ graph)
 │   ├── RESULTS.md                    ← detailed per-arm results + the CV-leakage correction
@@ -70,8 +78,10 @@ src/experiments/
     ├── CAMPAIGN_LOG.md               ← the append-only campaign log (every arm, as it ran)
     ├── rater_distill.py              ← ★ WINNER: per-rater ensemble (ballot extraction + per-rater
     │                                   probes + mean-proba reduction)
-    ├── _run_distill.py · _csweep.py · _csweep2.py · _paired_delta.py · _distill_results.json
-    │                                   ← winner drivers: C-sweep + paired cluster-bootstrap Δκ + results
+    ├── _run_distill.py · _csweep.py · _csweep2.py · _paired_delta.py
+    │                                   ← winner drivers: C-sweep + paired cluster-bootstrap Δκ
+    ├── _distill_results.json          ← S6 battery results (C=1 default variants)
+    ├── _csweep_results.json           ← S6 winner: C-sweep + the tuned C=4 headline (0.361/0.450)
     ├── run_softlabel.py · run_softlabel_grid.py · _confirm5.py · _selfcheck_softlabel.py
     │                                   ← S2 soft-label distillation (MLP→ballot mixture) + grid
     ├── _softlabel_results.jsonl       ← S2 raw grid results
@@ -85,12 +95,15 @@ src/experiments/
     └── ml2.py                         ← S4/S5 controlled model-lever runner (capacity/calibration/two-stage)
 ```
 
-**Relationship to the live tree (important for reviewers).** `gnn_reliability/` here is a *copy* of the
-canonical `experiments/gnn_reliability/` at repo root. The root copy stays the one the **unit tests**
-(`tests/unit/test_gnn_{reliability_harness,baselines,anchors_arm}.py`, 15 tests, all passing) and the
-construct-validation work-stream import; this archive is the consolidated, documented snapshot. The
-scaler scripts `import` the harness as `experiments.gnn_reliability`, which resolves to the root copy at
-runtime (identical to the copy here) — so neither breaks the other while both exist on `beta`.
+**Relationship to the live tree (important).** `gnn_reliability/` here is a **byte-identical mirror** of
+the canonical apparatus at repo-root `experiments/gnn_reliability/` (the shared `.py` files only;
+`capacity_scaler.py` and the `*.md` write-ups are catalog-only). The root copy is what the **unit tests**
+(`tests/unit/test_gnn_{reliability_harness,baselines,anchors_arm}.py`, 15 tests) and the discovery layer
+import. The mirror is kept in lockstep by **`tests/unit/test_experiments_catalog_sync.py`**, which fails
+if the two drift — so a future apparatus change (e.g. a module moving under `gnn_layer.classifier`) can
+never leave a stale shadow copy that breaks collection. The catalog's own scaler scripts bootstrap
+`src/` first, so `import experiments.gnn_reliability` / `experiments.classification_scaler` resolve to
+**this** self-contained archive; the reproduce commands run as written.
 
 ---
 
@@ -140,8 +153,8 @@ Every arm in both campaigns is scored through `harness.py` so the numbers are co
   ERROR→drop) and **ensemble by mean `predict_proba`**. → **LLM 0.361 / human 0.450**, paired Δ_LLM
   **+0.078 [+.036,+.132]** (reliable; C-sweep peaks at C=4, also reliable at C=1). **Dominates A1n.**
 - **Soft-label distillation (`run_softlabel.py`).** MLP fit to the multi-run ballot mixture. 5-class
-  MLP-KL = LLM **0.362** but human 0.229; best human is a hard/regularized MLP ≈0.38. Lifts only the
-  axis it optimizes; *no clear*.
+  MLP-KL = LLM **0.367** but human 0.228 (drops the No-code class); best human is a hard/regularized MLP
+  ≈0.38. Lifts only the axis it optimizes; *no clear*.
 - **Two-stage No-code gate (S5, `gate_sweep.py` + `ml2.py`).** No-code-vs-VAAMR gate@0.45 → 5-class
   stager. Human **0.447** (best human-axis single lever); the gate threshold trades LLM vs human axis.
 - **Model capacity (S4, `ml2.py` / `capacity_scaler.py`).** MLP 0.068/0.167; calibrated 0.13–0.20;
@@ -187,8 +200,9 @@ python src/experiments/classification_scaler/ordinal_twostage.py     # needs `mo
 python src/experiments/classification_scaler/run_human_anchor.py
 python src/experiments/classification_scaler/run_wave2_stack.py
 
-# Preserved tests (15 pass) — use the root experiments/ copy, unmodified
-python -m pytest tests/unit/test_gnn_reliability_harness.py tests/unit/test_gnn_baselines.py tests/unit/test_gnn_anchors_arm.py
+# Preserved apparatus tests (15 pass) + the mirror drift-guard
+python -m pytest tests/unit/test_gnn_reliability_harness.py tests/unit/test_gnn_baselines.py \
+                 tests/unit/test_gnn_anchors_arm.py tests/unit/test_experiments_catalog_sync.py
 ```
 
 Required deps are all in the project venv (`scikit-learn`, `numpy`, `pandas`, `torch`,

@@ -5,11 +5,14 @@ for _v in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMEXP
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 import sys, time, dataclasses, json
-sys.path.insert(0, 'src'); sys.path.insert(0, '.')
+_SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo src/
+for _p in (os.path.dirname(_SRC), _SRC):  # repo root then src/ -> src/ ends up first on sys.path
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import numpy as np
 from experiments.gnn_reliability import harness as H, baselines as B
-from experiments.gnn_reliability import rater_distill as RD
+from experiments.classification_scaler import rater_distill as RD
 from gnn_layer.config import GnnLayerConfig
 from process import irr_import
 from analysis import irr_stats
@@ -113,7 +116,7 @@ for name, res in results:
     row = ' '.join(f'{(pc.get(i) if pc.get(i) is not None else float("nan")):8.3f}' for i in range(5))
     print(f'{name:22s} | {row} | {res["llm_axis"]["n"]:4d} {res["human_axis"]["n"]:4d}')
 
-with open('experiments/gnn_reliability/_distill_results.json', 'w') as f:
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '_distill_results.json'), 'w') as f:
     json.dump({name: {'llm': res['llm_axis']['cohen_kappa_205'], 'llm_ci': res['llm_axis']['ci95'],
                       'llm_76': res['llm_axis']['cohen_kappa_76'],
                       'hum': res['human_axis']['cohen_kappa'], 'hum_ci': res['human_axis']['ci95'],
