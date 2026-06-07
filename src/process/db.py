@@ -180,6 +180,19 @@ _SCHEMA_STATEMENTS = (
     )
     """,
 
+    # -- probe scaler overlay (LLM-free per-rater ensemble; methodology §8.6) --
+    #    Fills UNLABELED participant segments only; ranks BELOW the LLM
+    #    (provenance tier 'probe_consensus'), never overrides it.
+    """
+    CREATE TABLE IF NOT EXISTS probe_labels (
+        segment_id    TEXT PRIMARY KEY,
+        probe_pred    INTEGER,
+        probe_conf    REAL,
+        probe_abstain INTEGER,   -- 3-state: NULL | 0 | 1 (preserves None vs False)
+        probe_label_source TEXT
+    )
+    """,
+
     # -- classification provenance manifest ------------------------------
     #    One row per classifier key; the whole entry dict is a JSON blob so
     #    nested framework/codebook dicts and optional keys round-trip exactly.
