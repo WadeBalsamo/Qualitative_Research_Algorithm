@@ -36,12 +36,12 @@ result, not a code failure.
 > ceiling is α≈0.33–0.52; the LLM already meets it at κ=0.537), **not** the legacy κ≥0.70 gate.
 >
 > **➡ UPDATE 2026-06-06 — the §12 roadmap was EXECUTED.** Authoritative results + per-arm ledger now
-> live in root **`design_decisions.md`** (+ `docs/gnn_experiments/ledger.csv`). Headline: Qwen3-8B
+> live in **`experiments/docs/design_decisions.md`** (+ `docs/gnn_experiments/ledger.csv`). Headline: Qwen3-8B
 > features (LM Studio `/v1/embeddings`) + class-weighting + a **No-code** class get a **linear probe**
 > to human κ≈0.37 (human band); **the probe ties/beats the GNN** at n≈205 (honest split — LLM stays
 > label-of-record, GNN→mechanism); the κ=0.247 here was **CV-leakage-inflated** (honest grouped-CV
 > baseline ≈0.05); and the **PRIMARY mechanism does NOT triangulate** (counterfactual ρ=−0.13,
-> coupling |corr|<0.07 → `mechanism.py` leads, GNN exploratory). See `design_decisions.md` §0.
+> coupling |corr|<0.07 → `mechanism.py` leads, GNN exploratory). See `experiments/docs/design_decisions.md` §0.
 
 ---
 

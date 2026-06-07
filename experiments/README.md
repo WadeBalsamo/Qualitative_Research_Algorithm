@@ -1,17 +1,16 @@
-# QRA Experiments Archive (`src/experiments/`)
+# QRA Experiments Archive (`experiments/`)
 
 > **What this is.** A self-contained, preserved record of **every** methodological experiment run for
-> QRA's VAAMR classification work — both the **GNN reliability battery** and the **classification /
-> scaler distillation campaign** — including the *failed* attempts. It exists so that no trialed method
-> is lost and every reported number is reproducible.
+> QRA's VAAMR classification work — the **GNN reliability battery**, the **classification /
+> scaler distillation campaign**, and the **mechanism interaction campaign** — including the *failed*
+> attempts. It exists so that no trialed method is lost and every reported number is reproducible.
 >
 > **Inert research code.** **Nothing in the pipeline** (`src/process`, `src/analysis`, `src/gnn_layer`,
-> `qra.py`) imports `src/experiments/`. The live reliability apparatus stays at repo-root
-> **`experiments/gnn_reliability/`** (where the unit tests and the GNN construct-validation work-stream
-> import it from); this archive holds a *consolidated mirror* of that apparatus (kept **byte-identical**
-> by `tests/unit/test_experiments_catalog_sync.py`) plus the unique scaler code, the result files, and the
-> documentation. So the catalog is a self-contained, reproducible record, and it can never drift from —
-> or silently shadow a stale version of — the live apparatus.
+> `qra.py`) imports `experiments/`. Everything is consolidated under `experiments/` at the repo root:
+> `experiments/gnn_reliability/` is the live apparatus (where the unit tests and the GNN
+> construct-validation work-stream import it from), `experiments/classification_scaler/` holds the
+> unique scaler code and result files, `experiments/mechanism/` holds the mechanism interaction campaign,
+> and `experiments/docs/` holds the narrative records for the first two campaigns.
 >
 > **Start here, then:** [`CATALOG.md`](CATALOG.md) (the master experiment table + promotion decisions) ·
 > [`WORKFLOW.md`](WORKFLOW.md) (the systematic architectural-refinement process + the assessment rubric
@@ -19,7 +18,7 @@
 
 ---
 
-## The arc (why these two campaigns, in order)
+## The arc (why these three campaigns, in order)
 
 1. **GNN reliability battery** (`gnn_reliability/`) asked: *can a content-similarity GraphSAGE GNN
    reproduce the multi-run LLM VAAMR consensus well enough to label new segments LLM-free?* (hypothesis
@@ -34,7 +33,14 @@
    **per-rater ensemble** — but **no configuration reaches the LLM-equivalence bar at n≈32**, and three
    independent methods converge on the same frontier, marking a **data ceiling**.
 
-The headline of the whole archive:
+3. **Mechanism interaction campaign** (`mechanism/`) asked: *does the therapist PURER move's effect on the
+   next participant VAAMR stage depend on the participant's FROM stage?* (H2, FROM×move interaction).
+   The PURER-move main effect earns its place (held-out log-loss improves vs FROM-only); the interaction
+   does not (overfits at n ≈ 32, LR p = 0.52, Gaussian model singular). Bayesian hierarchical ordinal
+   (E1c) returns finite credible intervals but 0/16 exclude zero — honest under-identification. E2–E9
+   corroboration arms provide confound E-values, cue-representation, trajectory, and H1 tests.
+
+The headline of the classifier campaigns:
 
 | | classifier↔LLM grouped κ | classifier↔human κ |
 |---|---|---|
@@ -55,61 +61,80 @@ so fidelity is expected to rise as labeled participants accrue. Reproduced on th
 ## Directory map
 
 ```
-src/experiments/
+experiments/
 ├── README.md                         ← this file (index — start here)
-├── CATALOG.md                        ← master experiment table (both campaigns) + promotion decisions
+├── CATALOG.md                        ← master experiment table (all three campaigns) + promotion decisions
 ├── WORKFLOW.md                       ← the experimental-architectural-refinement process + assessment rubric
 ├── __init__.py
+├── docs/                             ← narrative records for both campaigns
+│   ├── graph_experiments.md          ← original battery narrative (why probe > GNN)
+│   ├── design_decisions.md           ← battery decision record
+│   ├── qra_gnn_trial_run_report.md   ← end-to-end GNN pipeline trial-run report (accuracy vs LLM)
+│   ├── gnn_discovery_results.md      ← discovery/mechanism results summary + promotion guide
+│   ├── gnn_reliability_results.md    ← reliability campaign narrative
+│   └── method_application_review.md  ← methodology review + next-steps guide
 ├── gnn_reliability/                  ← Campaign 1: GNN reliability battery (probe ≥ graph)
 │   ├── RESULTS.md                    ← detailed per-arm results + the CV-leakage correction
-│   ├── harness.py                    ← THE validated apparatus (consolidated copy of the root file):
-│   │                                   load_corpus, build_folds (participant-grouped StratifiedGroupKFold,
-│   │                                   seed 42), get_embeddings (cached Qwen 4096-d), score_arm
+│   ├── harness.py                    ← THE validated apparatus: load_corpus, build_folds
+│   │                                   (participant-grouped StratifiedGroupKFold, seed 42),
+│   │                                   get_embeddings (cached Qwen 4096-d), score_arm
 │   │                                   (dual-axis κ + participant-clustered bootstrap CIs)
 │   ├── baselines.py                  ← linear probe (A1/A1w/A1n) + Correct-&-Smooth + probe helpers
 │   ├── anchors_arm.py                ← CFiCS-style construct anchor-node arm (lowered reliability)
 │   ├── capacity_scaler.py            ← GNN model-capacity / scale-mode arm
-│   ├── run_battery.py · run_mechanism.py
-│   ├── graph_experiments.md          ← original battery narrative (why probe > GNN)
-│   ├── design_decisions.md           ← battery decision record
-│   └── qra_gnn_trial_run_report.md   ← end-to-end GNN pipeline trial-run report (accuracy vs LLM)
-└── classification_scaler/            ← Campaign 2: distillation to a scalable classifier
-    ├── RESULTS.md                    ← detailed per-family results + the convergent-ceiling verdict
-    ├── CAMPAIGN_LOG.md               ← the append-only campaign log (every arm, as it ran)
-    ├── rater_distill.py              ← ★ WINNER: per-rater ensemble (ballot extraction + per-rater
-    │                                   probes + mean-proba reduction)
-    ├── _run_distill.py · _csweep.py · _csweep2.py · _paired_delta.py
-    │                                   ← winner drivers: C-sweep + paired cluster-bootstrap Δκ
-    ├── _distill_results.json          ← S6 battery results (C=1 default variants)
-    ├── _csweep_results.json           ← S6 winner: C-sweep + the tuned C=4 headline (0.361/0.450)
-    ├── run_softlabel.py · run_softlabel_grid.py · _confirm5.py · _selfcheck_softlabel.py
-    │                                   ← S2 soft-label distillation (MLP→ballot mixture) + grid
-    ├── _softlabel_results.jsonl       ← S2 raw grid results
-    ├── gate_sweep.py                  ← S5 No-code-gate threshold sweep (two-stage)
-    ├── ordinal_twostage.py            ← S5b ordinal-arc decoding arm (collapses)
-    ├── run_context.py · run_context_local.py · run_context_concat.py
-    │                                   ← S1 context arm (target⊕context; MiniLM + Qwen; all rejected)
-    ├── run_human_anchor.py            ← S7 human-anchor / calibration arm (66 human codes → probe)
-    ├── run_wave2_stack.py · run_wave2b_hybrid.py
-    │                                   ← S8/S8b stacking arms (per-rater × two-stage; both rejected)
-    └── ml2.py                         ← S4/S5 controlled model-lever runner (capacity/calibration/two-stage)
+│   └── run_battery.py · run_mechanism.py
+├── classification_scaler/            ← Campaign 2: distillation to a scalable classifier
+│   ├── RESULTS.md                    ← detailed per-family results + the convergent-ceiling verdict
+│   ├── CAMPAIGN_LOG.md               ← the append-only campaign log (every arm, as it ran)
+│   ├── rater_distill.py              ← ★ WINNER: per-rater ensemble (ballot extraction + per-rater
+│   │                                   probes + mean-proba reduction)
+│   ├── _run_distill.py · _csweep.py · _csweep2.py · _paired_delta.py
+│   │                                   ← winner drivers: C-sweep + paired cluster-bootstrap Δκ
+│   ├── _distill_results.json          ← S6 battery results (C=1 default variants)
+│   ├── _csweep_results.json           ← S6 winner: C-sweep + the tuned C=4 headline (0.361/0.450)
+│   ├── run_softlabel.py · run_softlabel_grid.py · _confirm5.py · _selfcheck_softlabel.py
+│   │                                   ← S2 soft-label distillation (MLP→ballot mixture) + grid
+│   ├── _softlabel_results.jsonl       ← S2 raw grid results
+│   ├── gate_sweep.py                  ← S5 No-code-gate threshold sweep (two-stage)
+│   ├── ordinal_twostage.py            ← S5b ordinal-arc decoding arm (collapses)
+│   ├── run_context.py · run_context_local.py · run_context_concat.py
+│   │                                   ← S1 context arm (target⊕context; MiniLM + Qwen; all rejected)
+│   ├── run_human_anchor.py            ← S7 human-anchor / calibration arm (66 human codes → probe)
+│   ├── run_wave2_stack.py · run_wave2b_hybrid.py
+│   │                                   ← S8/S8b stacking arms (per-rater × two-stage; both rejected)
+│   └── ml2.py                         ← S4/S5 controlled model-lever runner (capacity/calibration/two-stage)
+└── mechanism/                        ← Campaign 3: PURER×VAAMR interaction (FROM×move, H2)
+    ├── RESULTS.md                    ← per-arm results + verdicts
+    ├── run_interaction_model.py       ← E1a/b + E2: earns-its-place grouped CV, frequentist
+    │                                   ordinal+mixed interaction, confound E-value sensitivity
+    ├── run_bayesian_ordinal.py        ← E1c: Bayesian hierarchical ordinal (isolated; requires a
+    │                                   dedicated .venv_bayes with numpy≥2 + bambi)
+    ├── run_e3_cue_representation.py · run_e4_trajectory.py · run_e5_purer_noise.py
+    │                                   ← E3–E5: cue representation, trajectory, PURER noise arms
+    ├── run_e7_lift_controls.py · run_e8_transition_cf.py · run_e9_h1.py
+    │                                   ← E7–E9: lift controls, transition counterfactual, H1 test
+    ├── _common.py                     ← shared helpers (corpus load, cue-block builder, embeddings, κ CI)
+    ├── _design.csv                    ← frozen FROM→CUE→TO design frame exported by run_interaction_model
+    ├── _e1e2_results.json             ← E1a/b + E2 results (frequentist arms)
+    └── _e1c_bayesian_results.json     ← E1c results (Bayesian; requires .venv_bayes)
 ```
 
-**Relationship to the live tree (important).** `gnn_reliability/` here is a **byte-identical mirror** of
-the canonical apparatus at repo-root `experiments/gnn_reliability/` (the shared `.py` files only;
-`capacity_scaler.py` and the `*.md` write-ups are catalog-only). The root copy is what the **unit tests**
-(`tests/unit/test_gnn_{reliability_harness,baselines,anchors_arm}.py`, 15 tests) and the discovery layer
-import. The mirror is kept in lockstep by **`tests/unit/test_experiments_catalog_sync.py`**, which fails
-if the two drift — so a future apparatus change (e.g. a module moving under `gnn_layer.classifier`) can
-never leave a stale shadow copy that breaks collection. The catalog's own scaler scripts bootstrap
-`src/` first, so `import experiments.gnn_reliability` / `experiments.classification_scaler` resolve to
-**this** self-contained archive; the reproduce commands run as written.
+**Relationship to the live tree (important).** `experiments/gnn_reliability/` is the **single canonical
+copy** of the apparatus — it is what the **unit tests** and the discovery layer import directly. There is
+no second copy. The hermetic apparatus tests are:
+`tests/unit/test_gnn_reliability_harness.py` (6) · `test_gnn_baselines.py` (5) ·
+`test_gnn_anchors_arm.py` (4) · `test_gnn_imbalance.py` (13) — GNN battery (28 tests); and
+`test_scaler_rater_distill.py` (3) — the per-rater ensemble winner. All pass. The catalog's own scaler
+scripts bootstrap `src/` first, so `import experiments.gnn_reliability` /
+`experiments.classification_scaler` resolve correctly from the repo root; the reproduce commands run as
+written.
 
 ---
 
 ## The shared apparatus (read before any results)
 
-Every arm in both campaigns is scored through `harness.py` so the numbers are comparable:
+Every arm in Campaigns 1 and 2 is scored through `harness.py` so the numbers are comparable (Campaign 3
+uses ordinal/Bayesian interaction models, not the classifier harness):
 
 - **Folds — `build_folds(df, seed=42)`:** participant-grouped `StratifiedGroupKFold` (whole
   participants held out) — the *only* leak-free protocol here. Random k-fold leaks via same-participant
@@ -142,9 +167,9 @@ Every arm in both campaigns is scored through `harness.py` so the numbers are co
   from 0% recall) + an explicit **"No code" null** (~36% of participant segments).
 - **Discriminant-validity corollary (provisional H6).** The graph's *inability* to recover VAAMR from
   content similarity is positive construct evidence (it is not a topic taxonomy).
-- **`qra_gnn_trial_run_report.md`.** An end-to-end pipeline run (legacy import → re-segment → GNN train
-  → analyze) reporting GNN accuracy/validity against the LLM consensus — the operational counterpart to
-  the controlled battery.
+- **`experiments/docs/qra_gnn_trial_run_report.md`.** An end-to-end pipeline run (legacy import →
+  re-segment → GNN train → analyze) reporting GNN accuracy/validity against the LLM consensus — the
+  operational counterpart to the controlled battery.
 
 ### Campaign 2 — Classification / scaler distillation (full numbers in `classification_scaler/RESULTS.md`)
 
@@ -186,29 +211,31 @@ reuse the harness. From the repository root (with `data/Meta` + the cached Qwen 
 
 ```bash
 # GNN reliability battery
-python src/experiments/gnn_reliability/run_battery.py
+python experiments/gnn_reliability/run_battery.py
 
 # Scaler campaign — the winner (per-rater ensemble) + its paired-Δ and C-sweep
-python src/experiments/classification_scaler/_run_distill.py
-python src/experiments/classification_scaler/_paired_delta.py
-python src/experiments/classification_scaler/_csweep.py
+python experiments/classification_scaler/_run_distill.py
+python experiments/classification_scaler/_paired_delta.py
+python experiments/classification_scaler/_csweep.py
 # Other arms: soft-label / context / gate-sweep / ordinal / human-anchor / stacking
-python src/experiments/classification_scaler/run_softlabel.py
-python src/experiments/classification_scaler/run_context_concat.py   # needs the LM Studio embedding endpoint
-python src/experiments/classification_scaler/gate_sweep.py
-python src/experiments/classification_scaler/ordinal_twostage.py     # needs `mord`
-python src/experiments/classification_scaler/run_human_anchor.py
-python src/experiments/classification_scaler/run_wave2_stack.py
+python experiments/classification_scaler/run_softlabel.py
+python experiments/classification_scaler/run_context_concat.py   # needs the LM Studio embedding endpoint
+python experiments/classification_scaler/gate_sweep.py
+python experiments/classification_scaler/ordinal_twostage.py     # needs `mord`
+python experiments/classification_scaler/run_human_anchor.py
+python experiments/classification_scaler/run_wave2_stack.py
 
-# Preserved apparatus tests (15 pass) + the mirror drift-guard
+# Hermetic apparatus tests (31 pass — no network, no model downloads)
 python -m pytest tests/unit/test_gnn_reliability_harness.py tests/unit/test_gnn_baselines.py \
-                 tests/unit/test_gnn_anchors_arm.py tests/unit/test_experiments_catalog_sync.py
+                 tests/unit/test_gnn_anchors_arm.py tests/unit/test_gnn_imbalance.py \
+                 tests/unit/test_scaler_rater_distill.py
 ```
 
 Required deps are all in the project venv (`scikit-learn`, `numpy`, `pandas`, `torch`,
-`sentence_transformers`, `mord`, `statsmodels`, `krippendorff`). Only the **context** arm calls the LM
-Studio embedding endpoint (`10.0.0.58`) to build context-augmented vectors; every other arm runs on the
-cached Qwen embeddings with no network.
+`sentence_transformers`, `mord`, `statsmodels`, `krippendorff`). **Environment pin:**
+`numpy==1.26.4` is required (`transformers==4.42.4` requires numpy<2.0 and will fail to import
+otherwise). Only the **context** arm calls the LM Studio embedding endpoint (`10.0.0.58`) to build
+context-augmented vectors; every other arm runs on the cached Qwen embeddings with no network.
 
 ---
 

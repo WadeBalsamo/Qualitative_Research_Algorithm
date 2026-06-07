@@ -16,19 +16,8 @@ from process import irr_import
 from analysis import irr_stats, stats as _stats
 from analysis.irr_analysis import _consensus_rows
 
-ABS = '/home/wisgood/qra/Qualitative_Research_Algorithm/data/Meta'
+ABS = 'data/Meta'
 CFG = dataclasses.replace(GnnLayerConfig(), vaamr_n_classes=6, vaamr_class_balance=True)
-df = H.load_corpus(ABS)
-folds = H.build_folds(df, seed=42, verbose=False)
-emb = H.get_embeddings(df, 'qwen', ABS)
-part_of = {str(r['segment_id']): str(r['participant_id']) for _, r in df.iterrows()}
-
-# --- OOF predictions for the three arms of interest ---
-print('computing OOF preds (A1n, ens_softavg, mlp_soft_kl) ...', flush=True)
-oof_a1n = B.run_linear_probe(df, emb, folds, CFG)
-seg_ids, proba = RD.per_rater_oof_proba(df, emb, folds, CFG)
-oof_soft = RD.ensemble_from_proba(seg_ids, proba, 6, 'softavg')
-oof_mlp = RD.run_mlp_soft(df, emb, folds, CFG)
 
 
 def _map6(p):  # 6-class No-code(5) -> ABSTAIN(-1) for the human axis
@@ -36,7 +25,7 @@ def _map6(p):  # 6-class No-code(5) -> ABSTAIN(-1) for the human axis
 
 
 # --- axis item builders: list of (ref, predA, predB, cluster) over common items ---
-def llm_items(oA, oB):
+def llm_items(df, part_of, oA, oB):
     lab = H._labeled_participants(df)
     out = []
     for _, r in lab.iterrows():
@@ -46,7 +35,7 @@ def llm_items(oA, oB):
     return out
 
 
-def human_items(oA, oB):
+def human_items(df, part_of, oA, oB):
     codes = irr_import.read_human_codes(ABS)
     master = set(df['segment_id'].astype(str))
     out = []
@@ -87,13 +76,30 @@ def paired_delta(items, n_boot=3000, seed=42):
     return res
 
 
-print('\n=== PAIRED Delta-kappa vs A1n (cluster-bootstrap by participant, n=3000) ===')
-print('(Delta>0 => variant beats A1n; CI excluding 0 => reliable)\n')
-for name, oB in [('ens_softavg', oof_soft), ('mlp_soft_kl', oof_mlp)]:
-    for axis, builder in [('LLM ', llm_items), ('HUM ', human_items)]:
-        items = builder(oof_a1n, oB)
-        d = paired_delta(items)
-        excl0 = (d['lo'] is not None and d['hi'] is not None and (d['lo'] > 0 or d['hi'] < 0))
-        print(f'{name:14s} {axis} n={len(items):3d}  Delta={d["point"]:+.4f}  '
-              f'CI[{d["lo"]:+.4f},{d["hi"]:+.4f}]  {"RELIABLE" if excl0 else "overlaps 0"}')
-print()
+def main():
+    df = H.load_corpus(ABS)
+    folds = H.build_folds(df, seed=42, verbose=False)
+    emb = H.get_embeddings(df, 'qwen', ABS)
+    part_of = {str(r['segment_id']): str(r['participant_id']) for _, r in df.iterrows()}
+
+    # --- OOF predictions for the three arms of interest ---
+    print('computing OOF preds (A1n, ens_softavg, mlp_soft_kl) ...', flush=True)
+    oof_a1n = B.run_linear_probe(df, emb, folds, CFG)
+    seg_ids, proba = RD.per_rater_oof_proba(df, emb, folds, CFG)
+    oof_soft = RD.ensemble_from_proba(seg_ids, proba, 6, 'softavg')
+    oof_mlp = RD.run_mlp_soft(df, emb, folds, CFG)
+
+    print('\n=== PAIRED Delta-kappa vs A1n (cluster-bootstrap by participant, n=3000) ===')
+    print('(Delta>0 => variant beats A1n; CI excluding 0 => reliable)\n')
+    for name, oB in [('ens_softavg', oof_soft), ('mlp_soft_kl', oof_mlp)]:
+        for axis, builder in [('LLM ', llm_items), ('HUM ', human_items)]:
+            items = builder(df, part_of, oof_a1n, oB)
+            d = paired_delta(items)
+            excl0 = (d['lo'] is not None and d['hi'] is not None and (d['lo'] > 0 or d['hi'] < 0))
+            print(f'{name:14s} {axis} n={len(items):3d}  Delta={d["point"]:+.4f}  '
+                  f'CI[{d["lo"]:+.4f},{d["hi"]:+.4f}]  {"RELIABLE" if excl0 else "overlaps 0"}')
+    print()
+
+
+if __name__ == '__main__':
+    main()

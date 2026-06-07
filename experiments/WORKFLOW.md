@@ -27,8 +27,8 @@ properties make this scale:
 
 ## 1. The apparatus (the fixed measuring stick)
 
-Code: `gnn_reliability/harness.py` + `gnn_reliability/baselines.py` (mirrored from the live
-`experiments/gnn_reliability/`; kept byte-identical by `tests/unit/test_experiments_catalog_sync.py`).
+Code: `gnn_reliability/harness.py` + `gnn_reliability/baselines.py` (the canonical copy; imported
+directly by tests and the discovery layer from `experiments/gnn_reliability/`).
 
 - **Corpus.** `data/Meta` — Move-MORE Cohorts 1–2, n ≈ 32 participants; 205 LLM-labeled + 134 "No code"
   participant segments; 66 human-consensus codes.
@@ -44,8 +44,8 @@ Code: `gnn_reliability/harness.py` + `gnn_reliability/baselines.py` (mirrored fr
   - **LLM axis** — preds vs the multi-run LLM consensus (`final_label`) over 205, + per-class recall.
   - **Human axis (load-bearing)** — preds vs human consensus over 66, scored *exactly* like
     `analysis/irr_analysis.py` so κ is comparable to the shipped `06b_irr_report.txt`.
-- **Ledger.** Each arm appends a row to `docs/gnn_experiments/ledger.csv` (arm, embedding, method, both-axis
-  κ + CI, per-class recall, seed, decision).
+- **Ledger.** Each arm appends a row to `experiments/gnn_reliability/ledger.csv` (arm, embedding, method,
+  both-axis κ + CI, per-class recall, seed, decision).
 
 ---
 
@@ -130,12 +130,12 @@ To add an **arm** to an existing campaign:
 3. Run it; add a row to the campaign `RESULTS.md` table and to `CATALOG.md`; append the ledger row.
 
 To add a **campaign** (a new question, e.g. a different framework or a fine-tuned encoder):
-1. Create `src/experiments/<campaign>/` with its own `RESULTS.md` (+ `CAMPAIGN_LOG.md` if run as a wave of
+1. Create `experiments/<campaign>/` with its own `RESULTS.md` (+ `CAMPAIGN_LOG.md` if run as a wave of
    subagents). Reuse the harness; if a new corpus is needed, extend `harness.load_corpus`, keeping
    participant-grouped folds.
 2. Add the campaign to this `WORKFLOW.md` overview and to `CATALOG.md` (master table + promotion ledger).
-3. Keep the apparatus mirror in sync: if you change the live `experiments/gnn_reliability/*.py`, re-copy it
-   into `src/experiments/gnn_reliability/` (the drift-guard test enforces this).
+3. If you change `experiments/gnn_reliability/*.py`, all consumers (unit tests, discovery layer, new
+   campaign scripts) import from that single location — no mirror to keep in sync.
 
 **Reproducibility checklist for any committed result:** seed 42 · participant-grouped folds · dual-axis κ +
 participant-clustered CI · the raw result artifact committed next to the script (e.g. `_distill_results.json`,
@@ -151,6 +151,14 @@ participant-clustered CI · the raw result artifact committed next to the script
 - **Campaign 2 (scaler distillation):** ranked seven lever families; found the per-rater ensemble winner,
   established the n ≈ 32 **data ceiling** via three converging methods, and bounded the search (context,
   capacity, ordinal, stacking, anchors all archived as negatives).
+- **Campaign 3 (mechanism — PURER×VAAMR interaction):** tested whether the therapist move effect on the
+  next VAAMR stage depends on the participant's FROM stage (FROM×move interaction, H2). The PURER-move
+  main effect earns its place (held-out log-loss FROM-only 1.553 → +move 1.506); the interaction does not
+  (1.531, overfits). Frequentist E1b: ordinal LR test p = 0.52; Gaussian model singular. Bayesian E1c:
+  0/16 interaction HDIs exclude 0 (honest under-identification). E2 confound E-values provide a formal
+  sensitivity floor. E3–E9 corroboration arms cover cue representation, trajectory, PURER noise, lift
+  controls, transition counterfactual, and H1. All observational, hypothesis-generating at n ≈ 32;
+  see `mechanism/RESULTS.md`.
 
 The throughline: **the binding constraint is data scale, not model architecture.** The workflow is built so
 that when the corpus grows, every arm re-runs unchanged and every verdict is re-adjudicated against the same

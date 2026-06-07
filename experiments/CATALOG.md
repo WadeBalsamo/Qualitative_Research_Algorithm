@@ -5,12 +5,14 @@
 > codebase (and why / why not). Read [`WORKFLOW.md`](WORKFLOW.md) for *how* these were posed, run, and
 > adjudicated; read each campaign's `RESULTS.md` for full per-arm detail.
 
-**Two campaigns, one apparatus.** Both campaigns score every arm through the same frozen harness
-(`gnn_reliability/{harness,baselines}.py`): participant-grouped `StratifiedGroupKFold` (seed 42), a
-**dual-axis** Cohen-κ scorer (classifier↔LLM-consensus over 205 labeled segments; classifier↔human over
-66 consensus items), each with a **participant-clustered bootstrap 95% CI**. Data: Move-MORE Cohorts 1–2,
-**n ≈ 32 participants**, 205 LLM-labeled + 134 "No code" segments, 66 human codes. Features: cached
-**Qwen3-Embedding-8B** 4096-d, L2-normalized.
+**Three campaigns, one apparatus.** The two classifier campaigns (GNN reliability + scaler distillation)
+score every arm through the same frozen harness (`gnn_reliability/{harness,baselines}.py`):
+participant-grouped `StratifiedGroupKFold` (seed 42), a **dual-axis** Cohen-κ scorer
+(classifier↔LLM-consensus over 205 labeled segments; classifier↔human over 66 consensus items), each
+with a **participant-clustered bootstrap 95% CI**. Data: Move-MORE Cohorts 1–2, **n ≈ 32 participants**,
+205 LLM-labeled + 134 "No code" segments, 66 human codes. Features: cached **Qwen3-Embedding-8B** 4096-d,
+L2-normalized. A third campaign (`mechanism/`) tests the PURER×VAAMR FROM×move interaction (H2) using
+frequentist ordinal/mixed models and confound sensitivity; it does not use the classifier harness.
 
 **Success bar (the LLM-equivalence target):** classifier↔LLM grouped **κ ≥ 0.45** (the human↔human
 ceiling) **OR** classifier↔human **κ ≥ 0.50** (LLM↔human is 0.537), CI-aware. **Reference bands:** trained
@@ -114,3 +116,23 @@ across *every* arm) compounded by shallow VAAMR separability of a content-traine
 promoted *autonomously* until it clears the bar (LLM κ ≥ 0.45 or human κ ≥ 0.50, CI-aware) on the current
 corpus. The whole apparatus is frozen at seed 42 and re-runnable, so every verdict here is re-adjudicable as
 n grows.
+
+---
+
+## Campaign 3 — PURER×VAAMR mechanism interaction (`mechanism/`)
+
+*Question (H2): does the therapist move's effect on the next VAAMR stage depend on the participant's FROM
+stage (FROM×move interaction)?* Full results: `mechanism/RESULTS.md` · `mechanism/_e1e2_results.json` ·
+`mechanism/_e1c_bayesian_results.json`.
+
+| Arm | What was tried | Result | Decision |
+|---|---|---|---|
+| E1a earns-its-place | Participant-grouped CV held-out log-loss: FROM-only vs additive (+move) vs interaction (FROM×move) | additive: logloss 1.506 (acc 0.37); interaction: 1.531 — overfits; move main effect earns its place, **interaction does not** | PURER main effect keeps; interaction archived |
+| E1b frequentist | Ordinal LR test additive vs interaction; Gaussian mixed FROM×move | LR p = 0.52 (ns); Gaussian model singular (un-fittable at n ≈ 32); 0/20 per-cell FDR-significant | no reliable interaction signal at this scale |
+| E1c Bayesian ordinal | Hierarchical cumulative-logit FROM×move + (1\|participant) with partial pooling (bambi) | 0/16 interaction HDIs exclude 0 — honest under-identification; 0 divergences; requires isolated `.venv_bayes` | under-identified at n ≈ 32; estimated, not testable |
+| E2 confound sensitivity | E-value (VanderWeele-Ding) per (from×move) cell | Avoidance×Education E=4.23, AttnReg×Reinforcement E=3.81, Metacog×Education E=3.49 — formal confound floor | hypothesis-generating only |
+| E3–E9 corroboration | Cue representation (E3), trajectory (E4), PURER noise (E5), lift controls (E7), transition counterfactual (E8), H1 test (E9) | see `mechanism/RESULTS.md` | corroborative; none promoted at this n |
+
+All arms are observational (186 FROM→CUE→TO triples, 20 participants / 160 with defined move);
+hypothesis-generating, never causal. Nothing from this campaign is promoted to `src/` at this scale.
+Confirmatory power awaits Cohorts 3–4.
