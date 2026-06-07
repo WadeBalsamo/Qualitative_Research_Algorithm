@@ -1087,6 +1087,116 @@ def _action_edit_config(config_path: str) -> None:
 # Existing Project flow
 # ---------------------------------------------------------------------------
 
+_SMALL_ADDITION_SESSIONS = 3  # ≤ this many new sessions → the LLM is affordable; recommend it
+
+
+def _estimate_new_sessions(output_dir: str, config_path) -> Optional[int]:
+    """Best-effort count of input transcript files not yet segmented (the add-data scale)."""
+    try:
+        import glob
+        import json as _json
+        from . import segments_io as _sio
+        from .config import PipelineConfig
+        segmented = set(_sio.list_segmented_sessions(output_dir))
+        tdir = None
+        if config_path and os.path.isfile(config_path):
+            with open(config_path, encoding='utf-8') as f:
+                cfg = PipelineConfig.from_json(_json.load(f))
+            tdir = cfg.transcript_dir
+        if not tdir or not os.path.isdir(tdir):
+            return None
+        files = glob.glob(os.path.join(tdir, '*.json')) + glob.glob(os.path.join(tdir, '*.vtt'))
+        return sum(1 for f in files
+                   if os.path.splitext(os.path.basename(f))[0] not in segmented)
+    except Exception:
+        return None
+
+
+def _recommend_add_data_mode(probe: dict, gnn: dict, n_new: Optional[int]):
+    """(mode, reason) recommendation given the cheap-classifier gates + the addition's scale."""
+    probe_ready, gnn_ready = bool(probe.get('ready')), bool(gnn.get('ready'))
+    if not (probe_ready or gnn_ready):
+        return 'llm', ('no cheap classifier has passed its gate — the multi-run LLM '
+                       '(human-level) is the only reliable option.')
+    if n_new is not None and n_new <= _SMALL_ADDITION_SESSIONS:
+        return 'llm', (f'a small addition (~{n_new} new session(s)) — the LLM is affordable '
+                       'here and stays the human-level label of record.')
+    if probe_ready:
+        pk = probe.get('human_kappa')
+        return 'probe', (f'a larger addition and the probe gate passed (↔human κ '
+                         f'{pk:.2f}{"" if pk is None else ""}); it scales LLM-free, tagged '
+                         'below the LLM.' if pk is not None else
+                         'a larger addition and the probe gate passed; it scales LLM-free.')
+    return 'gnn', ('a larger addition and the GNN gate passed; it scales LLM-free, '
+                   'tagged below the LLM.')
+
+
+def _add_data_mode_picker(output_dir: str, config_path) -> str:
+    """Show the IRR comparison + a scale-based recommendation; return the chosen mode.
+
+    The user's new ask: when adding data, choose how to label the new segments (LLM / probe /
+    GNN), seeing the probe's and GNN's reliability vs this project's existing data and a
+    recommendation that depends on the addition's scale.
+    """
+    from analysis.irr_analysis import load_irr_metrics
+    m = load_irr_metrics(output_dir)
+    probe, gnn, llm = m.get('probe', {}), m.get('gnn', {}), m.get('llm', {})
+
+    def _k(x):
+        return 'n/a' if not isinstance(x, (int, float)) else f'{x:.3f}'
+
+    n_new = _estimate_new_sessions(output_dir, config_path)
+    existing_labeled = None
+    df = _probe_master_df(output_dir)
+    if df is not None and 'final_label' in df.columns and 'speaker' in df.columns:
+        try:
+            existing_labeled = int(((df['speaker'] == 'participant')
+                                    & (df['final_label'].notna())).sum())
+        except Exception:
+            existing_labeled = None
+
+    _section('Classification mode for the NEW data')
+    _info('The multi-run LLM is the label of record (human-level). The probe / GNN are')
+    _info('LLM-free scalers that FILL below the LLM (tagged lower-confidence) — useful at')
+    _info('scale when running the LLM on every new segment is impractical.')
+    print()
+    band = llm.get('human_human_band')
+    bandtxt = f'{band[0]:.2f}–{band[1]:.2f}' if band else 'n/a'
+    _info('Reliability vs this project\'s existing data (Cohen κ; higher = better):')
+    _info(f'  reference   LLM↔human κ {_k(llm.get("human_kappa"))}   '
+          f'(human↔human band α {bandtxt})')
+    _info(f'  PROBE       ↔human {_k(probe.get("human_kappa"))}   ↔LLM {_k(probe.get("llm_kappa"))}'
+          f'   gate {"PASSED ★" if probe.get("ready") else "not passed"}'
+          + (f'   [{probe.get("mode")}]' if probe.get('mode') else ''))
+    _info(f'  GNN         ↔human {_k(gnn.get("human_kappa"))}   ↔LLM {_k(gnn.get("llm_kappa"))}'
+          f'   gate {"PASSED ★" if gnn.get("ready") else "not passed"}')
+    pcr = probe.get('per_class_recall') or {}
+    if pcr:
+        _info('  probe per-stage recall: '
+              + ', '.join(f'{k} {_k(v)}' for k, v in pcr.items() if v is not None))
+    if existing_labeled is not None:
+        _info(f'  existing LLM/human-labeled participant segments: {existing_labeled}')
+    if n_new is not None:
+        _info(f'  new sessions to add (estimate): {n_new}')
+    print()
+
+    rec, reason = _recommend_add_data_mode(probe, gnn, n_new)
+    _ok(f'Recommended: {rec.upper()} — {reason}')
+    print()
+    opts = [
+        ('Multi-run LLM consensus (default, human-level)' + (' ★' if rec == 'llm' else ''),
+         'Highest quality; the label of record. Per-segment frontier-LLM cost.'),
+        ('Probe — LLM-free, gated' + (' ★' if rec == 'probe' else ''),
+         'Per-rater ensemble on cached embeddings; fills below the LLM (probe_consensus).'),
+        ('GNN — LLM-free, non-authoritative' + (' ★' if rec == 'gnn' else ''),
+         'Graph consensus; fills below the LLM (gnn_consensus).'),
+    ]
+    choice = _menu('Label the new segments with', opts, back_label='Cancel add-data')
+    if choice == 0:
+        return ''  # cancel
+    return {1: 'llm', 2: 'probe', 3: 'gnn'}.get(choice, 'llm')
+
+
 def _action_add_data(output_dir: str, config_path) -> None:
     """Incrementally segment + classify only NEW transcripts (longitudinal additions)."""
     _section('Add New Transcripts (incremental)')
@@ -1100,6 +1210,11 @@ def _action_add_data(output_dir: str, config_path) -> None:
     print()
     if not _confirm('Run incremental add-data now?'):
         return
+    # Mode picker: LLM (default) / probe / GNN, with the IRR comparison + a scale recommendation.
+    mode = _add_data_mode_picker(output_dir, config_path)
+    if not mode:
+        _info('Add-data cancelled.')
+        return
     import argparse as _argparse
     import qra as _qra
     fake = _argparse.Namespace(
@@ -1111,6 +1226,7 @@ def _action_add_data(output_dir: str, config_path) -> None:
         no_theme_labeler=False, run_codebook_classifier=False,
         no_codebook_classifier=False, verbose_segmentation=False,
         zero_shot=False, no_text_anonymization=False,
+        classify_mode=mode,
     )
     try:
         _qra.cmd_add_data(fake)

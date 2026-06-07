@@ -624,7 +624,15 @@ def cmd_add_data(args):
             getattr(config.theme_classification, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')
         )
 
-    run_incremental_pipeline(config, framework, codebook=codebook, walkthrough=True)
+    classify_mode = (getattr(args, 'classify_mode', None) or 'llm').lower()
+    if classify_mode not in ('llm', 'probe', 'gnn'):
+        print(f"Error: --classify-mode must be llm|probe|gnn (got {classify_mode!r}).")
+        sys.exit(1)
+    if classify_mode != 'llm':
+        print(f"  Classifying NEW participant segments with the '{classify_mode}' scaler "
+              "(LLM-free); existing labels untouched.")
+    run_incremental_pipeline(config, framework, codebook=codebook, walkthrough=True,
+                             classify_mode=classify_mode)
 
 
 def _resolve_test_rater_config(args) -> dict:
@@ -2275,6 +2283,13 @@ Examples:
         ),
     )
     _add_common_args(add_data_parser)
+    add_data_parser.add_argument(
+        '--classify-mode', choices=['llm', 'probe', 'gnn'], default='llm',
+        help="How to label the NEW participant segments: 'llm' (default, multi-run "
+             "consensus — human-level) | 'probe' (LLM-free per-rater ensemble, gated) | "
+             "'gnn' (LLM-free graph, non-authoritative). probe/gnn fill BELOW the LLM and "
+             "are tagged lower-confidence; use them at scale when the LLM budget can't reach "
+             "the new data (the TUI add-data picker shows the IRR comparison + a recommendation).")
 
     # ---- analyze ----
     analyze_parser = subparsers.add_parser(

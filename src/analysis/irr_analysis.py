@@ -651,6 +651,62 @@ def run_irr_analysis(output_dir: str, config=None, *, verbose: bool = True,
     return results
 
 
+def load_irr_metrics(output_dir: str) -> dict:
+    """Aggregate the already-computed reliability numbers for the add-data mode picker.
+
+    Reads (best-effort, no recomputation) the persisted gate verdicts + IRR results and
+    returns a compact comparison the TUI renders so the user can choose a classification
+    mode for new data:
+
+      probe (probe_gate.json)  → probe↔human / probe↔LLM κ, per-stage recall, ready
+      gnn   (gnn_gate.json + irr_results.json) → gnn↔LLM / gnn↔human κ, ready
+      llm   (irr_results.json) → LLM↔human κ (the human-level reference) + human↔human band
+
+    Missing sources yield empty sub-dicts; the caller degrades gracefully.
+    """
+    out: dict = {'probe': {}, 'gnn': {}, 'llm': {}}
+    try:
+        from classification_tools.probe_classifier import read_probe_gate
+        pg = read_probe_gate(output_dir) or {}
+        if pg:
+            out['probe'] = {
+                'human_kappa': pg.get('probe_human_kappa'),
+                'llm_kappa': pg.get('probe_llm_kappa'),
+                'ready': bool(pg.get('ready_for_scaling')),
+                'per_class_recall': pg.get('per_class_recall') or {},
+                'mode': pg.get('mode'),
+            }
+    except Exception:
+        pass
+    try:
+        from gnn_layer.classifier.validation import read_gate_verdict
+        gg = read_gate_verdict(output_dir) or {}
+        if gg:
+            out['gnn']['llm_kappa'] = gg.get('vaamr_kappa')
+            out['gnn']['ready'] = bool(gg.get('ready_for_scaling'))
+    except Exception:
+        pass
+    try:
+        path = os.path.join(_paths.irr_validation_dir(output_dir), 'irr_results.json')
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8') as f:
+                irr = json.load(f)
+            out['llm']['human_kappa'] = (irr.get('human_vs_llm') or {}).get('cohen_kappa')
+            gh = (irr.get('human_vs_gnn') or {}).get('cohen_kappa')
+            if gh is not None:
+                out['gnn']['human_kappa'] = gh
+            alphas = []
+            for ws in (irr.get('human_human') or {}).values():
+                a = ((ws.get('primary') or {}).get('krippendorff_alpha'))
+                if isinstance(a, (int, float)):
+                    alphas.append(a)
+            if alphas:
+                out['llm']['human_human_band'] = [min(alphas), max(alphas)]
+    except Exception:
+        pass
+    return out
+
+
 def _write_outputs(output_dir: str, results: dict, discrepancies: List[dict],
                    item_details: List[dict]) -> None:
     out_dir = _paths.irr_validation_dir(output_dir)

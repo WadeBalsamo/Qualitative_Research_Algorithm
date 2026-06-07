@@ -276,5 +276,38 @@ class TestProbeTag(unittest.TestCase):
         self.assertEqual(_probe_tag('xyz'), '')
 
 
+# ---------------------------------------------------------------------------
+# Add-data mode-picker recommendation (scale-aware)
+# ---------------------------------------------------------------------------
+
+class TestAddDataRecommendation(unittest.TestCase):
+    def _rec(self, probe, gnn, n_new):
+        from process.interactive_tui import _recommend_add_data_mode
+        return _recommend_add_data_mode(probe, gnn, n_new)[0]
+
+    def test_llm_when_no_cheap_gate_ready(self):
+        self.assertEqual(self._rec({'ready': False}, {'ready': False}, 99), 'llm')
+
+    def test_llm_for_small_addition_even_if_probe_ready(self):
+        self.assertEqual(self._rec({'ready': True, 'human_kappa': 0.45},
+                                   {'ready': False}, 2), 'llm')
+
+    def test_probe_for_large_addition_when_ready(self):
+        self.assertEqual(self._rec({'ready': True, 'human_kappa': 0.45},
+                                   {'ready': False}, 20), 'probe')
+
+    def test_probe_preferred_over_gnn_when_both_ready(self):
+        self.assertEqual(self._rec({'ready': True, 'human_kappa': 0.45},
+                                   {'ready': True}, 20), 'probe')
+
+    def test_gnn_when_only_gnn_ready_and_large(self):
+        self.assertEqual(self._rec({'ready': False}, {'ready': True}, 20), 'gnn')
+
+    def test_unknown_scale_with_ready_probe_recommends_probe(self):
+        # n_new is None (couldn't estimate) → don't force small; a ready probe is recommended
+        self.assertEqual(self._rec({'ready': True, 'human_kappa': 0.45},
+                                   {'ready': False}, None), 'probe')
+
+
 if __name__ == '__main__':
     unittest.main()
