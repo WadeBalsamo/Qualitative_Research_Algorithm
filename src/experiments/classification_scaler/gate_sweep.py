@@ -11,7 +11,7 @@ for _p in (os.path.join(_ROOT, 'src'), _ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 from experiments.gnn_reliability import harness as H
-from experiments.scaler.ordinal_twostage import oof_two_stage, adjacency_stats, _fmt, ABS, SEED
+from experiments.classification_scaler.ordinal_twostage import oof_two_stage, adjacency_stats, _fmt, ABS, SEED
 
 
 def main():

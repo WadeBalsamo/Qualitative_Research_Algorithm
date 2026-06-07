@@ -12,8 +12,10 @@ Human axis scored exactly like analysis.irr_analysis via H.score_arm.
 """
 import sys, os, warnings
 warnings.filterwarnings('ignore')
-WT='/home/wisgood/qra/Qualitative_Research_Algorithm/.claude/worktrees/agent-ae013a0b2ab0db6f8'
-sys.path.insert(0, os.path.join(WT,'src')); sys.path.insert(0, WT)
+_SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo src/
+for _p in (os.path.dirname(_SRC), _SRC):  # repo root then src/ -> src/ ends up first on sys.path
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import normalize

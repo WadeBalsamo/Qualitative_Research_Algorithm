@@ -7,8 +7,12 @@ The pre-registered battery (``graph_experiments.md``) showed that a content-simi
 (Correct-&-Smooth / kNN label propagation) reproduces VAAMR at ≈ chance on held-out *participants*,
 while a directly-supervised probe on the **same** Qwen embeddings reaches the human band. That is
 not only a negative engineering result about the graph classifier — it is positive evidence about
-the construct: **VAAMR stage is a developmental direction recoverable by supervision yet orthogonal
-to content-similarity (topic / body region / affect). It is not a topic taxonomy.**
+the construct: **VAAMR stage is a developmental direction recoverable by supervision, but it is NOT
+*locally homophilous* in content-similarity space — cosine-near neighbours (same topic / body region /
+affect) frequently sit at different stages, so similarity / label-propagation methods cannot recover it.
+It is not a topic taxonomy.** (The stage signal is partly present in the leading *content* principal
+components — it is not hidden in an exotic low-variance subspace; what defeats similarity methods is
+LOCAL, not global.)
 
 This module packages that finding as a reproducible construct-validity instrument and characterises
 the geometry behind it. It is gate-independent discovery, runs at analyze-time, and re-adjudicates
@@ -18,10 +22,12 @@ automatically at Cohorts 3–4 scale.
       supervised probe (above chance)  vs  content-similarity (≈ chance)  vs  chance baselines,
     scored on BOTH axes (LLM consensus n=205, human consensus n≈66) with participant-clustered
     bootstrap CIs, plus a paired (probe − content) κ contrast with a clustered CI.
-(b) The geometry — stage ⟂ topic:
-      • how well the leading *content* PCs recover stage (grouped-CV) vs the full-embedding probe,
-      • the principal angles between the stage-discriminant subspace and the leading content PCs,
-      • community × stage independence (the Track-D subtext communities are content, not stage),
+(b) The geometry — why similarity methods fail (weak/uneven LOCAL homophily, NOT global orthogonality):
+      • how well the leading *content* PCs recover stage (grouped-CV) vs the full-embedding probe
+        (stage IS partly in the content PCs — so the failure is not subspace-orthogonality),
+      • the local cosine-kNN stage homophily (weak and uneven: a probe decodes the stage that a
+        segment's similarity neighbours do not share),
+      • community × stage independence (the Track-D subtext communities are content, not stage; ARI≈0),
     which is what *bounds* every similarity-based method (Track D included) and the dropped kNN edges.
 (c) Operationalization — the "No code" null class; the stage≠topic caveat.
 
@@ -372,7 +378,7 @@ def _community_stage_independence(df_all, embeddings, config, seed: int = 42) ->
         return {'available': False}
     # τ=0.85 leaves participant segments as near-singletons; search down until the partition
     # has ≥3 multi-member communities (else the V is a sparse-table artifact — report n/a).
-    base_thr = float(getattr(config, 'community_sim_threshold', 0.85))
+    base_thr = float(getattr(config, 'community_sim_threshold', 0.6))
     thresholds = [t for t in (base_thr, 0.75, 0.65, 0.55) if t <= base_thr] or [base_thr]
     detect, used_thr, n_multi = None, None, 0
     for thr in thresholds:

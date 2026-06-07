@@ -416,16 +416,18 @@ def _write_datasheet(examples, datasheet: dict, output_dir: str) -> str:
     L.append("-" * W)
     L.append("  GATE STATUS & AUGMENTATION (C3/C4)")
     L.append("-" * W)
-    L.append(f"    reliability gate passed : {datasheet['gate_passed']}")
+    L.append(f"    reliability gate passed : {datasheet['gate_passed']}  "
+             f"(governs the gnn_consensus provenance tier; augmentation is gated on the transition "
+             f"model + C4, not on this)")
     aug = datasheet['augmentation']
     if not aug.get('enabled'):
         L.append("    augmentation            : DISABLED (observed labels only)")
-    elif not datasheet['gate_passed']:
-        L.append("    augmentation            : SUPPRESSED (gate not passed — never augment off an")
-        L.append("                              un-gated model)")
+    elif aug.get('n_augmented', 0) == 0:
+        L.append("    augmentation            : requested but no transition_per_move.csv found —")
+        L.append("                              skipped (run the transition model first)")
     else:
         L.append(f"    augmentation channel    : attached to {aug.get('n_augmented', 0)} examples "
-                 f"(provenance 'gnn_counterfactual')")
+                 f"(transition-model counterfactual; provenance 'transition_counterfactual')")
         abl = aug.get('ablation', {})
         L.append(f"    C4 ablation             : {abl.get('status')}")
         if abl.get('status') == 'ok':

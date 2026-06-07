@@ -4,10 +4,13 @@ import os
 for _v in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMEXPR_NUM_THREADS'):
     os.environ[_v] = '8'
 import sys, dataclasses, json
-sys.path.insert(0, 'src'); sys.path.insert(0, '.')
+_SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo src/
+for _p in (os.path.dirname(_SRC), _SRC):  # repo root then src/ -> src/ ends up first on sys.path
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 import numpy as np
 from experiments.gnn_reliability import harness as H, baselines as B
-from experiments.gnn_reliability import rater_distill as RD
+from experiments.classification_scaler import rater_distill as RD
 from gnn_layer.config import GnnLayerConfig
 from process import irr_import
 from analysis import irr_stats, stats as _stats

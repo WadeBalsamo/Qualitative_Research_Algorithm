@@ -65,7 +65,7 @@ def _seg_meta(df_all) -> Dict[str, dict]:
 
 
 def build_subtext_graph(seg_emb: Dict[str, "object"], meta: Dict[str, dict],
-                        threshold: float = 0.85, max_nodes: int = 4000):
+                        threshold: float = 0.6, max_nodes: int = 4000):
     """Thresholded cosine-similarity graph over segments. Returns (networkx.Graph, info).
 
     Nodes = segments with embeddings. An edge connects two segments whose cosine similarity
@@ -214,7 +214,7 @@ def community_stability(seg_emb, meta, config, full_labels: Dict[str, int],
             by_pid[m['participant_id']].append(s)
 
     boots = int(getattr(config, 'community_stability_boots', 50))
-    thr = float(getattr(config, 'community_sim_threshold', 0.85))
+    thr = float(getattr(config, 'community_sim_threshold', 0.6))
     co_counts = {ci: Counter() for ci in pairs_by_comm}
     seen_counts = {ci: Counter() for ci in pairs_by_comm}
 
@@ -635,7 +635,7 @@ def run_subtext_communities(df_all, seg_emb, output_dir: str, config) -> dict:
     """
     files: List[str] = []
     meta = _seg_meta(df_all)
-    thr = float(getattr(config, 'community_sim_threshold', 0.85))
+    thr = float(getattr(config, 'community_sim_threshold', 0.6))
     G, graph_info = build_subtext_graph(seg_emb, meta, threshold=thr)
     if graph_info.get('n_nodes', 0) < 3:
         return {'files_written': files, 'n_communities': 0, 'n_stable': 0,

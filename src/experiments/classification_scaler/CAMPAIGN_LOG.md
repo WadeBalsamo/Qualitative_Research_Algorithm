@@ -1,11 +1,19 @@
 # Scalable VAAMR Classification — Distillation Campaign Log
 
-> **Uncommitted working-tree documentation** (this campaign commits nothing; the researcher decides
-> what to promote). Goal: a computationally-efficient classifier that reproduces the multi-run LLM
-> VAAMR consensus / human judgment well enough to scale labeling LLM-free, on `./data/Meta`.
-> Apparatus: `experiments/gnn_reliability/{harness,baselines}.py` (participant-grouped CV +
-> participant-clustered bootstrap CIs + both-axis scorer). Each experiment ran in its own isolated
-> worktree via a parallel Opus subagent. Plan: `~/.claude/plans/vivid-growing-flame.md`.
+> **STATUS: CAMPAIGN COMPLETE (historical append-only log).** This is the chronological record of how
+> the distillation campaign ran (waves 1a → context → wave 2). The *consolidated final* results,
+> verdict, and per-arm detail live in **`RESULTS.md`**; the cross-campaign index + promotion decisions
+> live in **`../CATALOG.md`** and **`../WORKFLOW.md`**. A few arm rows below are marked "running" /
+> "queued" — those are frozen historical states; S1 (context) completed NEGATIVE, S7 (human-anchor)
+> completed (no reliable gain), and S3 (instruct-prefix) was not pursued after S1 fell. The winner
+> (S6 `ens_softavg` C=4) is backed by the committed `_csweep_results.json`.
+>
+> This campaign committed nothing to the pipeline; the researcher decides what to promote. Goal: a
+> computationally-efficient classifier that reproduces the multi-run LLM VAAMR consensus / human
+> judgment well enough to scale labeling LLM-free, on `./data/Meta`. Apparatus:
+> `experiments/gnn_reliability/{harness,baselines}.py` (participant-grouped CV + participant-clustered
+> bootstrap CIs + both-axis scorer). Each experiment ran in its own isolated worktree via a parallel
+> Opus subagent.
 
 ## Success bar
 A cheap model (cached embeddings + a light classifier; no per-segment LLM at inference) reaching
@@ -19,7 +27,7 @@ linear probe) = **human κ 0.365 [0.23, 0.51] / LLM-axis grouped κ 0.31**.
 |---|---|---|---|---|---|---|---|
 | A1n | baseline (Qwen probe) | class-wt 6-class | **0.283** | 0.365 [.23,.51] | .36/.35/.31 | — | no |
 | S1 | context embeddings (concat) | qwen3 target⊕context 8192-d | 0.227 | 0.360 | — | **no — HURTS** (MiniLM too) | no |
-| S2 | soft-label distillation | MLP-KL 5-cls (LLM) · hard 6-cls (HUM) | 0.362 [.30,.44] | 0.388 [.26,.54] | .24/.25/.81/.31/.55 | LLM (axis it optimizes only) | no |
+| S2 | soft-label distillation | MLP-KL 5-cls (LLM) · hard 6-cls (HUM) | 0.367 [.30,.44] | 0.388 [.26,.54] | .24/.25/.81/.31/.55 | LLM (axis it optimizes only) | no |
 | S3 | instruct-prefix embedding | _endpoint back — queued after S1_ | | | | | |
 | S4 | model capacity (MLP/GBM/calib) | linear best; rest hurt | 0.13–0.20 | <A1n | collapses | **no — all below A1n** | no |
 | **S5** | **two-stage No-code gate** | gate@.45 → 5-cls stager | 0.281 | **0.447 [.33,.60]** | .28/.35/.31 | **hum +.08** | grazes |
@@ -72,7 +80,7 @@ Tested locally first (same MiniLM embedder, isolated vs +context, so the contras
 
 **No cheap classifier clears the LLM-equivalence bar at this data scale.** Three *independent* methods
 converge on the same frontier — per-rater ensembling (S6: LLM 0.361), soft-label MLP distillation
-(S2: LLM 0.362), and structural No-code decoupling (S5/S6: human ≈0.45) — and **every** capacity,
+(S2: LLM 0.367), and structural No-code decoupling (S5/S6: human ≈0.45) — and **every** capacity,
 calibration, ordinal, context, and stacking lever beyond that ties or hurts. Convergence of unrelated
 methods on **LLM κ ≈ 0.36 / human κ ≈ 0.45** is the signature of a **data ceiling, not a method gap**.
 
