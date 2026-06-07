@@ -21,7 +21,7 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from tests.testhelpers import synthetic_df
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer import calibration as CAL
+from gnn_layer.classifier import calibration as CAL
 
 
 def _softmax(a):
@@ -94,7 +94,7 @@ class TestOOD(unittest.TestCase):
 class TestCrossvalLogitsAndTempFromCv(unittest.TestCase):
 
     def _setup(self):
-        from gnn_layer import graph_builder as gb, train as tr
+        from gnn_layer.classifier import graph_builder as gb, train as tr
         from gnn_layer.soft_labels import build_soft_targets
         cfg = GnnLayerConfig(hidden_dim=16, n_layers=2, knn_k=3, epochs=6, validation_folds=2,
                              cache_embeddings=False, seed=1,
@@ -105,7 +105,7 @@ class TestCrossvalLogitsAndTempFromCv(unittest.TestCase):
         return g, tgts, cfg, df
 
     def test_crossval_returns_logits(self):
-        from gnn_layer import train as tr
+        from gnn_layer.classifier import train as tr
         g, tgts, cfg, df = self._setup()
         cv = tr.crossval_predictions(g, tgts, cfg, return_logits=True)
         self.assertIn('vaamr_logits', cv)
@@ -114,7 +114,7 @@ class TestCrossvalLogitsAndTempFromCv(unittest.TestCase):
         self.assertEqual(len(np.asarray(logit)), 5)
 
     def test_temperature_from_cv_structure(self):
-        from gnn_layer import train as tr
+        from gnn_layer.classifier import train as tr
         g, tgts, cfg, df = self._setup()
         cv = tr.crossval_predictions(g, tgts, cfg, return_logits=True)
         cal = CAL.temperature_from_cv(cv, df)
@@ -130,7 +130,7 @@ class TestCrossvalLogitsAndTempFromCv(unittest.TestCase):
 class TestInferenceAppliesTemperature(unittest.TestCase):
 
     def test_temperature_changes_confidence(self):
-        from gnn_layer import graph_builder as gb, train as tr, inference as inf
+        from gnn_layer.classifier import graph_builder as gb, train as tr, inference as inf
         from gnn_layer.soft_labels import build_soft_targets
         cfg = GnnLayerConfig(hidden_dim=16, n_layers=2, knn_k=3, epochs=6,
                              cache_embeddings=False, seed=1,

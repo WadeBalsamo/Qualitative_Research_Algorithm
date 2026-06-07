@@ -53,7 +53,7 @@ from analysis import irr_join  # noqa: E402
 from analysis import irr_stats  # noqa: E402
 from analysis import stats as _stats  # noqa: E402
 from analysis.irr_analysis import _consensus_rows  # noqa: E402
-from gnn_layer import validation as _val  # noqa: E402
+from gnn_layer.classifier import validation as _val  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = 'data/Meta'
 
@@ -222,9 +222,9 @@ def run_gnn_arm(df_all: pd.DataFrame, embeddings: Dict[str, np.ndarray],
     """
     import torch
     import torch.nn.functional as F
-    from gnn_layer import graph_builder as _gb
+    from gnn_layer.classifier import graph_builder as _gb
     from gnn_layer import soft_labels as _sl
-    from gnn_layer import train as _train
+    from gnn_layer.classifier import train as _train
     from gnn_layer.runner import _vocabs
 
     n_classes = int(getattr(config, 'vaamr_n_classes', 5))

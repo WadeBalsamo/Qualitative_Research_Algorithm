@@ -22,7 +22,7 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from tests.testhelpers import synthetic_df, embedding_patch, make_master_df
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer import gnn_lift as _lift
+from gnn_layer.classifier import gnn_lift as _lift
 
 
 def _participant_df(n=12):

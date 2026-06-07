@@ -157,7 +157,7 @@ class TestLanguageAtlasNoBlocks(unittest.TestCase):
     def test_returns_none_when_no_blocks(self):
         with tempfile.TemporaryDirectory() as tmp:
             df_all = _make_df_all()
-            with patch('gnn_layer.inference.build_cue_blocks_with_segments', return_value=[]):
+            with patch('gnn_layer.cue_features.build_cue_blocks_with_segments', return_value=[]):
                 from analysis.reports.language_atlas import generate_language_atlas
                 result = generate_language_atlas(df_all, df_all, FRAMEWORK, tmp)
             self.assertIsNone(result)
@@ -167,7 +167,7 @@ class TestLanguageAtlasNoBlocks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             df_all = _make_df_all()
             blocks = _make_minimal_blocks()
-            with patch('gnn_layer.inference.build_cue_blocks_with_segments', return_value=blocks), \
+            with patch('gnn_layer.cue_features.build_cue_blocks_with_segments', return_value=blocks), \
                  patch('analysis.mechanism._seg_lookup', return_value={}), \
                  patch('analysis.mechanism._load_block_motifs', return_value={}), \
                  patch('analysis.mechanism._enrich_blocks', return_value=[]):
@@ -185,7 +185,7 @@ class TestLanguageAtlasWrites(unittest.TestCase):
         blocks = _make_minimal_blocks()
         enriched = _make_enriched_blocks()
         lookup = _minimal_seg_lookup(df_all)
-        with patch('gnn_layer.inference.build_cue_blocks_with_segments', return_value=blocks), \
+        with patch('gnn_layer.cue_features.build_cue_blocks_with_segments', return_value=blocks), \
              patch('analysis.mechanism._seg_lookup', return_value=lookup), \
              patch('analysis.mechanism._load_block_motifs', return_value={}), \
              patch('analysis.mechanism._enrich_blocks', return_value=enriched):
@@ -261,7 +261,7 @@ class TestLanguageAtlasMechanismCSV(unittest.TestCase):
         enriched[0]['dominant_purer'] = 'Reframing'
         enriched[1]['dominant_purer'] = 'Reframing'
         lookup = _minimal_seg_lookup(df_all)
-        with patch('gnn_layer.inference.build_cue_blocks_with_segments', return_value=blocks), \
+        with patch('gnn_layer.cue_features.build_cue_blocks_with_segments', return_value=blocks), \
              patch('analysis.mechanism._seg_lookup', return_value=lookup), \
              patch('analysis.mechanism._load_block_motifs', return_value={}), \
              patch('analysis.mechanism._enrich_blocks', return_value=enriched):
@@ -294,7 +294,7 @@ class TestLanguageAtlasWithCouplingCSV(unittest.TestCase):
             blocks = _make_minimal_blocks()
             enriched = _make_enriched_blocks()
             lookup = _minimal_seg_lookup(df_all)
-            with patch('gnn_layer.inference.build_cue_blocks_with_segments', return_value=blocks), \
+            with patch('gnn_layer.cue_features.build_cue_blocks_with_segments', return_value=blocks), \
                  patch('analysis.mechanism._seg_lookup', return_value=lookup), \
                  patch('analysis.mechanism._load_block_motifs', return_value={}), \
                  patch('analysis.mechanism._enrich_blocks', return_value=enriched):

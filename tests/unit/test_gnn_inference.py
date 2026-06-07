@@ -34,8 +34,8 @@ from gnn_layer.config import GnnLayerConfig
 
 def _make_model_and_graph(objectives=None, n_sessions=1, dim=16, knn_k=2, seed=0):
     """Build a tiny trained model + graph without touching the embedding model."""
-    from gnn_layer import graph_builder
-    from gnn_layer.model import build_model
+    from gnn_layer.classifier import graph_builder
+    from gnn_layer.classifier.model import build_model
     if objectives is None:
         objectives = ['soft_vaamr', 'progression', 'purer']
     df = synthetic_df(n_sessions=n_sessions)
@@ -56,7 +56,7 @@ def _make_model_and_graph(objectives=None, n_sessions=1, dim=16, knn_k=2, seed=0
 class TestGraphTensorsOnModelDevice(unittest.TestCase):
 
     def test_returns_four_tensors(self):
-        from gnn_layer.inference import _graph_tensors_on_model_device
+        from gnn_layer.classifier.inference import _graph_tensors_on_model_device
         model, g, _, _, _ = _make_model_and_graph()
         x, ei, ew, eti = _graph_tensors_on_model_device(model, g)
         self.assertIsNotNone(x)
@@ -65,14 +65,14 @@ class TestGraphTensorsOnModelDevice(unittest.TestCase):
 
     def test_tensors_on_cpu_for_cpu_model(self):
         import torch
-        from gnn_layer.inference import _graph_tensors_on_model_device
+        from gnn_layer.classifier.inference import _graph_tensors_on_model_device
         model, g, _, _, _ = _make_model_and_graph()
         x, ei, ew, eti = _graph_tensors_on_model_device(model, g)
         self.assertEqual(str(x.device), 'cpu')
         self.assertEqual(str(ei.device), 'cpu')
 
     def test_shapes_preserved(self):
-        from gnn_layer.inference import _graph_tensors_on_model_device
+        from gnn_layer.classifier.inference import _graph_tensors_on_model_device
         model, g, _, _, _ = _make_model_and_graph()
         x, ei, ew, eti = _graph_tensors_on_model_device(model, g)
         self.assertEqual(x.shape, g.x.shape)
@@ -86,7 +86,7 @@ class TestGraphTensorsOnModelDevice(unittest.TestCase):
 class TestInferSegmentPositions(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.inference import infer_segment_positions
+        from gnn_layer.classifier.inference import infer_segment_positions
         self.model, self.g, self.df, _, self.cfg = _make_model_and_graph(
             objectives=['soft_vaamr', 'progression']
         )
@@ -131,9 +131,9 @@ class TestInferSegmentPositions(unittest.TestCase):
         self.assertEqual(res['gnn_embedding'].shape, (N, 8))  # hidden_dim=8
 
     def test_progression_without_soft_vaamr(self):
-        from gnn_layer.inference import infer_segment_positions
-        from gnn_layer.model import build_model
-        from gnn_layer import graph_builder
+        from gnn_layer.classifier.inference import infer_segment_positions
+        from gnn_layer.classifier.model import build_model
+        from gnn_layer.classifier import graph_builder
         df = synthetic_df(n_sessions=1)
         cfg = GnnLayerConfig(objectives=['progression'], knn_k=2,
                              cache_embeddings=False, hidden_dim=8)
@@ -147,9 +147,9 @@ class TestInferSegmentPositions(unittest.TestCase):
         self.assertEqual(len(res['progression_coord']), len(g.node_ids))
 
     def test_no_vaamr_or_progression_gives_zero_coord(self):
-        from gnn_layer.inference import infer_segment_positions
-        from gnn_layer.model import build_model
-        from gnn_layer import graph_builder
+        from gnn_layer.classifier.inference import infer_segment_positions
+        from gnn_layer.classifier.model import build_model
+        from gnn_layer.classifier import graph_builder
         df = synthetic_df(n_sessions=1)
         cfg = GnnLayerConfig(objectives=['purer'], knn_k=2,
                              cache_embeddings=False, hidden_dim=8)
@@ -171,7 +171,7 @@ class TestInferSegmentPositions(unittest.TestCase):
 class TestInferHeadPredictions(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.inference import infer_head_predictions
+        from gnn_layer.classifier.inference import infer_head_predictions
         self._infer = infer_head_predictions
 
     def test_vaamr_keys_present_with_soft_vaamr_head(self):
@@ -232,7 +232,7 @@ class TestInferHeadPredictions(unittest.TestCase):
 class TestBuildCueBlocksWithSegments(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.inference import build_cue_blocks_with_segments
+        from gnn_layer.cue_features import build_cue_blocks_with_segments
         self._fn = build_cue_blocks_with_segments
 
     def test_returns_list(self):
@@ -298,7 +298,7 @@ class TestBuildCueBlocksWithSegments(unittest.TestCase):
 class TestCueBlockEmbeddings(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.inference import cue_block_embeddings
+        from gnn_layer.cue_features import cue_block_embeddings
         self._fn = cue_block_embeddings
 
     def test_mean_pool_two_segments(self):

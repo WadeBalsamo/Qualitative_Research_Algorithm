@@ -1896,13 +1896,17 @@ def _gnn_ballot_preflight(output_dir: str, *, force: bool = False) -> None:
 
 
 def cmd_gnn_train(args):
-    """qra gnn train — train the graph, run the reliability gate, write GNN reports.
+    """qra gnn train — train the consensus-distillation CLASSIFIER + run the reliability gate.
 
-    Force-enables the GNN layer, so it also works on a project that previously ran
-    only LLM consensus (this is how you ADD the GNN to such a project).
+    The GraphSAGE classifier is a SEPARATE, default-OFF concern (gnn_layer/classifier/): the
+    Cohorts 1–2 pilot refuted its scaler role (H5; grouped-CV κ≈0.05–0.14, a probe ties/beats it).
+    This command force-enables it (gnn_classifier_enabled=True) to train + gate it explicitly —
+    e.g. to re-adjudicate at Cohorts 3–4 scale. The discovery + mechanism work-streams
+    (discriminant validity / transition model / confound localization / communities) run by
+    default at analyze-time regardless; the LLM consensus / probe remain the labels of record.
     """
     from analysis.runner import run_analysis
-    from gnn_layer import validation as _val
+    from gnn_layer.classifier import validation as _val
 
     output_dir = args.output_dir
     if not os.path.isdir(output_dir):
@@ -1911,9 +1915,9 @@ def cmd_gnn_train(args):
 
     _gnn_ballot_preflight(output_dir, force=getattr(args, 'force_ballots', False))
 
-    print("\nQRA GNN TRAIN  (graph + reliability gate + reports)")
+    print("\nQRA GNN TRAIN  (consensus-distillation classifier + reliability gate; default-OFF)")
     print(f"  Output: {output_dir}")
-    run_analysis(output_dir, verbose=True, force_gnn=True)
+    run_analysis(output_dir, verbose=True, force_gnn=True, force_classifier=True)
     print()
     print(_val.format_gate_verdict(_val.read_gate_verdict(output_dir), output_dir))
 
@@ -1961,7 +1965,7 @@ def cmd_gnn_classify(args):
 
 def cmd_gnn_status(args):
     """qra gnn status — print the GNN reliability-gate verdict (kappa vs LLM)."""
-    from gnn_layer import validation as _val
+    from gnn_layer.classifier import validation as _val
     output_dir = args.output_dir
     verdict = _val.read_gate_verdict(output_dir)
     if getattr(args, 'json', False):

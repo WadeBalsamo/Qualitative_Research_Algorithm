@@ -586,7 +586,7 @@ def run_irr_analysis(output_dir: str, config=None, *, verbose: bool = True,
     # Honest GNN axis: out-of-fold predictions that never trained on the segment's
     # own LLM label (persisted by `qra gnn train`). Empty -> fall back to the
     # in-sample distillation overlay.
-    from gnn_layer.validation import read_heldout_predictions
+    from gnn_layer.classifier.validation import read_heldout_predictions
     gnn_heldout = read_heldout_predictions(output_dir) if have_segments else {}
 
     # --- Family 1: Human ↔ Human ---
