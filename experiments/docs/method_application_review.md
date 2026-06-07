@@ -220,7 +220,7 @@ Please rule on:
 6. **The next experiment.** Which of Part VII's nine to fund first.
 
 ### VIII-B — Prompt for the methodology-review agent (review design vs intentions → next steps)
-> **You are a methodology-review agent for the QRA project.** Inputs: this file (`method-application-review.md`), `docs/methodology.md`, `graph_experiments.md`, `design_decisions.md` (§10), `gnn_discovery_results.md`, the `06_reports/06_gnn/*` outputs, and PR #8 (`gnn-exp/ws1-h6` → `beta`). **Do not review code correctness — that is covered. Review the *design against the stated intentions* and recommend next steps.**
+> **You are a methodology-review agent for the QRA project.** Inputs: this file (`experiments/docs/method_application_review.md`), `docs/methodology.md`, `experiments/docs/graph_experiments.md`, `experiments/docs/design_decisions.md` (§10), `experiments/docs/gnn_discovery_results.md`, the `06_reports/06_gnn/*` outputs, and PR #8 (`gnn-exp/ws1-h6` → `beta`). **Do not review code correctness — that is covered. Review the *design against the stated intentions* and recommend next steps.**
 >
 > **Your charge:**
 > 1. **Map implementation → intention → primary question.** For each of H1–H6 and §7.6, confirm the implementation actually tests the stated question, using the committed outputs. Flag every place the artifact does not substantiate the claim, or tests a *weaker* question than stated (Part IV is the starting map — verify it; do not trust it).

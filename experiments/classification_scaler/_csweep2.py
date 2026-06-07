@@ -17,18 +17,12 @@ from process import irr_import
 from analysis import irr_stats, stats as _stats
 from analysis.irr_analysis import _consensus_rows
 
-ABS = '/home/wisgood/qra/Qualitative_Research_Algorithm/data/Meta'
+ABS = 'data/Meta'
 CFG = dataclasses.replace(GnnLayerConfig(), vaamr_n_classes=6, vaamr_class_balance=True)
-df = H.load_corpus(ABS)
-folds = H.build_folds(df, seed=42, verbose=False)
-emb = H.get_embeddings(df, 'qwen', ABS)
-part_of = {str(r['segment_id']): str(r['participant_id']) for _, r in df.iterrows()}
-lab = H._labeled_participants(df)
-final_of = {str(r['segment_id']): int(r['final_label']) for _, r in lab.iterrows()}
 NC = 6
 
 
-def proba_for_C(C):
+def proba_for_C(C, df, emb, folds):
     seg_ids, per_rater, _ = RD.participant_rater_labels(df, NC)
     seg_ids = [s for s in seg_ids if s in emb]
     fold_of, fold_list = B._resolve_folds(seg_ids, df, folds)
@@ -49,23 +43,6 @@ def proba_for_C(C):
             for s, row in zip(te, full):
                 out[r][s] = row
     return seg_ids, out
-
-
-def llm_kappa(oof):
-    return irr_stats.cohen_kappa([oof[s] for s in final_of if s in oof],
-                                 [final_of[s] for s in final_of if s in oof])
-
-
-print('extended C-sweep (ens_softavg LLM-axis point kappa):', flush=True)
-cache = {}
-for C in [4, 6, 8, 12, 16]:
-    seg_ids, proba = proba_for_C(C)
-    cache[C] = (seg_ids, proba)
-    oof = RD.ensemble_from_proba(seg_ids, proba, NC, 'softavg')
-    print(f'  C={C:<4g}  LLM kappa={llm_kappa(oof):+.4f}', flush=True)
-
-# A1n OOF for the paired test
-oof_a1n = B.run_linear_probe(df, emb, folds, CFG)
 
 
 def paired_delta(items, n_boot=3000, seed=42):
@@ -90,30 +67,53 @@ def map6(p):
     return -1 if p == 5 else p
 
 
-def llm_items(oB):
-    return [(int(r['final_label']), int(oof_a1n[s]), int(oB[s]), part_of.get(s))
-            for _, r in lab.iterrows() if (s := str(r['segment_id'])) in oof_a1n and s in oB]
+def main():
+    df = H.load_corpus(ABS)
+    folds = H.build_folds(df, seed=42, verbose=False)
+    emb = H.get_embeddings(df, 'qwen', ABS)
+    part_of = {str(r['segment_id']): str(r['participant_id']) for _, r in df.iterrows()}
+    lab = H._labeled_participants(df)
+    final_of = {str(r['segment_id']): int(r['final_label']) for _, r in lab.iterrows()}
+    oof_a1n = B.run_linear_probe(df, emb, folds, CFG)
+
+    def llm_kappa(oof):
+        return irr_stats.cohen_kappa([oof[s] for s in final_of if s in oof],
+                                     [final_of[s] for s in final_of if s in oof])
+
+    def llm_items(oB):
+        return [(int(r['final_label']), int(oof_a1n[s]), int(oB[s]), part_of.get(s))
+                for _, r in lab.iterrows() if (s := str(r['segment_id'])) in oof_a1n and s in oB]
+
+    def human_items(oB):
+        codes = irr_import.read_human_codes(ABS); master = set(df['segment_id'].astype(str))
+        out = []
+        for c in _consensus_rows(codes):
+            s = c.get('segment_id')
+            if not s or str(s) not in master or c.get('primary') is None:
+                continue
+            s = str(s)
+            if s in oof_a1n and s in oB:
+                out.append((int(c['primary']), map6(int(oof_a1n[s])), map6(int(oB[s])), part_of.get(s)))
+        return out
+
+    print('extended C-sweep (ens_softavg LLM-axis point kappa):', flush=True)
+    cache = {}
+    for C in [4, 6, 8, 12, 16]:
+        seg_ids, proba = proba_for_C(C, df, emb, folds)
+        cache[C] = (seg_ids, proba)
+        oof = RD.ensemble_from_proba(seg_ids, proba, NC, 'softavg')
+        print(f'  C={C:<4g}  LLM kappa={llm_kappa(oof):+.4f}', flush=True)
+
+    # paired delta for C=4 (the LLM-axis pick) vs A1n
+    seg_ids, proba = cache[4]
+    oof4 = RD.ensemble_from_proba(seg_ids, proba, NC, 'softavg')
+    print('\n=== PAIRED Delta-kappa: ens_softavg_C4 vs A1n (cluster-bootstrap, n=3000) ===')
+    for axis, items in [('LLM ', llm_items(oof4)), ('HUM ', human_items(oof4))]:
+        d = paired_delta(items)
+        excl0 = (d['lo'] is not None and (d['lo'] > 0 or d['hi'] < 0))
+        print(f'  {axis} n={len(items):3d}  Delta={d["point"]:+.4f}  '
+              f'CI[{d["lo"]:+.4f},{d["hi"]:+.4f}]  {"RELIABLE" if excl0 else "overlaps 0"}', flush=True)
 
 
-def human_items(oB):
-    codes = irr_import.read_human_codes(ABS); master = set(df['segment_id'].astype(str))
-    out = []
-    for c in _consensus_rows(codes):
-        s = c.get('segment_id')
-        if not s or str(s) not in master or c.get('primary') is None:
-            continue
-        s = str(s)
-        if s in oof_a1n and s in oB:
-            out.append((int(c['primary']), map6(int(oof_a1n[s])), map6(int(oB[s])), part_of.get(s)))
-    return out
-
-
-# paired delta for C=4 (the LLM-axis pick) vs A1n
-seg_ids, proba = cache[4]
-oof4 = RD.ensemble_from_proba(seg_ids, proba, NC, 'softavg')
-print('\n=== PAIRED Delta-kappa: ens_softavg_C4 vs A1n (cluster-bootstrap, n=3000) ===')
-for axis, items in [('LLM ', llm_items(oof4)), ('HUM ', human_items(oof4))]:
-    d = paired_delta(items)
-    excl0 = (d['lo'] is not None and (d['lo'] > 0 or d['hi'] < 0))
-    print(f'  {axis} n={len(items):3d}  Delta={d["point"]:+.4f}  '
-          f'CI[{d["lo"]:+.4f},{d["hi"]:+.4f}]  {"RELIABLE" if excl0 else "overlaps 0"}', flush=True)
+if __name__ == '__main__':
+    main()
