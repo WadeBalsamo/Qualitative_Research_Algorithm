@@ -41,7 +41,7 @@ from experiments.gnn_reliability import baselines as B
 from gnn_layer.config import GnnLayerConfig
 from gnn_layer.soft_labels import build_soft_targets
 
-ABS = '/home/wisgood/qra/Qualitative_Research_Algorithm/data/Meta'
+ABS = 'data/Meta'
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ well enough to scale participant-segment labeling without per-segment LLM calls.
 (Vigilance, Avoidance, Attention-Regulation, Metacognition, Reappraisal) plus a 6th **"No code"** null
 class. The scaler must reproduce that labeling cheaply.
 
-**Evaluation harness** (`src/experiments/gnn_reliability/{harness,baselines}.py`, reused verbatim across
+**Evaluation harness** (`experiments/gnn_reliability/{harness,baselines}.py`, reused verbatim across
 every arm so all results are on identical folds):
 
 - **Cross-validation:** participant-grouped `StratifiedGroupKFold`, **seed 42**. No participant's segments
@@ -306,11 +306,11 @@ Each script is **standalone**. From the repository root:
 
 ```bash
 cd <repo-root>
-python src/experiments/classification_scaler/<script>.py
+python experiments/classification_scaler/<script>.py
 ```
 
 - Reads the corpus from **`data/Meta`** via the evaluation harness
-  (`src/experiments/gnn_reliability/{harness,baselines}.py`), which builds the seed-42 participant-grouped
+  (`experiments/gnn_reliability/{harness,baselines}.py`), which builds the seed-42 participant-grouped
   folds and the dual-axis scorer.
 - Requires the **cached 4096-d Qwen3-Embedding-8B** vectors (`H.get_embeddings(df, 'qwen', ABS)`); all
   model-lever, soft-label, ensemble, and stacking arms run on those cached features (CPU-only is fine).

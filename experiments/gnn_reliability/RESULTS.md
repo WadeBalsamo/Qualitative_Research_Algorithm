@@ -2,7 +2,7 @@
 
 > **Purpose:** the leak-free test of whether QRA's GraphSAGE GNN can act as a consensus-distillation classifier (hypothesis **H5** — reproduce the multi-run LLM VAAMR consensus from graph structure well enough to label new segments LLM-free). **Verdict: H5 is NOT supported at this scale; the graph is dropped as a classifier of record and retained as a mechanism/discovery instrument.**
 
-**Status:** archived experiment battery (uncommitted working-tree research; nothing here is a method of record). **Accuracy notice:** every κ in this file is a recorded value from the archived ledger (`docs/gnn_experiments/ledger.csv`) and the salvaged design records (`design_decisions.md` §7, `graph_experiments.md` §3.1). No κ is invented.
+**Status:** archived experiment battery (uncommitted working-tree research; nothing here is a method of record). **Accuracy notice:** every κ in this file is a recorded value from the archived ledger (`docs/gnn_experiments/ledger.csv`) and the salvaged design records (`experiments/docs/design_decisions.md` §7, `experiments/docs/graph_experiments.md` §3.1). No κ is invented.
 
 ---
 
@@ -45,7 +45,7 @@ Discipline: hyperparameters tuned on the **LLM axis only**; the human axis is **
 | `capacity_scaler.py` | The capacity sweep that *bridges into the successor campaign*: on the same Qwen target features / grouped folds, sweep MLP (torch class-weighted + sklearn unweighted), HistGradientBoosting, SVM-RBF, and calibrated linear probes against the A1n bar (LLM 0.283 / human 0.365). Capacity beyond a linear probe overfits — all families land ≈ 0.13–0.20 LLM-axis, below A1n. |
 | `run_battery.py` | Orchestrates the full pre-registered battery (A1–A4n): builds corpus + folds + Qwen embeddings once, runs every arm on the same folds, scores both axes, appends the ledger. **The entry point to reproduce the classifier results.** |
 | `run_mechanism.py` | **RETIRED stub** (superseded). It originally ran the model-counterfactual cue-influence readout on a per-segment GNN classifier (the former `gnn_layer/influence.py`); on the pilot that counterfactual *inverted* the observed ranking (Spearman ρ = −0.13, §10). It was **rebuilt** as the dyadic FROM→CUE→TO transition model `src/gnn_layer/transition.py` (ρ ≈ +0.34) — see §10. The file is kept as a catalog record and no longer imports the deleted module; run `qra analyze` for the current mechanism read. |
-| `graph_experiments.md`, `design_decisions.md` | The salvaged narrative records (method, decision log, full battery + mechanism analysis). |
+| `experiments/docs/graph_experiments.md`, `experiments/docs/design_decisions.md` | The salvaged narrative records (method, decision log, full battery + mechanism analysis). |
 
 ---
 
@@ -149,14 +149,14 @@ n-bound and worth re-running as participants accrue.
 
 ```bash
 # Classifier battery (A1–A4n) → docs/gnn_experiments/ledger.csv + stdout
-python src/experiments/gnn_reliability/run_battery.py            # full battery
-python src/experiments/gnn_reliability/run_battery.py A3 A4 A4n  # subset
+python experiments/gnn_reliability/run_battery.py            # full battery
+python experiments/gnn_reliability/run_battery.py A3 A4 A4n  # subset
 
 # Anchors arm (B1) and the capacity sweep (bridges to the scaler campaign)
-python src/experiments/gnn_reliability/capacity_scaler.py
+python experiments/gnn_reliability/capacity_scaler.py
 
 # PRIMARY mechanism readout (counterfactual + §1A triangulation)
-python src/experiments/gnn_reliability/run_mechanism.py
+python experiments/gnn_reliability/run_mechanism.py
 ```
 
 - Reads the project corpus at **`data/Meta`** (`master_segments.csv` + the human consensus join from `qra.db`).
