@@ -22,7 +22,7 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from tests.testhelpers import synthetic_df, embedding_patch, make_master_df
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer import ablation as _abl
+from gnn_layer.classifier import ablation as _abl
 
 
 def _hermetic_cfg(**kw):
@@ -40,9 +40,9 @@ def _hermetic_cfg(**kw):
 
 def _build_graph_and_targets(df, cfg):
     """Build a minimal graph + targets for ablation/subtype tests."""
-    from gnn_layer import graph_builder as _gb
+    from gnn_layer.classifier import graph_builder as _gb
     from gnn_layer import soft_labels as _sl
-    from gnn_layer import train as _train
+    from gnn_layer.classifier import train as _train
     rng = np.random.default_rng(42)
     seg_emb = {str(sid): rng.standard_normal(16).astype('float32')
                for sid in df['segment_id']}

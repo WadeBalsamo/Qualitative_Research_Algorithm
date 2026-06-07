@@ -24,7 +24,7 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 from tests.testhelpers import synthetic_df, embedding_patch
 from tests.testhelpers.marks import slow_test
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer import anchors as anc
+from gnn_layer.classifier import anchors as anc
 
 
 def _patch_anchor_embedder(dim=16, seed=11):
@@ -143,10 +143,10 @@ class TestAnchorContributionVerdict(unittest.TestCase):
         self._restore = _patch_anchor_embedder(dim=16)
         try:
             df = synthetic_df()  # no in_human_coded_subset column
-            cfg = GnnLayerConfig(enabled=True, hidden_dim=16, n_layers=2, knn_k=3,
+            cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, hidden_dim=16, n_layers=2, knn_k=3,
                                  epochs=15, cache_embeddings=False, seed=1,
                                  validation_folds=2, anchor_knn_m=3)
-            from gnn_layer import ablation as abl
+            from gnn_layer.classifier import ablation as abl
             with embedding_patch(dim=16):
                 from gnn_layer import embeddings as emb
                 seg_emb = emb.load_or_build_segment_embeddings(df, cfg, cache_path=None)
@@ -161,7 +161,7 @@ class TestAnchorContributionVerdict(unittest.TestCase):
     def test_report_writes_and_frames_human_axis_decisive(self):
         tmp = tempfile.mkdtemp()
         try:
-            from gnn_layer import ablation as abl
+            from gnn_layer.classifier import ablation as abl
             res = {
                 'n_anchors': 10, 'n_anchor_edges': 40, 'human_n': 0, 'anchor_min_human': 10,
                 'human_kappa_without_anchors': None, 'human_kappa_with_anchors': None,
@@ -190,7 +190,7 @@ class TestRunnerAnchorWiring(unittest.TestCase):
             from gnn_layer import runner
             from process import output_paths as _paths
             df = synthetic_df()
-            cfg = GnnLayerConfig(enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=15,
+            cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=15,
                                  n_motif_clusters=3, cache_embeddings=False, seed=1,
                                  interpret_against_cf_ic=False, validation_folds=2,
                                  use_anchor_nodes=True, run_anchor_ablation=True, anchor_knn_m=3)
@@ -201,7 +201,7 @@ class TestRunnerAnchorWiring(unittest.TestCase):
             names = {os.path.basename(f) for f in res['files_written']}
             self.assertIn('anchor_contribution.txt', names)
             # The persisted main graph must actually contain anchor nodes.
-            from gnn_layer import graph_builder as gb
+            from gnn_layer.classifier import graph_builder as gb
             g = gb.load_graph(_paths.gnn_model_dir(out_dir))
             self.assertGreater(g.meta.get('n_anchors', 0), 0)
             self.assertTrue(any(t == 'anchor' for t in g.node_types))

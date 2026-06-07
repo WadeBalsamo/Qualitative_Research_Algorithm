@@ -99,7 +99,7 @@ def build_anchor_features(config) -> Dict[str, "object"]:
     specs = anchor_specs(config)
     if not specs:
         return {}
-    from . import embeddings as _emb
+    from .. import embeddings as _emb
     ids = [aid for aid, _ in specs]
     texts = [txt for _, txt in specs]
     vecs = _emb.embed_anchor_texts(texts, config)

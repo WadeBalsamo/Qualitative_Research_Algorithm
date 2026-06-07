@@ -234,18 +234,19 @@ class TestStep11dGnn(unittest.TestCase):
     """
     Drive _step_11d_gnn with deterministic input() answers.
 
-    Input sequence for GNN ENABLED path:
-      1. "Enable the GNN layer?" -> 'y'
-      2. "Label mode" -> 'weak'
-      3. "Position participant segments?" -> 'y'
-      4. "Position therapist segments?" -> 'y'
-      5. "Cross-validation folds" -> '5'
-      6. "Target kappa" -> '0.70'
-      7. "Make GNN labels authoritative now?" -> 'n'
-      8. "Run construct-signal ablation?" -> 'n'
-      9. "Number of cue-language motif clusters" -> '12'
-      10. "Number of coupling latent factors" -> '5'
+    New prompt sequence (discovery default ON; classifier separate + default OFF):
+      1. "Enable the GNN discovery + mechanism layer?"  -> 'y'/'n'
+      2. "Number of cue-language motif clusters"        -> int
+      3. "Number of coupling latent factors"            -> int
+      4. "Run subtext communities + dyadic routines?"   -> 'y'/'n'
+      5. "Subtext-community cosine threshold"            -> float
+      6. "Enable the consensus-distillation classifier?"-> 'y'/'n'
+         (if 'y'): 7 label mode, 8 folds, 9 irr_target, 10 authoritative
     """
+    # enabled, classifier OFF (the default discovery build):  y,12,5,y,0.6,n
+    _BASE = ['y', '12', '5', 'y', '0.6', 'n']
+    # enabled, classifier ON:  y,12,5,y,0.6,y, weak,5,0.70,n
+    _CLF = ['y', '12', '5', 'y', '0.6', 'y', 'weak', '5', '0.70', 'n']
 
     def _run_step(self, answers):
         wizard = SetupWizard()
@@ -264,74 +265,63 @@ class TestStep11dGnn(unittest.TestCase):
         return wizard.config_data
 
     def test_gnn_disabled_path(self):
-        """Answer 'n' to 'Enable GNN' -> config_data['gnn_layer'] = {'enabled': False}."""
+        """Answer 'n' to enable -> config_data['gnn_layer'] = {'enabled': False}."""
         config = self._run_step(['n'])
         self.assertIn('gnn_layer', config)
-        self.assertFalse(config['gnn_layer']['enabled'])
-        # Only the 'enabled' key set in disabled branch
         self.assertEqual(config['gnn_layer'], {'enabled': False})
 
     def test_gnn_enabled_sets_enabled_true(self):
-        """Answer 'y' -> gnn_layer['enabled'] = True."""
-        answers = ['y', 'weak', 'y', 'y', '5', '0.70', 'n', 'n', '12', '5']
-        config = self._run_step(answers)
+        config = self._run_step(self._BASE)
         self.assertTrue(config['gnn_layer']['enabled'])
 
-    def test_gnn_enabled_label_mode_weak(self):
-        answers = ['y', 'weak', 'y', 'y', '5', '0.70', 'n', 'n', '12', '5']
-        config = self._run_step(answers)
-        self.assertEqual(config['gnn_layer']['label_mode'], 'weak')
+    def test_gnn_classifier_off_by_default(self):
+        """Default discovery build: classifier OFF, no classifier-only keys set."""
+        config = self._run_step(self._BASE)
+        gnn = config['gnn_layer']
+        self.assertFalse(gnn['gnn_classifier_enabled'])
+        self.assertNotIn('label_mode', gnn)        # classifier-only prompts skipped
+        self.assertNotIn('gnn_authoritative', gnn)
 
-    def test_gnn_enabled_label_mode_human(self):
-        answers = ['y', 'human', 'y', 'y', '5', '0.70', 'n', 'n', '12', '5']
-        config = self._run_step(answers)
-        self.assertEqual(config['gnn_layer']['label_mode'], 'human')
+    def test_gnn_enabled_discovery_defaults(self):
+        config = self._run_step(self._BASE)
+        gnn = config['gnn_layer']
+        self.assertEqual(gnn['n_motif_clusters'], 12)
+        self.assertEqual(gnn['n_latent_factors'], 5)
+        self.assertTrue(gnn['subtext_communities'])
+        self.assertAlmostEqual(gnn['community_sim_threshold'], 0.6)
 
-    def test_gnn_enabled_run_on_participants_true(self):
-        answers = ['y', 'weak', 'y', 'y', '5', '0.70', 'n', 'n', '12', '5']
+    def test_gnn_subtext_communities_off(self):
+        answers = ['y', '12', '5', 'n', '0.6', 'n']
         config = self._run_step(answers)
-        self.assertTrue(config['gnn_layer']['run_on_participants'])
-
-    def test_gnn_enabled_run_on_therapists_false(self):
-        """Answer 'n' to therapist scope -> run_on_therapists=False."""
-        answers = ['y', 'weak', 'y', 'n', '5', '0.70', 'n', 'n', '12', '5']
-        config = self._run_step(answers)
-        self.assertFalse(config['gnn_layer']['run_on_therapists'])
-
-    def test_gnn_enabled_validation_folds(self):
-        answers = ['y', 'weak', 'y', 'y', '7', '0.70', 'n', 'n', '12', '5']
-        config = self._run_step(answers)
-        self.assertEqual(config['gnn_layer']['validation_folds'], 7)
-
-    def test_gnn_enabled_irr_target(self):
-        answers = ['y', 'weak', 'y', 'y', '5', '0.80', 'n', 'n', '12', '5']
-        config = self._run_step(answers)
-        self.assertAlmostEqual(config['gnn_layer']['irr_target'], 0.80)
-
-    def test_gnn_enabled_authoritative_false(self):
-        answers = ['y', 'weak', 'y', 'y', '5', '0.70', 'n', 'n', '12', '5']
-        config = self._run_step(answers)
-        self.assertFalse(config['gnn_layer']['gnn_authoritative'])
-
-    def test_gnn_enabled_authoritative_true(self):
-        answers = ['y', 'weak', 'y', 'y', '5', '0.70', 'y', 'n', '12', '5']
-        config = self._run_step(answers)
-        self.assertTrue(config['gnn_layer']['gnn_authoritative'])
-
-    def test_gnn_enabled_ablation_true(self):
-        answers = ['y', 'weak', 'y', 'y', '5', '0.70', 'n', 'y', '12', '5']
-        config = self._run_step(answers)
-        self.assertTrue(config['gnn_layer']['run_gnn_ablation'])
+        self.assertFalse(config['gnn_layer']['subtext_communities'])
 
     def test_gnn_enabled_n_motif_clusters(self):
-        answers = ['y', 'weak', 'y', 'y', '5', '0.70', 'n', 'n', '9', '5']
+        answers = ['y', '9', '5', 'y', '0.6', 'n']
         config = self._run_step(answers)
         self.assertEqual(config['gnn_layer']['n_motif_clusters'], 9)
 
     def test_gnn_enabled_n_latent_factors(self):
-        answers = ['y', 'weak', 'y', 'y', '5', '0.70', 'n', 'n', '12', '3']
+        answers = ['y', '12', '3', 'y', '0.6', 'n']
         config = self._run_step(answers)
         self.assertEqual(config['gnn_layer']['n_latent_factors'], 3)
+
+    def test_gnn_classifier_on_sets_classifier_keys(self):
+        config = self._run_step(self._CLF)
+        gnn = config['gnn_layer']
+        self.assertTrue(gnn['gnn_classifier_enabled'])
+        self.assertEqual(gnn['label_mode'], 'weak')
+        self.assertEqual(gnn['validation_folds'], 5)
+        self.assertAlmostEqual(gnn['irr_target'], 0.70)
+        self.assertFalse(gnn['gnn_authoritative'])
+
+    def test_gnn_classifier_on_label_mode_human_and_authoritative(self):
+        answers = ['y', '12', '5', 'y', '0.6', 'y', 'human', '7', '0.80', 'y']
+        config = self._run_step(answers)
+        gnn = config['gnn_layer']
+        self.assertEqual(gnn['label_mode'], 'human')
+        self.assertEqual(gnn['validation_folds'], 7)
+        self.assertAlmostEqual(gnn['irr_target'], 0.80)
+        self.assertTrue(gnn['gnn_authoritative'])
 
 
 # ---------------------------------------------------------------------------

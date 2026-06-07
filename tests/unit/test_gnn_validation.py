@@ -64,7 +64,7 @@ def _df_with_purer(n=10):
 class TestPerClass(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.validation import _per_class, VAAMR_NAMES
+        from gnn_layer.classifier.validation import _per_class, VAAMR_NAMES
         self._per_class = _per_class
         self._names = VAAMR_NAMES
 
@@ -136,7 +136,7 @@ class TestPerClass(unittest.TestCase):
 class TestOverall(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.validation import _overall
+        from gnn_layer.classifier.validation import _overall
         self._overall = _overall
 
     def test_empty_pairs(self):
@@ -175,7 +175,7 @@ class TestOverall(unittest.TestCase):
 class TestNOrTrue(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.validation import n_or_true
+        from gnn_layer.classifier.validation import n_or_true
         self._n_or_true = n_or_true
 
     def test_empty_purer_returns_true_regardless_of_flag(self):
@@ -194,7 +194,7 @@ class TestNOrTrue(unittest.TestCase):
 class TestEvaluateCrossval(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.validation import evaluate_crossval, RARE_STAGES, MIN_SUPPORT_FOR_FLOOR
+        from gnn_layer.classifier.validation import evaluate_crossval, RARE_STAGES, MIN_SUPPORT_FOR_FLOOR
         self._eval = evaluate_crossval
         self._RARE_STAGES = RARE_STAGES
         self._MIN_SUPPORT = MIN_SUPPORT_FOR_FLOOR
@@ -319,7 +319,7 @@ class TestWriteValidationReport(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _make_metrics(self, perfect=True):
-        from gnn_layer.validation import evaluate_crossval
+        from gnn_layer.classifier.validation import evaluate_crossval
         df = _df()
         if perfect:
             preds = [(f's{i}', i % 5) for i in range(10)]
@@ -330,7 +330,7 @@ class TestWriteValidationReport(unittest.TestCase):
 
     def test_file_written_to_exact_path(self):
         from process import output_paths as op
-        from gnn_layer.validation import write_validation_report
+        from gnn_layer.classifier.validation import write_validation_report
         m = self._make_metrics(perfect=True)
         path = write_validation_report(m, self.tmp)
         expected = os.path.join(op.reports_gnn_dir(self.tmp), 'validation.txt')
@@ -338,14 +338,14 @@ class TestWriteValidationReport(unittest.TestCase):
         self.assertTrue(os.path.isfile(path))
 
     def test_report_contains_verdict_line(self):
-        from gnn_layer.validation import write_validation_report
+        from gnn_layer.classifier.validation import write_validation_report
         m = self._make_metrics(perfect=True)
         path = write_validation_report(m, self.tmp)
         content = open(path, encoding='utf-8').read()
         self.assertIn('LLM-FREE SCALING?', content)
 
     def test_report_says_yes_when_ready(self):
-        from gnn_layer.validation import write_validation_report
+        from gnn_layer.classifier.validation import write_validation_report
         m = self._make_metrics(perfect=True)
         m['ready_for_scaling'] = True
         path = write_validation_report(m, self.tmp)
@@ -353,7 +353,7 @@ class TestWriteValidationReport(unittest.TestCase):
         self.assertIn('YES', content)
 
     def test_report_says_no_when_not_ready(self):
-        from gnn_layer.validation import write_validation_report
+        from gnn_layer.classifier.validation import write_validation_report
         m = self._make_metrics(perfect=False)
         path = write_validation_report(m, self.tmp)
         content = open(path, encoding='utf-8').read()
@@ -361,7 +361,7 @@ class TestWriteValidationReport(unittest.TestCase):
         self.assertIn('NO', content)
 
     def test_parent_dir_created_automatically(self):
-        from gnn_layer.validation import write_validation_report
+        from gnn_layer.classifier.validation import write_validation_report
         # delete any previously created dir
         import shutil as _sh
         from process import output_paths as op
@@ -384,7 +384,7 @@ class TestWriteValidationCsv(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _make_full_metrics(self):
-        from gnn_layer.validation import evaluate_crossval
+        from gnn_layer.classifier.validation import evaluate_crossval
         df = _df_with_purer()
         cv = {
             'vaamr': [(f's{i}', i % 5) for i in range(10)],
@@ -394,7 +394,7 @@ class TestWriteValidationCsv(unittest.TestCase):
 
     def test_file_written_to_exact_path(self):
         from process import output_paths as op
-        from gnn_layer.validation import write_validation_csv
+        from gnn_layer.classifier.validation import write_validation_csv
         m = self._make_full_metrics()
         path = write_validation_csv(m, self.tmp)
         expected = os.path.join(op.gnn_data_dir(self.tmp), 'gnn_validation.csv')
@@ -402,7 +402,7 @@ class TestWriteValidationCsv(unittest.TestCase):
         self.assertTrue(os.path.isfile(path))
 
     def test_csv_has_expected_columns(self):
-        from gnn_layer.validation import write_validation_csv
+        from gnn_layer.classifier.validation import write_validation_csv
         m = self._make_full_metrics()
         path = write_validation_csv(m, self.tmp)
         df_csv = pd.read_csv(path)
@@ -411,7 +411,7 @@ class TestWriteValidationCsv(unittest.TestCase):
         self.assertEqual(list(df_csv.columns), expected_cols)
 
     def test_csv_has_both_frameworks(self):
-        from gnn_layer.validation import write_validation_csv
+        from gnn_layer.classifier.validation import write_validation_csv
         m = self._make_full_metrics()
         path = write_validation_csv(m, self.tmp)
         df_csv = pd.read_csv(path)
@@ -419,7 +419,7 @@ class TestWriteValidationCsv(unittest.TestCase):
         self.assertIn('purer', df_csv['framework'].values)
 
     def test_csv_has_overall_and_per_class_rows(self):
-        from gnn_layer.validation import write_validation_csv
+        from gnn_layer.classifier.validation import write_validation_csv
         m = self._make_full_metrics()
         path = write_validation_csv(m, self.tmp)
         df_csv = pd.read_csv(path)
@@ -428,14 +428,14 @@ class TestWriteValidationCsv(unittest.TestCase):
 
     def test_csv_row_count(self):
         # 2 frameworks × (1 overall + 5 per_class) = 12 rows
-        from gnn_layer.validation import write_validation_csv
+        from gnn_layer.classifier.validation import write_validation_csv
         m = self._make_full_metrics()
         path = write_validation_csv(m, self.tmp)
         df_csv = pd.read_csv(path)
         self.assertEqual(len(df_csv), 12)
 
     def test_parent_dir_created_automatically(self):
-        from gnn_layer.validation import write_validation_csv
+        from gnn_layer.classifier.validation import write_validation_csv
         from process import output_paths as op
         import shutil as _sh
         _sh.rmtree(op.gnn_data_dir(self.tmp), ignore_errors=True)

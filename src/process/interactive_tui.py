@@ -210,7 +210,7 @@ def _gnn_status(output_dir: str) -> str:
     """
     from . import output_paths as _paths
     try:
-        from gnn_layer.validation import read_gate_verdict
+        from gnn_layer.classifier.validation import read_gate_verdict
         verdict = read_gate_verdict(output_dir)
         if verdict is not None:
             return 'ready' if verdict.get('ready_for_scaling') else 'not_ready'
@@ -227,7 +227,15 @@ def _gnn_status(output_dir: str) -> str:
             pass
         return 'trained'
     weights = os.path.join(_paths.gnn_model_dir(output_dir), 'weights.pt')
-    return 'trained' if os.path.isfile(weights) else 'absent'
+    if os.path.isfile(weights):
+        return 'trained'
+    # Discovery + mechanism layer (default ON; the GraphSAGE classifier is default OFF). These
+    # reports exist when the layer has run even though no classifier gate was produced.
+    _rep = _paths.reports_gnn_dir(output_dir)
+    if any(os.path.isfile(os.path.join(_rep, f)) for f in
+           ('discriminant_validity.txt', 'transition_model.txt', 'communities.txt')):
+        return 'discovery'
+    return 'absent'
 
 
 def _print_project_state(state: dict) -> None:
@@ -252,7 +260,8 @@ def _print_project_state(state: dict) -> None:
         'ready': '✓  GNN consensus graph — ready for LLM-free scaling',
         'not_ready': '·  GNN consensus graph — trained, gate not yet reliable',
         'trained': '·  GNN consensus graph — trained, gate not run',
-        'absent': '·  GNN consensus graph — not run',
+        'discovery': '✓  GNN discovery + mechanism ran (classifier OFF by default)',
+        'absent': '·  GNN layer — not run',
     }
     print(f'    {_gnn_state_labels.get(state.get("gnn_status", "absent"))}')
     if state['config_path']:
@@ -389,6 +398,7 @@ def _gnn_tag(status: str) -> str:
         'ready': '  ★ ready (recommended)',
         'not_ready': '  (gate: not yet reliable)',
         'trained': '  (trained — gate not run)',
+        'discovery': '  (discovery ran; run "gnn train" for the classifier)',
         'absent': '  (needs GNN layer first)',
     }.get(status, '')
 
@@ -1122,7 +1132,7 @@ def _action_classify_cv(config, output_dir: str, framework) -> None:
 def _action_gnn_train(config, output_dir: str, state: dict) -> None:
     """Train the graph + run the reliability gate (also ADDS the GNN to an LLM-only project)."""
     from analysis.runner import run_analysis
-    from gnn_layer.validation import read_gate_verdict, format_gate_verdict
+    from gnn_layer.classifier.validation import read_gate_verdict, format_gate_verdict
     _section('Train / update GNN consensus layer')
     _info(
         'Trains the graph on the existing LLM/human consensus, runs the reliability\n'
@@ -1163,7 +1173,7 @@ def _action_gnn_train(config, output_dir: str, state: dict) -> None:
 
 def _action_gnn_status(output_dir: str) -> None:
     """Print the GNN reliability-gate verdict (kappa vs LLM; ready for scaling?)."""
-    from gnn_layer.validation import read_gate_verdict, format_gate_verdict
+    from gnn_layer.classifier.validation import read_gate_verdict, format_gate_verdict
     _section('GNN Reliability Gate')
     _info(format_gate_verdict(read_gate_verdict(output_dir), output_dir))
     print()

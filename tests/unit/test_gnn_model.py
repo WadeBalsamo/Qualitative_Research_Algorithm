@@ -32,7 +32,7 @@ from gnn_layer.config import GnnLayerConfig
 # ---------------------------------------------------------------------------
 
 def _make_graph(n_sessions=1, dim=16, knn_k=2, seed=0):
-    from gnn_layer import graph_builder
+    from gnn_layer.classifier import graph_builder
     df = synthetic_df(n_sessions=n_sessions)
     cfg = GnnLayerConfig(knn_k=knn_k, cache_embeddings=False)
     rng = np.random.default_rng(seed)
@@ -48,7 +48,7 @@ class TestBuildModel(unittest.TestCase):
 
     def setUp(self):
         self.g, self.df = _make_graph()
-        from gnn_layer.model import build_model
+        from gnn_layer.classifier.model import build_model
         self._build = build_model
 
     def test_soft_vaamr_head_present(self):
@@ -105,7 +105,7 @@ class TestForwardShapes(unittest.TestCase):
 
     def setUp(self):
         self.g, self.df = _make_graph()
-        from gnn_layer.model import build_model
+        from gnn_layer.classifier.model import build_model
         self._build = build_model
 
     def _forward(self, objectives, hidden_dim=8, n_vce=0):
@@ -147,7 +147,7 @@ class TestForwardShapes(unittest.TestCase):
     def test_vce_shape_with_n_vce(self):
         cfg = GnnLayerConfig(objectives=['vce_multilabel'], knn_k=2,
                              cache_embeddings=False, hidden_dim=8)
-        from gnn_layer.model import build_model
+        from gnn_layer.classifier.model import build_model
         model = build_model(self.g, cfg, n_vce=7)
         model.eval()
         out = model(self.g.x, self.g.edge_index, self.g.edge_weight)
@@ -157,7 +157,7 @@ class TestForwardShapes(unittest.TestCase):
     def test_forward_without_edge_weight_is_valid(self):
         cfg = GnnLayerConfig(objectives=['soft_vaamr'], knn_k=2,
                              cache_embeddings=False, hidden_dim=8)
-        from gnn_layer.model import build_model
+        from gnn_layer.classifier.model import build_model
         model = build_model(self.g, cfg)
         out = model(self.g.x, self.g.edge_index, edge_weight=None)
         self.assertIn('soft_vaamr', out)
@@ -172,9 +172,9 @@ class TestComputeLosses(unittest.TestCase):
     def setUp(self):
         import torch
         self.g, self.df = _make_graph()
-        from gnn_layer.model import build_model, compute_losses
+        from gnn_layer.classifier.model import build_model, compute_losses
         from gnn_layer.soft_labels import build_soft_targets
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
 
         self.cfg = GnnLayerConfig(
             objectives=['soft_vaamr', 'progression', 'purer'],
@@ -233,7 +233,7 @@ class TestComputeLosses(unittest.TestCase):
             self.assertNotIn(k, losses)
 
     def test_contrastive_term_present_when_in_objectives(self):
-        from gnn_layer.model import build_model, compute_losses
+        from gnn_layer.classifier.model import build_model, compute_losses
         cfg_c = GnnLayerConfig(
             objectives=['soft_vaamr', 'contrastive'],
             knn_k=2, cache_embeddings=False, hidden_dim=8, contrastive_temp=0.1
@@ -247,7 +247,7 @@ class TestComputeLosses(unittest.TestCase):
             self.assertIn('contrastive', losses_c)
 
     def test_link_prediction_term_present_when_in_objectives(self):
-        from gnn_layer.model import build_model, compute_losses
+        from gnn_layer.classifier.model import build_model, compute_losses
         import torch
         cfg_lp = GnnLayerConfig(
             objectives=['soft_vaamr', 'link_prediction'],
@@ -271,7 +271,7 @@ class TestComputeLosses(unittest.TestCase):
 class TestSupervisedContrastive(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.model import supervised_contrastive
+        from gnn_layer.classifier.model import supervised_contrastive
         self._fn = supervised_contrastive
 
     def test_scalar_output(self):
@@ -303,7 +303,7 @@ class TestSupervisedContrastive(unittest.TestCase):
 class TestLinkPredictionLoss(unittest.TestCase):
 
     def setUp(self):
-        from gnn_layer.model import link_prediction_loss
+        from gnn_layer.classifier.model import link_prediction_loss
         self._fn = link_prediction_loss
 
     def test_scalar_output(self):
