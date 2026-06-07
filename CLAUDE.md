@@ -49,7 +49,12 @@ python qra.py assemble -o ./data/output/                     # join frozen+overl
 # The GraphSAGE consensus-distillation CLASSIFIER is a SEPARATE concern, DEFAULT OFF (H5-refuted):
 python qra.py gnn train -o ./data/output/                    # opt IN: train the classifier + reliability gate (sets gnn_classifier_enabled)
 python qra.py gnn status -o ./data/output/                   # κ(graph,LLM); ready for LLM-free scaling? (only after `gnn train`)
-python qra.py gnn classify -o ./data/output/                 # LLM-free label new/unlabeled segments (needs a trained classifier)
+python qra.py gnn classify -o ./data/output/                 # LLM-free FILL of unlabeled segments — DEMOTED, non-authoritative (below the LLM)
+
+# Probe — the RECOMMENDED LLM-free, gated, abstention-aware VAAMR scaler (per-rater ensemble; methodology §8.6)
+python qra.py probe train -o ./data/output/                  # fit on the LLM/human label of record + participant-grouped gate (probe↔human/LLM κ)
+python qra.py probe status -o ./data/output/                 # gate verdict: probe↔human / probe↔LLM κ; ready for LLM-free scaling?
+python qra.py probe classify -o ./data/output/               # LLM-free FILL of UNLABELED participant segments (gated; abstains; tier probe_consensus, BELOW the LLM)
 
 # Import a legacy (pre-SQLite, JSONL) project into qra.db (preview, then --run)
 python qra.py migrate -o ./data/output/                      # preview
@@ -57,6 +62,8 @@ python qra.py migrate -o ./data/output/ --run               # perform (originals
 
 # Incremental data addition (segment + classify only NEW transcripts; re-assembles + re-analyzes)
 python qra.py add-data --config ./data/output/02_meta/qra_config.json
+python qra.py add-data --config ./qra_config.json --classify-mode probe  # label NEW segments LLM-free (llm|probe|gnn);
+#   the TUI "Add new transcripts" action shows the probe/GNN IRR vs existing data + recommends a mode by scale
 
 # Speaker anonymization management
 python qra.py apply-anonymization -o ./data/output/       # scrub PHI names from frozen segment text
@@ -180,7 +187,7 @@ reports, figures, coded transcripts), a generated export (`master_segments.csv`,
 or external config (`qra_config.json`, speaker key).
 
 `qra.db` tables: `segments` (frozen raw segmentation + `params_hash`/`segmenter_version`/`ingest_timestamp`
-columns), `theme_labels` / `purer_labels` / `codebook_labels` / `cv_labels` / `gnn_labels` (overlays),
+columns), `theme_labels` / `purer_labels` / `codebook_labels` / `cv_labels` / `gnn_labels` / `probe_labels` (overlays),
 `classification_manifest`, `testset_worksheets` + `testset_items`, `cv_testsets` + `cv_testset_items`,
 `irr_testsets` + `irr_human_codes` (imported human IRR codes — ground truth, maintained across re-runs).
 
@@ -230,7 +237,7 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 
 | Path | Role |
 |------|------|
-| `qra.py` | CLI entry point (setup / run / analyze / ingest / classify / assemble / gnn / migrate / add-data / reclassify-run / testset / cv / irr / *-anonymization) |
+| `qra.py` | CLI entry point (setup / run / analyze / ingest / classify / assemble / gnn / probe / migrate / add-data [--classify-mode] / reclassify-run / testset / cv / irr / *-anonymization) |
 | `src/process/orchestrator.py` | Stage sequencing, `run_full_pipeline`, standalone `stage_*` functions |
 | `src/process/config.py` | `PipelineConfig` dataclass — single source of truth for all settings |
 | `src/process/db.py` | SQLite store: `qra.db` schema (12 tables), `open_db()` atomic-transaction context manager, WAL, JSON-column helpers |
@@ -262,6 +269,8 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 | `src/classification_tools/zeroshot_reporting.py` | `write_zeroshot_report` — graded `--test-zeroshot` content-validity report (extracted from `qra.py`) |
 | `src/classification_tools/llm_client.py` | Backend abstraction (OpenRouter, Ollama, LM Studio, HuggingFace, Replicate) |
 | `src/classification_tools/classification_loop.py` | Multi-run consensus voting with checkpointing |
+| `src/classification_tools/probe_classifier.py` | **LLM-free VAAMR scaler** — `ProbeConfig` + per-rater ensemble (one class-weighted L2-LogReg probe per LLM rater, mean proba; single-probe A1n fallback) + calibration/abstention; `train_probe`/`evaluate_probe`(gate)/`classify_with_probe`; fills `probe_consensus` BELOW the LLM (methodology §8.6) |
+| `src/analysis/grouped_cv.py` | Leak-free participant-grouped `StratifiedGroupKFold` + clustered-bootstrap κ-CI + per-class recall (the gate's measurement apparatus; shared) |
 | `src/classification_tools/data_structures.py` | `Segment` dataclass |
 | `src/analysis/runner.py` | Post-hoc analysis entry point (auto-regenerates IRR when human codes present + models changed) |
 | `src/process/irr_import.py` | Import human-coded IRR CSV → `irr_testsets`/`irr_human_codes`; label normalize, consensus validate, resolve worksheet item → `segment_id`, drift warnings |
