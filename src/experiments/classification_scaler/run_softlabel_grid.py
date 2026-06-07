@@ -19,7 +19,7 @@ for _p in (os.path.join(_ROOT, 'src'), _ROOT):
 import numpy as np
 from experiments.gnn_reliability import harness as H
 from experiments.gnn_reliability import baselines as B
-from experiments.gnn_reliability import run_softlabel as S
+from experiments.classification_scaler import run_softlabel as S
 from gnn_layer.config import GnnLayerConfig
 
 ABS = S.ABS

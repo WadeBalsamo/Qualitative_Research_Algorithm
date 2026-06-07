@@ -1,0 +1,46 @@
+{
+  "_note": "Raw committed backing for the HEADLINE winner (per-rater ensemble ens_softavg, tuned C). Regenerate with: python src/experiments/classification_scaler/_csweep.py (seed 42, participant-grouped StratifiedGroupKFold, Qwen3-Embedding-8B 4096-d, n=205 LLM-labeled / 66 human-consensus). Complements _distill_results.json (C=1 variants).",
+  "arm": "ens_softavg (per-rater ensemble; mean predict_proba over 3 class-weighted 6-class LogReg probes: gemma-4-31b / nemotron-3-nano-30b / qwen3-next-80b)",
+  "c_sweep_llm_kappa_205": {
+    "0.1": 0.2964,
+    "0.25": 0.2902,
+    "0.5": 0.2989,
+    "1.0": 0.3254,
+    "2.0": 0.3368,
+    "4.0": 0.3608
+  },
+  "best_C": 4.0,
+  "winner_ens_softavg": {
+    "C": 4.0,
+    "llm_kappa_205": 0.3608,
+    "llm_ci95": [
+      0.2806,
+      0.4324
+    ],
+    "llm_kappa_human_subset": 0.3067,
+    "human_kappa": 0.4502,
+    "human_ci95": [
+      0.3192,
+      0.5987
+    ],
+    "human_n": 66,
+    "per_class_recall": {
+      "Vigilance": 0.36,
+      "Avoidance": 0.35,
+      "AttentionReg": 0.6164,
+      "Metacognition": 0.2759,
+      "Reappraisal": 0.6034
+    }
+  },
+  "a1n_baseline_C1": {
+    "llm_kappa_205": 0.2831,
+    "human_kappa": 0.3652
+  },
+  "paired_delta_llm_winner_vs_a1n": 0.0777,
+  "success_bars": {
+    "llm_kappa": 0.45,
+    "human_kappa": 0.5,
+    "winner_clears_bar": false,
+    "verdict": "dominates A1n on both axes but NOT LLM-equivalent at n~=32 (LLM < 0.45; human < 0.50). Ships assistive/gated, not autonomous."
+  }
+}

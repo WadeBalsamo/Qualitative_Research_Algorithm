@@ -59,7 +59,7 @@ authoritative result set for that sub-variant. Baseline A1n: LLM **0.283**, huma
 | ens_softavg, human-weighted (S6b) | S6 per-rater ens | 0.318 [—] | 0.372 [—] | both (but < uniform) | no |
 | ens_majority | S6 per-rater ens | 0.304 [—] | 0.354 [—] | LLM only | no |
 | per-rater, qwen-only | S6 per-rater ens | 0.312 [—] | 0.346 [—] | LLM only | no |
-| 5-class MLP-KL-soft | S2 soft-label | 0.362 [0.302, 0.439] | 0.229 [—] | LLM only (drops No-code) | no |
+| 5-class MLP-KL-soft | S2 soft-label | 0.367 [0.305, 0.438] | 0.229 [—] | LLM only (drops No-code) | no |
 | 6-class MLP-KL-soft | S2 soft-label | 0.310 [—] | 0.339 [—] | LLM only | no |
 | 6-class MLP, hard CE (best human) | S2 soft-label | 0.292 [—] | 0.377–0.388 [—] | both (LLM marginal) | no |
 | confidence-weighted probe | S2 soft-label | 0.278 [—] | 0.370 [—] | human only | no |
@@ -142,7 +142,7 @@ targets).
 **Results.**
 
 - **6-class MLP-KL-soft:** 0.310 / 0.339
-- **5-class MLP-KL-soft:** **0.362 [0.302, 0.439]** / 0.229 — the campaign's **best LLM-axis point**, but the
+- **5-class MLP-KL-soft:** **0.367 [0.305, 0.438]** / 0.229 — the campaign's **best LLM-axis point**, but the
   5-class formulation *drops the No-code class* and the human axis collapses to 0.229.
 - **hard 6-class MLP:** best **human ≈ 0.377–0.388** (LLM ≈ 0.292)
 - **confidence-weighted probe:** 0.278 / 0.370
@@ -150,7 +150,7 @@ targets).
 
 **Interpretation.** The soft signal lifts **only the axis it optimizes** — the LLM's own inter-run
 disagreement — and slightly *hurts* the human axis. No variant clears the bar. Critically, the 5-class
-MLP-KL's 0.362 LLM κ is an artifact of dropping No-code, not a real gain (its human κ craters). This arm and
+MLP-KL's 0.367 LLM κ is an artifact of dropping No-code, not a real gain (its human κ craters). This arm and
 S6 converge on the same LLM ≈ 0.36 frontier by an unrelated mechanism.
 
 ---
@@ -279,7 +279,7 @@ n ≈ 32. Rejected.
 | classifier ↔ human (κ) | ≥ 0.50 (→ LLM↔human 0.537) | **0.450** [0.319, 0.599] — S6 (CI includes 0.50, point below) | no (grazes) |
 
 **Why this is a data ceiling, not a method gap.** **Three independent methods converge on the same frontier**
-— per-rater ensembling (S6: LLM 0.361), soft-label MLP distillation (S2: LLM 0.362), and structural No-code
+— per-rater ensembling (S6: LLM 0.361), soft-label MLP distillation (S2: LLM 0.367), and structural No-code
 decoupling (S5/S6: human ≈ 0.45) — and **every** further capacity, calibration, ordinal, context, and
 stacking lever ties or hurts. Convergence of unrelated methods on **LLM κ ≈ 0.36 / human κ ≈ 0.45** is the
 signature of a data ceiling.
@@ -324,7 +324,7 @@ python src/experiments/classification_scaler/<script>.py
 |---|---|
 | `rater_distill.py` | S6 library — per-rater labels, OOF probe fits, `softavg`/`majority` ensembles, soft/hard MLP |
 | `_run_distill.py` | S6 battery runner → `_distill_results.json` |
-| `_csweep.py`, `_csweep2.py` | LogReg-C sweep + paired Δκ for the tuned winner |
+| `_csweep.py`, `_csweep2.py` | LogReg-C sweep + paired Δκ for the tuned winner → `_csweep_results.json` |
 | `_paired_delta.py` | Paired cluster-bootstrap Δκ (ens_softavg, mlp_soft_kl) vs A1n |
 | `run_softlabel.py` | S2 library — MLP soft/hard distillation + confidence-weighted probe |
 | `run_softlabel_grid.py` | S2 full table + levers → `_softlabel_results.jsonl` |
@@ -337,5 +337,6 @@ python src/experiments/classification_scaler/<script>.py
 | `run_wave2_stack.py` | S8 naive per-rater × two-stage stack |
 | `run_wave2b_hybrid.py` | S8b pooled-gate × per-rater stager stack |
 
-Result artifacts in this directory: **`_distill_results.json`** (S6 battery) and
-**`_softlabel_results.jsonl`** (S2 grid). The authoritative narrative is **`CAMPAIGN_LOG.md`**.
+Result artifacts in this directory: **`_distill_results.json`** (S6 battery, C=1 default variants),
+**`_csweep_results.json`** (S6 winner — the LogReg-C sweep and the tuned **C=4** headline 0.361/0.450),
+and **`_softlabel_results.jsonl`** (S2 grid). The authoritative narrative is **`CAMPAIGN_LOG.md`**.

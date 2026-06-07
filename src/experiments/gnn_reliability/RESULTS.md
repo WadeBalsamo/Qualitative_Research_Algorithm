@@ -44,7 +44,7 @@ Discipline: hyperparameters tuned on the **LLM axis only**; the human axis is **
 | `anchors_arm.py` | The pre-registered Path-B escalation (B1) — CFiCS-style **construct-anchor** GNN. The anchored twin of `run_gnn_arm`: identical grouped-CV loop, single departure being that the graph is built **with the 5 VAAMR construct-definition anchor nodes** and their label-free anchor↔segment cosine edges. Measured on the GNN↔human axis (where anchors cannot inflate κ by construction). |
 | `capacity_scaler.py` | The capacity sweep that *bridges into the successor campaign*: on the same Qwen target features / grouped folds, sweep MLP (torch class-weighted + sklearn unweighted), HistGradientBoosting, SVM-RBF, and calibrated linear probes against the A1n bar (LLM 0.283 / human 0.365). Capacity beyond a linear probe overfits — all families land ≈ 0.13–0.20 LLM-axis, below A1n. |
 | `run_battery.py` | Orchestrates the full pre-registered battery (A1–A4n): builds corpus + folds + Qwen embeddings once, runs every arm on the same folds, scores both axes, appends the ledger. **The entry point to reproduce the classifier results.** |
-| `run_mechanism.py` | The PRIMARY-mission readout (retained, separate from H5): per 5-class Qwen GNN, compute the model's own grouped-CV gate κ (trust context) → run the counterfactual cue-influence + §1A triangulation (Spearman ρ over (from_stage × PURER move) cells + participant-clustered bootstrap CI) vs. the observed `analysis/mechanism.py` Δprogression. |
+| `run_mechanism.py` | **RETIRED stub** (superseded). It originally ran the model-counterfactual cue-influence readout on a per-segment GNN classifier (the former `gnn_layer/influence.py`); on the pilot that counterfactual *inverted* the observed ranking (Spearman ρ = −0.13, §10). It was **rebuilt** as the dyadic FROM→CUE→TO transition model `src/gnn_layer/transition.py` (ρ ≈ +0.34) — see §10. The file is kept as a catalog record and no longer imports the deleted module; run `qra analyze` for the current mechanism read. |
 | `graph_experiments.md`, `design_decisions.md` | The salvaged narrative records (method, decision log, full battery + mechanism analysis). |
 
 ---
@@ -124,7 +124,24 @@ The graph's **inability** to classify VAAMR from semantic similarity is itself *
 
 **Position adopted:** the multi-run LLM consensus (human-level at κ = 0.537, affordable at trial scale) stays the **label of record**. The GNN is **dropped as a classifier / scaler of record** and **retained as a mechanism & discovery instrument** — counterfactual cue-influence, participant↔therapist coupling, subtext communities, emergent motifs — where its graph-native structure is the point and it is used as an *exploratory* lens, explicitly so. The reliability gate is **kept** as the honest, grouped, per-stage yardstick (now leak-free).
 
-Even in the mechanism role the readout is honest about its limits: `run_mechanism.py` found the Qwen GNN counterfactual cue-influence does **not triangulate** with the observed `analysis/mechanism.py` Δprogression (Spearman ρ = **−0.13** [−0.48, 0.01] plain / −0.25 balanced — both CIs include 0; coupling factor |corr| < 0.07), with **0 of 20 cells FDR-significant** in the observed table at this scale. Per the pre-registered protocol, **`mechanism.py` (observed) leads and the GNN counterfactual is exploratory only**; the negative ρ inverts the observed pattern — the signature of the elicitation/responsiveness confound, evidence *of* the confound, and the reason no causal claim is admissible. The binding constraint throughout is **data scale (n ≈ 32)**; most conclusions here are explicitly n-bound and worth re-running as participants accrue.
+Even in the mechanism role the readout is honest about its limits: the *first* mechanism instrument (the
+model-counterfactual on a per-segment GNN classifier, the former `gnn_layer/influence.py`, run by the
+now-retired `run_mechanism.py`) found the Qwen GNN counterfactual cue-influence does **not triangulate**
+with the observed `analysis/mechanism.py` Δprogression (Spearman ρ = **−0.13** [−0.48, 0.01] plain / −0.25
+balanced — both CIs include 0; coupling factor |corr| < 0.07), with **0 of 20 cells FDR-significant** in the
+observed table at this scale.
+
+**Update (GNN repositioning).** That per-segment counterfactual was diagnosed as **mis-specified for a
+*process* question** (kNN content-noise; never trained on transitions; a single diluted cue→participant
+edge) and was **retired**. It has been **rebuilt** as the dyadic FROM→CUE→TO transition model
+`src/gnn_layer/transition.py` (`TO_mixture ≈ f(FROM_mixture, FROM_stage, pooled raw-Qwen cue)`, no kNN,
+FROM-stage conditioned), whose learned counterfactual now triangulates **positively** with the observed
+ranking (Spearman ρ ≈ **+0.34**, versus the retired −0.13), shipped with a confound-localization map
+(`src/gnn_layer/confound.py`). It remains hypothesis-generating, not causal: at n ≈ 32 the cue does not
+*earn its place* under participant-grouped CV (the transition is under-identified), so **`mechanism.py`
+(observed) still leads**. Full record: `docs/methodology.md` §8.5 (Track B). Per the pre-registered
+protocol the binding constraint throughout is **data scale (n ≈ 32)**; most conclusions here are explicitly
+n-bound and worth re-running as participants accrue.
 
 ---
 
