@@ -12,6 +12,14 @@
 > Companion artifacts: `methodology.md` §8.5 (as-built prose spec),
 > `gnn-influence-to-execution.md` (the original built-vs-designed reconciliation),
 > `ROADMAP.md` Phase 3/6.
+>
+> ⚠ **POST-PILOT REPOSITIONING (2026-06-06).** The first real-corpus battery refuted the
+> GNN's *classifier/scaler* role (H5) and repurposed the layer to a **mechanism + discovery
+> instrument only** (see **§1.1** for the revised purpose and **§4.7** for whether the
+> as-built architecture is the right one for it — it is not quite; a dyadic transition model
+> is the recommended successor). Tracks below are "implemented as designed" under the
+> *original* twofold framing; read them through §1.1/§4.7. Authoritative results:
+> root `design_decisions.md` + `graph_experiments.md`; manuscript: `methodology.md` §8.5.
 
 ---
 
@@ -57,16 +65,39 @@ sequential cohorts**). It applies two frameworks bilaterally:
 
 **The end goal of the GNN work is not the GNN.** It is to build a **training dataset to
 fine-tune MindfulBERT** — a domain-adapted model that does *not merely classify VAAMR* but
-**predicts which language patterns progress a participant across VAAMR stages.** The GNN's
-job is twofold:
+**predicts which language patterns progress a participant across VAAMR stages.**
 
-1. **Scale the labeling** so there is enough labeled corpus to train MindfulBERT (cheap,
-   LLM-free VAAMR/PURER labels on the full corpus).
-2. **Help identify** the progression-inducing language patterns that become the training
-   signal (candidate generation + curation), and provide a model-counterfactual lens on
-   *how* therapist language moves participant expression.
+The GNN was originally assigned **two** jobs: (1) *scale the labeling* LLM-free so there is
+enough labeled corpus for MindfulBERT, and (2) *help identify* the progression-inducing
+patterns + provide a model-counterfactual lens on how therapist language moves participant
+expression.
 
-Everything below serves those two jobs, under hard methodological constraints (§6).
+### 1.1 Purpose, REVISED after the Cohorts 1–2 pilot (2026-06-06)
+
+The first real-corpus battery (root `design_decisions.md`, `graph_experiments.md`;
+`methodology.md` §8.5, H5/H6) **refutes job (1).** Under leakage-free participant-grouped
+cross-validation a content-similarity graph reproduces the VAAMR consensus at κ ≈ 0.05–0.14
+— far below reliability — and a linear probe on the same Qwen features beats it; a graph
+cannot recover a *developmental* label from a *content-similarity* structure (**H6**, the
+non-homophily finding). **The GNN is therefore no longer a label producer or scaler.** The
+multi-run LLM consensus — already human-level (κ = 0.537 vs human) and affordable at trial
+scale — is the label of record *and* the engine that supplies MindfulBERT's labels (via
+LLM-labeled observed Δprogression, not GNN-scaled labels). The GNN's purpose narrows to job
+(2) alone, stated sharply:
+
+> **The GNN exists to provide a model-based, context-sensitive lens on therapist→participant
+> VAAMR *dynamics* — how a therapist PURER move shifts the *following* participant's VAAMR
+> expression — and to surface candidate therapeutic constructs (motifs, routines) for human
+> review. It complements, never replaces, the observed-Δprogression analysis
+> (`analysis/mechanism.py`) and the LLM label of record; it is exploratory, triangulated
+> against that observed signal, and bounded by the n≈32 elicitation confound and
+> under-identification (methodology §9.2/§9.4; H2).**
+
+Everything below §1 was designed and built under the *original twofold* framing; **§4.7
+reassesses whether the as-built GraphSAGE is the right architecture for this *narrowed*
+purpose** — and concludes it is not quite, recommending a dyadic FROM→CUE→TO transition
+model to be built at the larger-N cohorts. The classifier/scaler track (Track A, §9) is
+*closed at this scale* — retained behind flags and documented, but not pursued.
 
 ---
 
@@ -225,6 +256,78 @@ The end goal is **human-level IRR**, not the legacy 0.70 gate. Concretely:
 
 ---
 
+### 4.7 Is the as-built GraphSAGE the *best* architecture for the revised (mechanism) purpose? — No.
+
+With the purpose narrowed to a mechanism-and-discovery lens (§1.1), the honest answer is that the
+current build — a multi-task **node classifier** (GraphSAGE) over a **content-similarity graph** —
+is *not* the best architecture for it. It is a classifier repurposed post-hoc, and three properties
+make it mis-specified for *mechanism*. This is a design critique, not a retraction: the current build
+remains a usable, gated, *exploratory* lens at pilot scale; the point is to specify what to build for
+the larger-N cohorts, where mechanism becomes identifiable.
+
+**Why the current build is mis-specified for mechanism.**
+
+1. **kNN-similarity edges are content noise on a *process* question.** The non-homophily finding
+   (H6, §8.5) is that embedding similarity tracks *topic/affect*, not VAAMR *stage*. The mechanism
+   question — does *this cue* move *this participant's* stage? — lives in the **directed temporal
+   flow** (participant turn → therapist cue → next participant turn; the `precipitates` edges), not
+   in content similarity. The dense kNN edges dilute that process signal with topical clustering. A
+   mechanism graph should be **temporal + precipitates only (directed)**, with kNN dropped or heavily
+   down-weighted — the same edges that hurt the classifier (4.2 of `graph_experiments.md`) are inert
+   or harmful for mechanism too.
+
+2. **It is trained as a per-segment classifier, not a *transition* model.** The progression
+   coordinate is a by-product of a soft-VAAMR classification head; the counterfactual then probes that
+   classifier's *incidental* sensitivity to a swapped therapist feature. But the mechanism *is* a
+   transition — `P(TO participant state | FROM participant state, therapist cue)`. A model that never
+   trains on transitions cannot represent the dynamics directly; its counterfactual is a derivative of
+   a classifier, not a learned response function.
+
+3. **The therapist→participant signal is structurally attenuated.** A participant node's
+   representation is dominated by its own embedding; the cue reaches it through a *single* `precipitates`
+   edge among many temporal/kNN edges, so swapping the cue moves the predicted coordinate by ≈0.03 on a
+   0–4 scale. The very quantity the counterfactual must read is diluted by the architecture — a likely
+   contributor to the failed triangulation (ρ = −0.13) on top of the confound.
+
+**The better build — a dyadic FROM→CUE→TO transition model.** Model the observed transition
+*directly*: learn `TO_VAAMR_mixture ≈ f(FROM_VAAMR_mixture, FROM_stage, pooled_cue_embedding)` over the
+cue-block triples that `process/cue_blocks.py` already yields, trained and evaluated under
+participant-grouped CV against the observed TO state. This is a small **relational/sequence regressor**,
+not a GraphSAGE-over-similarity-graph: the only "graph" it needs is the directed dialogue chain.
+Its advantages map one-to-one onto the three defects above — it uses process structure not similarity
+(1); it *is* the transition function, so the counterfactual (swap `pooled_cue_embedding`, or a PURER
+centroid) reads a learned response, not a classifier by-product (2); and FROM-state conditioning is
+built in, which both un-attenuates the cue's role (3) and is the partial control for the elicitation
+confound. **Discovery (motifs, communities, coupling) needs none of this trained model** — those are
+clustering/factor analyses on the *raw* Qwen embeddings (the coupling readout already runs that way), so
+they should be **decoupled from classifier training entirely**.
+
+**The humbling ceiling — architecture is not the binding constraint.** Even the ideal transition model
+cannot dissolve the two limits the pilot exposed. (a) The **elicitation/responsiveness confound**
+(methodology §9.4) makes any cue→transition estimate *sensitivity, not causation* — the negative
+counterfactual ρ is direct evidence the confound is large. (b) **Under-identification at n≈32**: the
+observed *non-parametric* transition table already has **zero FDR-significant cells**, so a learned
+*parametric* transition model has no extra signal to fit — it would inherit that uncertainty, not beat
+it. A better architecture therefore buys **faithfulness and interpretability, not statistical power.**
+Power comes only from more participants.
+
+**Recommendation.**
+- *Now (pilot, Cohorts 1–2):* lead with the observed `mechanism.py` analysis; keep the current GNN
+  build as the gated, *exploratory* counterfactual lens (its non-convergence is itself reported as
+  evidence of the confound, H2/§9.4); **decouple the discovery layers** from the unneeded classifier
+  training; do **not** invest further in the GraphSAGE classifier or in concept anchors (B1, refuted).
+- *Cohorts 3–4 (when N supports identification):* build the **dyadic FROM→CUE→TO transition model** as
+  the mechanism instrument (directed temporal+precipitates structure, kNN dropped); re-run the H2
+  triangulation success metric at the larger N; decide *then*, on the human axis and triangulation,
+  whether the learned transition model earns "primary" status over the observed table (D7).
+- *The classifier/scaler track (Track A, H5) is closed at this scale* — not deleted (behind flags,
+  documented), but not pursued; the LLM consensus is the label/scaling engine.
+
+This reassessment is recorded as decision **D14** (§5) and supersedes, for the mechanism purpose, the
+parts of Track A/B that assumed a node-classifier substrate.
+
+---
+
 ## 5. Design decisions (the locked record + the why)
 
 Each decision below was made explicitly with the lead researcher.
@@ -244,6 +347,7 @@ Each decision below was made explicitly with the lead researcher.
 | D11 | **GPU-preferred, CPU-safe compute.** All GNN compute uses CUDA when available (`config.device=None`→auto) and falls back to CPU cleanly; `config.device` governs BOTH the GNN model and the heavy embedding pass. | The 8B Qwen3 embedding + GraphSAGE training are the cost centres; the layer must exploit the GPU when present but never crash without one. Every new track inherits this (see §6a). |
 | D12 | **Target = human-level IRR, not κ≥0.70.** Success is GNN↔human κ → LLM↔human (≈0.54) and GNN↔LLM κ → human↔human (≈0.45–0.52). | Human↔human α≈0.33–0.52 → 0.70 is unreachable in principle; the LLM is already human-level (§4.6). |
 | D13 | **One git branch per distinct architecture; document every arm; promote on the human axis.** Big architectural experiments (Qwen embedding, C&S, imbalance losses, concept anchors) each run on their own branch with a recorded per-class κ/recall + GNN↔human κ result; merged to default only on a human-axis gain. | Isolation + reversibility + comparability; negative results are evidence, not noise (Track A0). |
+| D14 | **Post-pilot repositioning (§1.1/§4.7): the GNN is a mechanism + discovery lens, NOT a classifier/scaler.** The classifier/scaler track (Track A, H5) is closed at n≈32; the LLM consensus is the label and scaling engine; observed `mechanism.py` leads. The *best* mechanism architecture is a **dyadic FROM→CUE→TO transition model** (directed temporal+precipitates, kNN dropped), deferred to Cohorts 3–4 where mechanism is identifiable; discovery layers are decoupled from classifier training. | H5 refuted (grouped κ≈0.05–0.14; probe beats graph) + H6 non-homophily ⇒ a node-classifier over a content-similarity graph is mis-specified for a *process* question. Architecture buys faithfulness/interpretability, not power; the n≈32 confound + under-identification are the binding limits. |
 
 ---
 
