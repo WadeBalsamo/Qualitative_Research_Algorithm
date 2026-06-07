@@ -429,7 +429,7 @@ def stage_assemble(
 
     if segments is None:
         segments = segments_io.load_segments_for_stage(
-            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn'),
+            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn', 'probe'),
         )
 
     confidence_tiers: dict = {}
@@ -438,13 +438,14 @@ def stage_assemble(
 
     _ms_dir = _paths.master_segments_dir(_od)
     os.makedirs(_ms_dir, exist_ok=True)
-    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, _od)
+    _probe_ready = _probe_promotion_flag(config, _od)
+    _gnn_ready = _gnn_promotion_flag(config, _od)
     master_df = assemble_master_dataset(
         segments,
         os.path.join(_ms_dir, 'master_segments.csv'),
         confidence_tiers=confidence_tiers,
-        gnn_authoritative=_gnn_auth,
-        gate_passed=_gate_ok,
+        probe_ready=_probe_ready,
+        gnn_ready=_gnn_ready,
     )
 
     return master_df
@@ -455,31 +456,30 @@ def stage_assemble(
 # (extracted from run_full_pipeline body to avoid duplication)
 # ---------------------------------------------------------------------------
 
-def _gnn_promotion_flags(config, output_dir: str):
-    """Resolve (gnn_authoritative, gate_passed) for label-of-record promotion.
+def _probe_promotion_flag(config, output_dir: str) -> bool:
+    """probe_ready: the probe may FILL unlabeled segments (below the LLM) only when the
+    operator enabled it (config.probe.enabled) AND the persisted participant-grouped gate
+    (03_analysis_data/probe/probe_gate.json) reports ready_for_scaling. Disabled by default."""
+    if not bool(getattr(getattr(config, 'probe', None), 'enabled', False)):
+        return False
+    try:
+        from classification_tools import probe_classifier as _pc
+        return bool(_pc.probe_gate_ready(output_dir))
+    except Exception:
+        return False
 
-    The graph can become the authoritative label of record only when the operator
-    opted in (config.gnn_layer.gnn_authoritative) AND the persisted reliability-gate
-    verdict says ready_for_scaling. A config flag alone never promotes an un-gated
-    graph (Track 0.2). If the operator opted in but the gate is missing/failing, we
-    force no-promotion and log a clear warning.
-    """
-    auth = bool(getattr(getattr(config, 'gnn_layer', None), 'gnn_authoritative', False))
-    if not auth:
-        return False, False
+
+def _gnn_promotion_flag(config, output_dir: str) -> bool:
+    """gnn_ready: the demoted GNN classifier may FILL unlabeled segments (below the LLM)
+    only when its reliability gate (03_analysis_data/gnn/gnn_gate.json) reports
+    ready_for_scaling. There is no 'authoritative' override any more — the GNN can never
+    overwrite an LLM/human label. False (no fill) unless the classifier was trained and
+    cleared its gate (default-OFF classifier ⇒ no gate ⇒ no fill)."""
     try:
         from gnn_layer.classifier import validation as _gval
-        gate = _gval.gate_ready_for_scaling(output_dir)
+        return bool(_gval.gate_ready_for_scaling(output_dir))
     except Exception:
-        gate = False
-    if not gate:
-        print(
-            "  Warning: gnn_authoritative=True but the GNN reliability gate has not "
-            "passed (missing or failing verdict at 03_analysis_data/gnn/gnn_gate.json). "
-            "Keeping LLM-consensus labels of record; the graph will not become "
-            "authoritative until the gate reports ready_for_scaling."
-        )
-    return auth, gate
+        return False
 
 def resolve_pinned_classifier_config(
     run_dir: str,
@@ -1184,7 +1184,7 @@ def stage_validation_artifacts(
 
     if segments is None:
         segments = segments_io.load_segments_for_stage(
-            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn'),
+            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn', 'probe'),
         )
 
     if framework is None:
@@ -1807,13 +1807,14 @@ def run_incremental_pipeline(
     confidence_tier_config = asdict(config.confidence_tiers)
     _msdir = _paths.master_segments_dir(output_dir)
     os.makedirs(_msdir, exist_ok=True)
-    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, output_dir)
+    _probe_ready = _probe_promotion_flag(config, output_dir)
+    _gnn_ready = _gnn_promotion_flag(config, output_dir)
     master_df = assemble_master_dataset(
         all_segments,
         os.path.join(_msdir, 'master_segments.csv'),
         confidence_tiers=confidence_tier_config,
-        gnn_authoritative=_gnn_auth,
-        gate_passed=_gate_ok,
+        probe_ready=_probe_ready,
+        gnn_ready=_gnn_ready,
     )
 
     # ------------------------------------------------------------------
@@ -2103,13 +2104,14 @@ def run_full_pipeline(
     confidence_tier_config = asdict(config.confidence_tiers)
     _msdir = _paths.master_segments_dir(output_dir)
     os.makedirs(_msdir, exist_ok=True)
-    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, output_dir)
+    _probe_ready = _probe_promotion_flag(config, output_dir)
+    _gnn_ready = _gnn_promotion_flag(config, output_dir)
     master_df = assemble_master_dataset(
         all_segments,
         os.path.join(_msdir, 'master_segments.csv'),
         confidence_tiers=confidence_tier_config,
-        gnn_authoritative=_gnn_auth,
-        gate_passed=_gate_ok,
+        probe_ready=_probe_ready,
+        gnn_ready=_gnn_ready,
     )
 
     observer.on_stage_complete(

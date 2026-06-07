@@ -51,7 +51,10 @@ def _text_sha(context_text: str, cue_text: str) -> str:
     return hashlib.sha256(f"{context_text}|{cue_text}".encode('utf-8')).hexdigest()
 # Provenance precedence (higher = stronger). An example's tier is the WEAKEST of its
 # two VAAMR endpoints — the dataset never claims more certainty than its weakest label.
-_TIER_RANK = {'adjudicated': 3, 'human_consensus': 2, 'gnn_consensus': 1, 'llm_zero_shot': 0}
+# The two cheap scalers (probe, then the demoted GNN) rank BELOW llm_zero_shot: a cue block
+# touched by a probe/GNN fill is down-weighted, never mixed un-tagged with LLM/human labels.
+_TIER_RANK = {'adjudicated': 4, 'human_consensus': 3, 'llm_zero_shot': 2,
+              'probe_consensus': 1, 'gnn_consensus': 0}
 _RANK_TIER = {v: k for k, v in _TIER_RANK.items()}
 _PROGRESS_DEADBAND = 0.15  # |Δprogression| below this is "stayed" (matches analysis/mechanism)
 

@@ -60,57 +60,48 @@ class TestGnnOverlay(unittest.TestCase):
 
 
 class TestProvenanceTier(unittest.TestCase):
+    """The demoted GNN is a FILL tier below the LLM: it labels only unlabeled segments and
+    never overrides an LLM/human label (the gnn_authoritative override is retired)."""
+
     def setUp(self):
+        # LLM-labeled segments (with a spurious GNN prediction present)
         self.p = Segment(segment_id='p1', text='x', speaker='participant')
         self.p.primary_stage, self.p.gnn_vaamr_pred, self.p.gnn_vaamr_conf = 1, 3, 0.9
         self.t = Segment(segment_id='t1', text='y', speaker='therapist')
         self.t.purer_primary, self.t.gnn_purer_pred, self.t.gnn_purer_conf = 0, 2, 0.8
         self.out = os.path.join(tempfile.mkdtemp(), 'm.jsonl')
 
-    def test_authoritative_off_keeps_llm(self):
-        df = assemble_master_dataset([self.p, self.t], self.out, gnn_authoritative=False)
-        r = df.set_index('segment_id')
-        self.assertEqual(r.loc['p1', 'final_label'], 1)
-        self.assertEqual(r.loc['p1', 'final_label_source'], 'llm_zero_shot')
-        self.assertEqual(r.loc['t1', 'purer_final'], 0)
-        self.assertEqual(r.loc['t1', 'purer_final_source'], 'llm_zero_shot')
+    def test_gnn_never_overrides_llm(self):
+        # Even gate-ready, the GNN cannot overwrite an existing LLM label.
+        for ready in (False, True):
+            df = assemble_master_dataset([self.p, self.t], self.out, gnn_ready=ready)
+            r = df.set_index('segment_id')
+            self.assertEqual(r.loc['p1', 'final_label'], 1)
+            self.assertEqual(r.loc['p1', 'final_label_source'], 'llm_zero_shot')
+            self.assertEqual(r.loc['t1', 'purer_final'], 0)
+            self.assertEqual(r.loc['t1', 'purer_final_source'], 'llm_zero_shot')
+            # raw GNN predictions preserved for audit
+            self.assertEqual(r.loc['p1', 'gnn_vaamr_pred'], 3)
 
-    def test_authoritative_on_uses_gnn_and_preserves_raw(self):
-        # Promotion requires BOTH the operator opt-in AND a passing gate (Track 0.2).
-        df = assemble_master_dataset([self.p, self.t], self.out,
-                                     gnn_authoritative=True, gate_passed=True)
-        r = df.set_index('segment_id')
-        self.assertEqual(r.loc['p1', 'final_label'], 3)
-        self.assertEqual(r.loc['p1', 'final_label_source'], 'gnn_consensus')
-        self.assertEqual(r.loc['t1', 'purer_final'], 2)
-        self.assertEqual(r.loc['t1', 'purer_final_source'], 'gnn_consensus')
-        # raw LLM labels preserved
-        self.assertEqual(r.loc['p1', 'primary_stage'], 1)
-        self.assertEqual(r.loc['t1', 'purer_primary'], 0)
-
-    def test_authoritative_on_but_gate_not_passed_keeps_llm(self):
-        # The gate is the hard precondition: a config flag alone can NOT promote an
-        # un-gated graph to the label of record (Track 0.2 — gate-gated promotion).
-        df = assemble_master_dataset([self.p, self.t], self.out,
-                                     gnn_authoritative=True, gate_passed=False)
-        r = df.set_index('segment_id')
-        self.assertEqual(r.loc['p1', 'final_label'], 1)
-        self.assertEqual(r.loc['p1', 'final_label_source'], 'llm_zero_shot')
-        self.assertEqual(r.loc['t1', 'purer_final'], 0)
-        self.assertEqual(r.loc['t1', 'purer_final_source'], 'llm_zero_shot')
-
-    def test_authoritative_defaults_gate_passed_false(self):
-        # gate_passed defaults to False, so the safeguard holds even if a caller
-        # forgets to thread the gate verdict through.
-        df = assemble_master_dataset([self.p, self.t], self.out, gnn_authoritative=True)
-        r = df.set_index('segment_id')
-        self.assertEqual(r.loc['p1', 'final_label_source'], 'llm_zero_shot')
-        self.assertEqual(r.loc['t1', 'purer_final_source'], 'llm_zero_shot')
+    def test_gnn_fills_unlabeled_only_when_ready(self):
+        p = Segment(segment_id='p2', text='x', speaker='participant')  # no LLM label
+        p.gnn_vaamr_pred, p.gnn_vaamr_conf = 3, 0.9
+        t = Segment(segment_id='t2', text='y', speaker='therapist')   # no LLM label
+        t.gnn_purer_pred, t.gnn_purer_conf = 2, 0.8
+        # not ready → stays unlabeled
+        r_off = assemble_master_dataset([p, t], self.out).set_index('segment_id')
+        self.assertIsNone(r_off.loc['p2', 'final_label'])
+        self.assertIsNone(r_off.loc['t2', 'purer_final'])
+        # ready → GNN fills, tagged gnn_consensus
+        r_on = assemble_master_dataset([p, t], self.out, gnn_ready=True).set_index('segment_id')
+        self.assertEqual(r_on.loc['p2', 'final_label'], 3)
+        self.assertEqual(r_on.loc['p2', 'final_label_source'], 'gnn_consensus')
+        self.assertEqual(r_on.loc['t2', 'purer_final'], 2)
+        self.assertEqual(r_on.loc['t2', 'purer_final_source'], 'gnn_consensus')
 
     def test_human_outranks_gnn(self):
         self.p.human_label = 1  # equals primary_stage -> human_consensus
-        df = assemble_master_dataset([self.p], self.out,
-                                     gnn_authoritative=True, gate_passed=True)
+        df = assemble_master_dataset([self.p], self.out, gnn_ready=True)
         r = df.set_index('segment_id')
         self.assertEqual(r.loc['p1', 'final_label_source'], 'human_consensus')
         self.assertEqual(r.loc['p1', 'final_label'], 1)

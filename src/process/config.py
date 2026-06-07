@@ -17,6 +17,7 @@ from codebook.config import (
     EnsembleConfig,
 )
 from gnn_layer.config import GnnLayerConfig
+from classification_tools.probe_classifier import ProbeConfig
 
 # Keys that hold secrets and must never be written to config JSON
 _SECRET_KEYS = frozenset({'api_key'})
@@ -304,6 +305,9 @@ class PipelineConfig:
     participant_summaries: ParticipantSummariesConfig = field(default_factory=ParticipantSummariesConfig)
     # GNN representation-and-discovery layer (analysis-time; OFF by default)
     gnn_layer: GnnLayerConfig = field(default_factory=GnnLayerConfig)
+    # LLM-free probe scaler (per-rater ensemble; methodology §8.6). OFF by default — when
+    # enabled, fills UNLABELED participant segments below the LLM (provenance probe_consensus).
+    probe: ProbeConfig = field(default_factory=ProbeConfig)
     # Superposition surfacing + mechanistic analysis (analysis-time; ON by default)
     superposition: SuperpositionConfig = field(default_factory=SuperpositionConfig)
     # Program-efficacy dossier (analysis-time; ON by default)
@@ -374,6 +378,7 @@ class PipelineConfig:
             'session_summaries': SessionSummariesConfig,
             'participant_summaries': ParticipantSummariesConfig,
             'gnn_layer': GnnLayerConfig,
+            'probe': ProbeConfig,
             'superposition': SuperpositionConfig,
             'efficacy': EfficacyConfig,
             'inter_rater_reliability': InterRaterReliabilityConfig,
