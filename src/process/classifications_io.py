@@ -63,9 +63,9 @@ CROSS_VALIDATION_OVERLAY_FIELDS: Tuple[str, ...] = (
     'cv_disagreement_score', 'cv_adjudication_method',
 )
 
-# GNN consensus-distillation overlay: per-segment graph predictions. Written by the
-# GNN layer when produce_consensus_labels=True; become the label of record only when
-# gnn_layer.gnn_authoritative=True (see process/assembly/master_dataset.py).
+# GNN consensus-distillation overlay: per-segment graph predictions. Written by the GNN
+# layer when produce_consensus_labels=True. DEMOTED (methodology §8.6): they FILL only
+# unlabeled segments (tier 'gnn_consensus', BELOW the LLM), never override it.
 GNN_OVERLAY_FIELDS: Tuple[str, ...] = (
     'gnn_vaamr_pred', 'gnn_vaamr_conf', 'gnn_vaamr_abstain',
     'gnn_purer_pred', 'gnn_purer_conf', 'gnn_purer_abstain',

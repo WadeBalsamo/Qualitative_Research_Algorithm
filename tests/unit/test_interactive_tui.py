@@ -21,7 +21,7 @@ _QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
 if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
-from process.interactive_tui import _gnn_status, _gnn_tag
+from process.interactive_tui import _gnn_status, _gnn_tag, _probe_status, _probe_tag
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +225,55 @@ class TestDetectStateGnnKey(unittest.TestCase):
         }
         for key in required:
             self.assertIn(key, state, f"Missing key: {key}")
+
+    def test_detect_state_has_probe_status_key(self):
+        from process.interactive_tui import _detect_state
+        state = _detect_state(self.run_dir)
+        self.assertIn('probe_status', state)
+        self.assertEqual(state['probe_status'], 'absent')
+
+
+# ---------------------------------------------------------------------------
+# _probe_status / _probe_tag tests
+# ---------------------------------------------------------------------------
+
+def _write_probe_gate(run_dir: str, ready: bool) -> str:
+    import json
+    d = os.path.join(run_dir, '03_analysis_data', 'probe')
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, 'probe_gate.json')
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump({'ready_for_scaling': ready, 'probe_human_kappa': 0.45}, f)
+    return path
+
+
+class TestProbeStatus(unittest.TestCase):
+    def setUp(self):
+        self.run_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.run_dir, ignore_errors=True)
+
+    def test_absent_when_no_gate(self):
+        self.assertEqual(_probe_status(self.run_dir), 'absent')
+
+    def test_ready_when_gate_says_yes(self):
+        _write_probe_gate(self.run_dir, True)
+        self.assertEqual(_probe_status(self.run_dir), 'ready')
+
+    def test_not_ready_when_gate_says_no(self):
+        _write_probe_gate(self.run_dir, False)
+        self.assertEqual(_probe_status(self.run_dir), 'not_ready')
+
+
+class TestProbeTag(unittest.TestCase):
+    def test_ready_tag_recommends(self):
+        self.assertIn('recommended', _probe_tag('ready'))
+
+    def test_statuses_distinct_and_unknown_empty(self):
+        tags = [_probe_tag(s) for s in ('ready', 'not_ready', 'absent')]
+        self.assertEqual(len(set(tags)), 3)
+        self.assertEqual(_probe_tag('xyz'), '')
 
 
 if __name__ == '__main__':

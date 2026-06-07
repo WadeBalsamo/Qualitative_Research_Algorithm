@@ -170,6 +170,7 @@ def _detect_state(output_dir: str) -> dict:
 
     has_analysis = _dir_non_empty(_paths.analysis_data_dir(output_dir))
     gnn_status = _gnn_status(output_dir)
+    probe_status = _probe_status(output_dir)
 
     # Look for config
     config_path = None
@@ -193,6 +194,7 @@ def _detect_state(output_dir: str) -> dict:
         has_cv_testsets=has_cv_testsets,
         has_analysis=has_analysis,
         gnn_status=gnn_status,
+        probe_status=probe_status,
         config_path=config_path,
     )
 
@@ -400,6 +402,34 @@ def _gnn_tag(status: str) -> str:
         'trained': '  (trained — gate not run)',
         'discovery': '  (discovery ran; run "gnn train" for the classifier)',
         'absent': '  (needs GNN layer first)',
+    }.get(status, '')
+
+
+def _probe_status(output_dir: str) -> str:
+    """Reliability state of the LLM-free probe scaler (methodology §8.6).
+
+    'ready'     — probe↔human κ reached the human band on this project's human subset
+    'not_ready' — gate ran but the probe is not yet reliable enough to scale
+    'absent'    — the probe has not been trained/gated yet
+
+    Reads the machine-readable verdict at 03_analysis_data/probe/probe_gate.json.
+    """
+    try:
+        from classification_tools.probe_classifier import read_probe_gate
+        verdict = read_probe_gate(output_dir)
+        if verdict is not None:
+            return 'ready' if verdict.get('ready_for_scaling') else 'not_ready'
+    except Exception:
+        pass
+    return 'absent'
+
+
+def _probe_tag(status: str) -> str:
+    """Menu suffix reflecting the probe reliability gate."""
+    return {
+        'ready': '  ★ gate passed (recommended for bulk/new data)',
+        'not_ready': '  (gate: below the human band — assistive only)',
+        'absent': '  (run "Probe — train + gate" first)',
     }.get(status, '')
 
 
@@ -1183,6 +1213,116 @@ def _action_gnn_status(output_dir: str) -> None:
     _pause()
 
 
+def _probe_master_df(output_dir: str):
+    """Read the assembled master_segments.csv (the probe's data source), or None."""
+    import pandas as _pd
+    from . import output_paths as _paths
+    csv = os.path.join(_paths.master_segments_dir(output_dir), 'master_segments.csv')
+    if not os.path.isfile(csv):
+        return None
+    return _pd.read_csv(csv)
+
+
+def _print_probe_verdict(v) -> None:
+    """Human-readable probe gate summary (shared by the probe TUI actions)."""
+    if not v:
+        _warn('No probe gate yet — run "Probe — train + gate" first.')
+        return
+    def _f(x):
+        return f'{x:.3f}' if isinstance(x, (int, float)) else 'n/a'
+    hci = v.get('probe_human_ci', [None, None])
+    lci = v.get('probe_llm_ci', [None, None])
+    _info(f"mode: {v.get('mode')}   raters: "
+          f"{', '.join(v.get('raters') or []) or '(A1n single probe)'}")
+    _info(f"probe ↔ human : κ {_f(v.get('probe_human_kappa'))} "
+          f"[{_f(hci[0])}, {_f(hci[1])}]  n={v.get('probe_human_n')}  "
+          f"(floor {v.get('irr_human_band_floor')})")
+    _info(f"probe ↔ LLM   : κ {_f(v.get('probe_llm_kappa'))} "
+          f"[{_f(lci[0])}, {_f(lci[1])}]  n={v.get('probe_llm_n')}")
+    pcr = v.get('per_class_recall') or {}
+    if pcr:
+        _info('per-stage recall: ' + ', '.join(f'{k} {_f(rv)}' for k, rv in pcr.items()))
+    if v.get('rare_stage_notes'):
+        _warn('rare-stage: ' + '; '.join(v['rare_stage_notes']))
+    if v.get('ready_for_scaling'):
+        _ok('Gate PASSED — the probe may fill unlabeled segments (tagged probe_consensus).')
+    else:
+        _warn('Gate NOT passed — assistive only; the LLM stays the label of record.')
+
+
+def _action_probe_train(config, output_dir: str) -> None:
+    """Fit the LLM-free probe scaler + run the participant-grouped reliability gate."""
+    from classification_tools import probe_classifier as _pc
+    _section('Probe — train + reliability gate (LLM-free scaler)')
+    _info(
+        'Fits the per-rater ensemble probe on the existing LLM/human labels and runs the\n'
+        'participant-grouped gate (probe↔human / probe↔LLM κ). The probe FILLS unlabeled\n'
+        'participant segments BELOW the LLM and never overrides an LLM/human label.\n'
+        '\n'
+        'Needs an assembled master_segments.csv and the Qwen embedding backend reachable.'
+    )
+    print()
+    if not _confirm('Train the probe now?'):
+        return
+    df = _probe_master_df(output_dir)
+    if df is None:
+        _warn('No master_segments.csv — run "Assemble master dataset" first.')
+        _pause()
+        return
+    probe_cfg = getattr(config, 'probe', None) or _pc.ProbeConfig()
+    try:
+        _pc.train_probe(df, output_dir, probe_cfg)
+        print()
+        _print_probe_verdict(_pc.evaluate_probe(df, output_dir, probe_cfg))
+    except Exception as exc:
+        _err(f'probe train failed: {exc}')
+    _pause()
+
+
+def _action_probe_status(output_dir: str) -> None:
+    """Print the probe reliability-gate verdict (probe↔human/LLM κ; ready to scale?)."""
+    from classification_tools import probe_classifier as _pc
+    _section('Probe Reliability Gate')
+    _print_probe_verdict(_pc.read_probe_gate(output_dir))
+    print()
+    _info('The multi-run LLM consensus stays the label of record (human-level). The probe')
+    _info('is an assistive, gated scaler — useful for bulk/new data the LLM budget cannot reach.')
+    _pause()
+
+
+def _action_probe_classify(config, output_dir: str, state: dict) -> None:
+    """LLM-free fill of UNLABELED participant segments with the gated probe."""
+    from classification_tools import probe_classifier as _pc
+    _section('Probe — classify unlabeled (LLM-free)')
+    status = state.get('probe_status', 'absent')
+    if status == 'absent':
+        _warn('No trained/gated probe yet. Run "Probe — train + gate" first.')
+        _pause()
+        return
+    if status != 'ready':
+        _warn('The probe gate has NOT passed (probe↔human κ below the human band).')
+        _warn('Probe labels are noisier than the LLM; they are tagged probe_consensus.')
+        if not _confirm('Fill with the probe anyway?', default=False):
+            return
+    else:
+        _ok('Probe gate passed — safe to fill unlabeled segments without LLMs.')
+    _info('Fills only participant segments the LLM never balloted on; abstains where unsure.')
+    print()
+    df = _probe_master_df(output_dir)
+    if df is None:
+        _warn('No master_segments.csv — run "Assemble master dataset" first.')
+        _pause()
+        return
+    probe_cfg = getattr(config, 'probe', None) or _pc.ProbeConfig()
+    try:
+        n = _pc.classify_with_probe(df, output_dir, probe_cfg)
+        _ok(f'Probe labeled {n} previously-unlabeled participant segment(s) → probe_labels overlay.')
+        _info('Run "Assemble master dataset" to fold probe_consensus labels into master_segments.')
+    except Exception as exc:
+        _err(f'probe classify failed: {exc}')
+    _pause()
+
+
 def _action_migrate(output_dir: str) -> None:
     """Import a legacy JSONL project into qra.db (preview, then confirm)."""
     from . import db as _db
@@ -1283,6 +1423,7 @@ def _existing_project_flow() -> None:
             run_anonymization_tui(output_dir, config=config)
 
         gnn_status = state.get('gnn_status', 'absent')
+        probe_status = state.get('probe_status', 'absent')
 
         # Ordered by workflow group: Build → Classify → GNN → Assemble/Analyze →
         # Validation → Maintenance.  Each entry is (label, help, zero-arg action).
@@ -1317,12 +1458,25 @@ def _existing_project_flow() -> None:
             ('Train / update GNN consensus layer' + _gnn_tag(gnn_status),
              'Train the graph + run the reliability gate. Adds the GNN to an LLM-only project.',
              _need_segments(lambda: _action_gnn_train(config, output_dir, state))),
-            ('Classify — Graph consensus (LLM-free)' + _gnn_tag(gnn_status),
-             'Label new/unlabeled data with the trained graph — no LLM calls (scale mode).',
+            ('Classify — Graph consensus (LLM-free, non-authoritative)' + _gnn_tag(gnn_status),
+             'Fill unlabeled data with the trained graph — no LLM calls. Demoted: fills BELOW '
+             'the LLM, never overrides it (the probe is the recommended scaler).',
              _need_segments(lambda: _action_classify_gnn(config, output_dir, framework, state))),
             ('View GNN reliability / κ status',
              'Gate verdict: κ(graph,LLM) vs target; is the graph ready for LLM-free scaling?',
              lambda: _action_gnn_status(output_dir)),
+            # -- Probe (LLM-free scalable classification; methodology §8.6) --
+            ('Probe — train + gate (LLM-free scaler)' + _probe_tag(probe_status),
+             'Fit the per-rater ensemble probe + run the participant-grouped gate '
+             '(probe↔human / probe↔LLM κ).',
+             _need_segments(lambda: _action_probe_train(config, output_dir))),
+            ('Probe — classify unlabeled (LLM-free)' + _probe_tag(probe_status),
+             'Fill participant segments the LLM never labeled — abstains where unsure; '
+             'tagged probe_consensus (below the LLM).',
+             _need_segments(lambda: _action_probe_classify(config, output_dir, state))),
+            ('View probe reliability / κ status',
+             'Gate verdict: probe↔human / probe↔LLM κ; is the probe ready for LLM-free scaling?',
+             lambda: _action_probe_status(output_dir)),
             # -- Assemble / Analyze --
             ('Assemble master dataset' + _tag(state['has_master']),
              'Join frozen segments + overlays → master_segments.csv + coded transcripts.',
