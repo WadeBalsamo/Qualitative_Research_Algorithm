@@ -21,7 +21,7 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from tests.testhelpers import synthetic_df
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer import propagation as PROP
+from gnn_layer.classifier import propagation as PROP
 
 
 def _seg_emb(df, dim=16, seed=0):
@@ -43,7 +43,7 @@ class TestPropagateMechanics(unittest.TestCase):
 
     def test_propagate_alpha_zero_is_identity(self):
         df = synthetic_df(n_sessions=2)
-        from gnn_layer import graph_builder as gb
+        from gnn_layer.classifier import graph_builder as gb
         g = gb.build_graph(df, _seg_emb(df), GnnLayerConfig(knn_k=3, cache_embeddings=False))
         rng = np.random.default_rng(3)
         P = rng.random((g.x.shape[0], 5)); P /= P.sum(1, keepdims=True)
@@ -52,7 +52,7 @@ class TestPropagateMechanics(unittest.TestCase):
 
     def test_propagate_rows_sum_to_one(self):
         df = synthetic_df(n_sessions=2)
-        from gnn_layer import graph_builder as gb
+        from gnn_layer.classifier import graph_builder as gb
         g = gb.build_graph(df, _seg_emb(df), GnnLayerConfig(knn_k=3, cache_embeddings=False))
         rng = np.random.default_rng(4)
         P = rng.random((g.x.shape[0], 5)); P /= P.sum(1, keepdims=True)
@@ -63,7 +63,7 @@ class TestPropagateMechanics(unittest.TestCase):
 class TestPropagationContribution(unittest.TestCase):
 
     def _setup(self):
-        from gnn_layer import graph_builder as gb, train as tr
+        from gnn_layer.classifier import graph_builder as gb, train as tr
         from gnn_layer.soft_labels import build_soft_targets
         cfg = GnnLayerConfig(hidden_dim=16, n_layers=2, knn_k=3, epochs=6, validation_folds=2,
                              cache_embeddings=False, seed=1, propagation_alpha=0.5,

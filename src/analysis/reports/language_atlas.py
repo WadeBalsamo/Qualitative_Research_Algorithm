@@ -62,7 +62,7 @@ def _render_block(b, tlu, framework, L, indent='    '):
 
 def generate_language_atlas(df, df_all, framework, output_dir) -> Optional[str]:
     """Write 02_mechanism/language_atlas.txt. Returns path, or None if inputs are missing."""
-    from gnn_layer.inference import build_cue_blocks_with_segments
+    from gnn_layer.cue_features import build_cue_blocks_with_segments
     from ..mechanism import _seg_lookup, _load_block_motifs, _enrich_blocks
 
     blocks = build_cue_blocks_with_segments(df_all)

@@ -51,7 +51,7 @@ def assemble_targets(
     """
     import numpy as np
     import torch
-    from .soft_labels import mixture_to_progression, N_VAAMR_STAGES
+    from ..soft_labels import mixture_to_progression, N_VAAMR_STAGES
 
     idx_of = graph.index_of
     targets: dict = {}

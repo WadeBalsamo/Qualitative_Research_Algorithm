@@ -47,7 +47,8 @@ CANDIDATES = {
 
 
 def _train_full(df, emb, cfg):
-    from gnn_layer import graph_builder as gb, train as T, soft_labels as SL
+    from gnn_layer.classifier import graph_builder as gb, train as T
+    from gnn_layer import soft_labels as SL
     from gnn_layer.runner import _vocabs
     g = gb.build_graph(df, emb, cfg)
     vce = _vocabs(cfg)

@@ -22,7 +22,8 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 import gnn_layer.embeddings as emb
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer import soft_labels, graph_builder, runner
+from gnn_layer import soft_labels, runner
+from gnn_layer.classifier import graph_builder
 
 # Canonical synthetic master frame now lives in tests.testhelpers.fixtures so
 # the GNN test modules (and consensus tests) share one source of truth.
@@ -50,7 +51,7 @@ class TestSoftLabels(unittest.TestCase):
 class TestGraphBuilder(unittest.TestCase):
     def setUp(self):
         self.df = _synthetic_df()
-        self.cfg = GnnLayerConfig(enabled=True, knn_k=3, cache_embeddings=False)
+        self.cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, knn_k=3, cache_embeddings=False)
         rng = np.random.default_rng(0)
         self.seg_emb = {sid: rng.standard_normal(16).astype('float32')
                         for sid in self.df['segment_id']}
@@ -77,11 +78,11 @@ class TestGraphBuilder(unittest.TestCase):
 class TestModelForward(unittest.TestCase):
     def test_forward_shapes(self):
         import torch
-        from gnn_layer.model import build_model
+        from gnn_layer.classifier.model import build_model
         df = _synthetic_df(n_sessions=1)
         rng = np.random.default_rng(0)
         seg_emb = {sid: rng.standard_normal(16).astype('float32') for sid in df['segment_id']}
-        cfg = GnnLayerConfig(enabled=True, hidden_dim=8, n_layers=2, knn_k=2,
+        cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, hidden_dim=8, n_layers=2, knn_k=2,
                              cache_embeddings=False, objectives=['soft_vaamr', 'progression'])
         g = graph_builder.build_graph(df, seg_emb, cfg)
         model = build_model(g, cfg)
@@ -103,7 +104,7 @@ class TestRunnerEndToEnd(unittest.TestCase):
     @slow_test
     def test_run_writes_artifacts(self):
         df = _synthetic_df()
-        cfg = GnnLayerConfig(enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=20,
+        cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=20,
                              n_motif_clusters=3, cache_embeddings=False, seed=1,
                              interpret_against_cf_ic=False)  # keep test hermetic (no 16GB model)
         out_dir = tempfile.mkdtemp()
@@ -125,7 +126,7 @@ class TestRunnerEndToEnd(unittest.TestCase):
     def test_head_predictions_and_triangulation(self):
         # With the purer head trained, head predictions + triangulation are produced.
         df = _synthetic_df()
-        cfg = GnnLayerConfig(enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=20,
+        cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=20,
                              n_motif_clusters=3, cache_embeddings=False, seed=1,
                              interpret_against_cf_ic=False,  # keep test hermetic (no 16GB model)
                              objectives=['soft_vaamr', 'progression', 'purer'])
@@ -144,7 +145,7 @@ class TestRunnerEndToEnd(unittest.TestCase):
         self.assertIn('gnn_purer_pred', hp.columns)
 
     def test_triangulation_agreement_keys(self):
-        from gnn_layer import triangulation as tri
+        from gnn_layer.classifier import triangulation as tri
         head_preds = {
             'segment_id': ['a', 'b', 'c', 'd'],
             'node_type': ['participant_segment'] * 4,
@@ -169,7 +170,7 @@ class TestRunnerEndToEnd(unittest.TestCase):
 class TestInductiveTyping(unittest.TestCase):
     def test_attach_types_new_nodes_by_speaker(self):
         df = _synthetic_df(n_sessions=1)
-        cfg = GnnLayerConfig(enabled=True, knn_k=3, cache_embeddings=False)
+        cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, knn_k=3, cache_embeddings=False)
         rng = np.random.default_rng(2)
         seg_emb = {sid: rng.standard_normal(16).astype('float32') for sid in df['segment_id']}
         g = graph_builder.build_graph(df, seg_emb, cfg)
@@ -197,7 +198,7 @@ class TestScaleModeClassify(unittest.TestCase):
     @slow_test
     def test_classifies_new_segment_inductively(self):
         df = _synthetic_df()
-        cfg = GnnLayerConfig(enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=15,
+        cfg = GnnLayerConfig(enabled=True, gnn_classifier_enabled=True, hidden_dim=16, n_layers=2, knn_k=3, epochs=15,
                              n_motif_clusters=3, cache_embeddings=False, seed=1,
                              interpret_against_cf_ic=False,
                              objectives=['soft_vaamr', 'progression', 'purer'])

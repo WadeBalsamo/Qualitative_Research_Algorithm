@@ -185,7 +185,7 @@ class TestAnalysis(unittest.TestCase):
             irr_analysis.run_irr_analysis(run_dir, verbose=False)
 
     def test_heldout_gnn_axis_preferred(self):
-        from gnn_layer import validation as gval
+        from gnn_layer.classifier import validation as gval
         import numpy as np
         rows = [
             "1,1,1,Vigilance,,Vigilance,,Vigilance,,,,Vigilance,,unanimous,reason one",
@@ -233,7 +233,7 @@ class TestAnalysis(unittest.TestCase):
 
 class TestHeldoutRoundTrip(unittest.TestCase):
     def test_writer_reader(self):
-        from gnn_layer import validation as gval
+        from gnn_layer.classifier import validation as gval
         import numpy as np
         run_dir = tempfile.mkdtemp()
         cv = {'vaamr': [('s0', 2), ('s1', 4)],
@@ -246,7 +246,7 @@ class TestHeldoutRoundTrip(unittest.TestCase):
         self.assertGreater(back['s0']['vaamr_conf'], 0.9)
 
     def test_reader_absent_returns_empty(self):
-        from gnn_layer import validation as gval
+        from gnn_layer.classifier import validation as gval
         self.assertEqual(gval.read_heldout_predictions(tempfile.mkdtemp()), {})
 
 

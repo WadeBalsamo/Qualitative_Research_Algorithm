@@ -146,12 +146,12 @@ class TestSchemaForwardMigration(unittest.TestCase):
 
 class TestFormatGateVerdict(unittest.TestCase):
     def test_none_says_not_run(self):
-        from gnn_layer.validation import format_gate_verdict
+        from gnn_layer.classifier.validation import format_gate_verdict
         out = format_gate_verdict(None, '/x')
         self.assertIn('not run', out.lower())
 
     def test_ready_verdict_renders_kappa_and_ready(self):
-        from gnn_layer.validation import format_gate_verdict
+        from gnn_layer.classifier.validation import format_gate_verdict
         out = format_gate_verdict({
             'ready_for_scaling': True, 'vaamr_kappa': 0.78, 'vaamr_ready': True,
             'purer_kappa': 0.5, 'purer_ready': False, 'irr_target': 0.61,

@@ -39,13 +39,13 @@ def _seg_emb(df, dim=16, seed=0):
 class TestFloorResolution(unittest.TestCase):
 
     def test_disabled_by_default(self):
-        from gnn_layer.inference import resolve_abstain_floors, resolve_purer_abstain_floor
+        from gnn_layer.classifier.inference import resolve_abstain_floors, resolve_purer_abstain_floor
         cfg = GnnLayerConfig()
         self.assertIsNone(resolve_abstain_floors(cfg))
         self.assertIsNone(resolve_purer_abstain_floor(cfg))
 
     def test_global_floor_applies_to_all_stages(self):
-        from gnn_layer.inference import resolve_abstain_floors, resolve_purer_abstain_floor
+        from gnn_layer.classifier.inference import resolve_abstain_floors, resolve_purer_abstain_floor
         cfg = GnnLayerConfig(abstain_threshold=0.5)
         floors = resolve_abstain_floors(cfg)
         self.assertEqual(set(floors), set(range(5)))
@@ -53,7 +53,7 @@ class TestFloorResolution(unittest.TestCase):
         self.assertEqual(resolve_purer_abstain_floor(cfg), 0.5)
 
     def test_rare_stage_floor_overrides_common(self):
-        from gnn_layer.inference import resolve_abstain_floors
+        from gnn_layer.classifier.inference import resolve_abstain_floors
         cfg = GnnLayerConfig(abstain_threshold=0.5, abstain_rare_stage_threshold=0.8)
         floors = resolve_abstain_floors(cfg)
         self.assertEqual(floors[0], 0.5)
@@ -62,13 +62,13 @@ class TestFloorResolution(unittest.TestCase):
         self.assertEqual(floors[4], 0.8)   # Reappraisal
 
     def test_explicit_per_stage_takes_precedence(self):
-        from gnn_layer.inference import resolve_abstain_floors
+        from gnn_layer.classifier.inference import resolve_abstain_floors
         cfg = GnnLayerConfig(abstain_threshold=0.5, abstain_rare_stage_threshold=0.8,
                              abstain_per_stage={0: 0.1, 4: 0.99})
         self.assertEqual(resolve_abstain_floors(cfg), {0: 0.1, 4: 0.99})
 
     def test_none_config_returns_none(self):
-        from gnn_layer.inference import resolve_abstain_floors, resolve_purer_abstain_floor
+        from gnn_layer.classifier.inference import resolve_abstain_floors, resolve_purer_abstain_floor
         self.assertIsNone(resolve_abstain_floors(None))
         self.assertIsNone(resolve_purer_abstain_floor(None))
 
@@ -76,7 +76,7 @@ class TestFloorResolution(unittest.TestCase):
 class TestInferenceAbstain(unittest.TestCase):
 
     def _train(self, cfg):
-        from gnn_layer import graph_builder as gb, train as tr
+        from gnn_layer.classifier import graph_builder as gb, train as tr
         from gnn_layer.soft_labels import build_soft_targets
         df = synthetic_df(n_sessions=3)
         g = gb.build_graph(df, _seg_emb(df), cfg)
@@ -90,7 +90,7 @@ class TestInferenceAbstain(unittest.TestCase):
                               objectives=['soft_vaamr', 'progression', 'purer'], **kw)
 
     def test_no_abstain_keys_when_disabled(self):
-        from gnn_layer.inference import infer_head_predictions
+        from gnn_layer.classifier.inference import infer_head_predictions
         cfg = self._cfg()
         model, g = self._train(cfg)
         hp = infer_head_predictions(model, g, cfg)
@@ -98,7 +98,7 @@ class TestInferenceAbstain(unittest.TestCase):
         self.assertNotIn('gnn_purer_abstain', hp)
 
     def test_high_floor_abstains_everything(self):
-        from gnn_layer.inference import infer_head_predictions
+        from gnn_layer.classifier.inference import infer_head_predictions
         cfg = self._cfg(abstain_threshold=1.01)  # impossible to clear
         model, g = self._train(cfg)
         hp = infer_head_predictions(model, g, cfg)
@@ -107,7 +107,7 @@ class TestInferenceAbstain(unittest.TestCase):
         self.assertTrue(all(hp['gnn_purer_abstain']))
 
     def test_zero_floor_abstains_nothing(self):
-        from gnn_layer.inference import infer_head_predictions
+        from gnn_layer.classifier.inference import infer_head_predictions
         cfg = self._cfg(abstain_threshold=0.0)
         model, g = self._train(cfg)
         hp = infer_head_predictions(model, g, cfg)
@@ -185,7 +185,7 @@ class TestMasterDatasetDeferral(unittest.TestCase):
 class TestCalibration(unittest.TestCase):
 
     def test_calibrate_returns_clamped_floors_for_all_stages(self):
-        from gnn_layer import graph_builder as gb, train as tr
+        from gnn_layer.classifier import graph_builder as gb, train as tr
         from gnn_layer.soft_labels import build_soft_targets
         cfg = GnnLayerConfig(hidden_dim=16, n_layers=2, knn_k=3, epochs=6, validation_folds=2,
                              cache_embeddings=False, seed=1, abstain_target_precision=0.7,
