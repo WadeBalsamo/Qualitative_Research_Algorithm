@@ -332,6 +332,21 @@ model (D-C). Mechanism (M2) graph kept regardless.
   mechanism does not triangulate → mechanism.py leads (GNN exploratory); all arms + negatives logged;
   CV-leakage corrected; A0-pre verified in the production gate. Production rec: switch gate to
   participant-grouped CV; keep LLM as label-of-record + ship the Qwen probe as the abstention-gated assist.
+- **2026-06-06 — Production grouped-CV fix landed + best implementations on `beta`.** The production
+  reliability gate (`train.crossval_predictions` ← `runner`) now uses participant-grouped folds by
+  default (`participant_grouped_cv`, backward-compatible `groups=` param); verified random κ=0.21 →
+  grouped 0.14 in the production path. The tested branch (Qwen backend, A0-pre, imbalance/No-code,
+  triangulation, grouped-CV fix, harness, docs) was fast-forwarded onto `beta` (not pushed);
+  experimental branches kept.
+- **2026-06-06 — Researcher decision: drop the graph as a CLASSIFIER; focus it on MECHANISM.** Per the
+  battery (probe ≥ GNN; H5 refuted) the graph is no longer pursued as a label producer/scaler; the
+  **probe stays an experimental diagnostic, not a method of record** (at n≈32 the LLM is human-level +
+  affordable, so the probe's only edge — cost — doesn't yet justify the reliability hit, κ 0.365 vs
+  0.537). `docs/methodology.md` updated with the methods + findings and the hypothesis implications:
+  **H5 refuted** (graph-as-scaler) → repositioned in §8.5; **H2 under-identified** + the elicitation
+  confound now *evidenced* by the negative counterfactual ρ (§9.4); **H3a instrument undercut** (re-ask
+  on LLM/probe); **new H6** = discriminant validity (VAAMR is developmental, not topical — the same
+  evidence that refutes H5); §5.3 grouped-CV correction + reliability ceiling; §6.4 Stage-2 revision.
 
 ## 9. PRIMARY work-stream — mechanism triangulation (the peer-review deliverable)
 
