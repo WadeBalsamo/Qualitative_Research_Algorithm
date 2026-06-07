@@ -181,12 +181,19 @@ class GnnLayerConfig:
     # classification; Δκ ≈ 0 / negative justifies keeping VCE out of the classifier of record.
     test_vce_layer: bool = False           # write report_gnn_vce_contribution.txt (doubles the gate cost)
 
-    # ---- Consensus-distillation classifier ----
-    # The graph is trained on the multi-run LLM ballots (which are themselves bootstrapped
-    # by the human-validated subset) and learns to reproduce the LLM majority-vote consensus.
-    # Once it matches that consensus to inter-rater reliability ON HELD-OUT segments
-    # (see report_gnn_validation.txt), it can label NEW segments with no LLM calls.
+    # ---- Consensus-distillation classifier (gnn_layer/classifier/; SEPARATE CONCERN, default OFF) ----
+    # Master switch for the GraphSAGE consensus-distillation CLASSIFIER + reliability gate. DEFAULT
+    # OFF: the Cohorts 1–2 pilot REFUTED its scaler role (H5) — under leakage-free participant-grouped
+    # CV it reproduces the LLM consensus at κ≈0.05–0.14 (below the human↔human band), a linear probe
+    # on the same Qwen features ties/beats it, and Correct-&-Smooth (pure graph smoothing) is the
+    # worst arm — VAAMR is not homophilous in embedding space (graph_experiments.md; methodology
+    # §8.5). The LLM consensus (already human-level, κ=0.537 vs human) and the Qwen probe remain the
+    # labels of record. The discovery + mechanism work-streams (discriminant_validity / transition_
+    # model / subtext_communities / confound_localization above) run independently and are default
+    # ON. Set True to train the classifier + gate and re-adjudicate at Cohorts 3–4 scale.
+    gnn_classifier_enabled: bool = False
     produce_consensus_labels: bool = True  # write per-segment graph labels to the gnn_labels overlay
+                                           # (only takes effect when gnn_classifier_enabled=True)
     # Promotion switch. When False (default), graph labels are computed and stored alongside
     # the LLM runs but the label OF RECORD stays the LLM consensus. When True, graph labels
     # become authoritative (provenance tier 'gnn_consensus', above llm_zero_shot, below human).
@@ -242,17 +249,47 @@ class GnnLayerConfig:
     scale_sim_holdout_sessions: int = 1   # whole sessions held out per simulation fold
     scale_sim_max_gap: float = 0.10       # CV κ − inductive κ above this flags domain-shift risk
 
-    # ---- Track B: model-counterfactual influence (B3/B4/B5) ----
-    # Swap each cue block's therapist node feature with each PURER move's centroid (vs a
-    # neutral baseline), re-forward, and measure the shift in the FOLLOWING participant's
-    # predicted progression coordinate — context-dependent influence the additive
-    # Δprogression tables miss. GATED: the runner only invokes it from a gate-passing model
-    # (validation.gate_ready_for_scaling), and B4 triangulates it against analysis/mechanism.py.
-    # Sensitivity analysis, NOT causation (n≈32 observational + elicitation confound). Default OFF.
-    counterfactual: bool = False
-    counterfactual_max_blocks: Optional[int] = None  # cap re-forwards (None = all; logged when capped)
-    influence_bootstrap_n: int = 1000                # participant-clustered bootstrap resamples
-    counterfactual_subgroups: bool = False           # B5 by session-number tertile (underpowered-flagged)
+    # ---- Mechanism (Track B) — superseded by the dyadic transition model ----
+    # The old model-counterfactual-on-classifier flags (counterfactual / counterfactual_max_blocks
+    # / influence_bootstrap_n / counterfactual_subgroups) were removed when gnn_layer/influence.py
+    # was retired: that path read a per-segment classifier's incidental sensitivity (mis-specified
+    # for mechanism, methodology §4.7). The mechanism instrument is now the dyadic transition model
+    # (transition_* above) + confound localization (confound_localization above).
+
+    # ---- H6 discriminant validity (construct-validation; gate-independent) ----
+    # Packages the H5-refutation as the positive H6 finding: on identical participant-grouped
+    # folds and the same Qwen embeddings, a supervised probe recovers VAAMR above chance while a
+    # content-similarity model (Correct-&-Smooth/kNN) ≈ chance — and characterises the geometry
+    # (stage-variance-by-content-PCs, stage⟂topic principal angles, community×stage independence).
+    # Runs at analyze-time via gnn_layer/discriminant.py; reuses the reliability harness. Loads the
+    # cached Qwen embeddings itself and degrades gracefully if they / the harness are unavailable.
+    # Hypothesis-generating; NO causal claims. Default ON (cheap; cache is warm on the pilot).
+    discriminant_validity: bool = True
+
+    # ---- Mechanism: dyadic FROM→CUE→TO transition model (the rebuild; gnn_layer/transition.py) ----
+    # Replaces the mis-specified mechanism-on-classifier path. A small learned response function
+    # TO_mixture ≈ f(FROM_mixture, FROM_stage, pooled raw-Qwen cue) over cue-block triples: directed
+    # FROM→CUE→TO only (NO kNN — H6 shows similarity neighbourhoods are stage-mixed), FROM-stage
+    # conditioning baked in (the partial control for the elicitation confound — moves compared
+    # WITHIN a starting state). It is validated by an earns-its-place participant-grouped CV (does
+    # the cue improve held-out TO prediction over FROM alone?) and its counterfactual reads a
+    # learned response, not a classifier's incidental sensitivity. Triangulated against the observed
+    # Δprogression (mechanism.py LEAD). Sensitivity analysis, NOT causation. Default ON (cheap).
+    transition_model: bool = True
+    transition_cue_dim: int = 32        # PCA dim for the pooled cue embedding (small n → small model)
+    transition_hidden: int = 16         # 1-hidden-layer MLP width; small by design at n≈160 blocks
+    transition_dropout: float = 0.3
+    transition_epochs: int = 300
+    transition_lr: float = 1e-2
+    transition_weight_decay: float = 1e-3
+    transition_folds: int = 5           # participant-grouped CV folds for the earns-its-place check
+    transition_bootstrap_n: int = 1000  # participant-clustered bootstrap for counterfactual CIs
+
+    # ---- WS3: confound localization (gnn_layer/confound.py) ----
+    # Signed divergence between the transition counterfactual and the observed Δprogression per
+    # (from_stage × move) — where the elicitation/responsiveness confound (§9.4) most distorts the
+    # observed mechanism table. A caveat instrument, NOT a claim. Reuses the transition result.
+    confound_localization: bool = True
 
     # ---- Track D: subtext communities as routines (D1-D5) ----
     # The "deepest qualitative" layer: which language ROUTINES/SEQUENCES flow together and
@@ -262,8 +299,14 @@ class GnnLayerConfig:
     # transitions model routines; participant-bootstrap STABILITY SELECTION suppresses/flags
     # communities too fragile at n≈32; TF-IDF terms + exemplars + per-session prevalence name
     # them. Discovery / hypothesis-generating only. Independent of the gate. Default OFF.
-    subtext_communities: bool = False
-    community_sim_threshold: float = 0.85   # cosine-similarity edge threshold for the subtext graph
+    subtext_communities: bool = True
+    # cosine-similarity edge threshold for the subtext graph. Calibrated for instruction-tuned
+    # embeddings (Qwen3), whose pairwise cosines run high: a threshold probe on the pilot corpus
+    # showed τ=0.85 yields only noise (Louvain↔hierarchical ARI≈0.003, ~all singletons) while
+    # τ≈0.6 gives algorithm-robust structure (ARI≈0.29, ~24 multi-member communities). Stability
+    # selection (D4) still suppresses fragile communities below this. Raise toward 0.8+ only for
+    # un-instruction-tuned encoders (e.g. MiniLM) where cosines are lower.
+    community_sim_threshold: float = 0.6
     community_min_size: int = 3             # ignore communities smaller than this
     community_stability_min: float = 0.5    # suppress communities whose bootstrap co-membership < this
     community_stability_boots: int = 50     # participant-bootstrap resamples for stability selection

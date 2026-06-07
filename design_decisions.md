@@ -437,3 +437,62 @@ no latent therapist-cue factor predicts forward movement, consistent with the pr
 n≈32** → the observed `mechanism.py` Δprogression analysis is the **only** defensible mechanism
 evidence (itself hypothesis-generating, 0 FDR-significant cells). The honest mission conclusion: the
 graph is a useful *exploratory* lens, not a corroborating mechanism instrument at this data scale.
+
+
+---
+
+## §10 — Discovery+mechanism rebuild, classifier separation, classifier OFF by default (2026-06-07)
+
+Executed in isolated worktree `qra-ws-gnn` (branch `gnn-exp/ws1-h6`), no commits — diff + ledger +
+reports left for the researcher to promote. Work on `data/Meta` (Qwen cache). Guardrails held:
+participant-grouped CV, participant-clustered bootstrap CIs, two-method agreement, no causal claims.
+
+**Architecture decision.** The GNN layer is split into two concerns:
+- **Discovery + construct-validation + mechanism** (`src/gnn_layer/` top level) — DEFAULT ON, runs at
+  analyze-time on raw embeddings, no trained model. New: `discriminant.py` (H6), `transition.py`
+  (mechanism rebuild), `confound.py` (confound localization), deepened `communities.py` (dyadic
+  routines), `cue_features.py` (shared model-free cue helpers extracted from old `inference.py`).
+- **GraphSAGE consensus-distillation classifier** (`src/gnn_layer/classifier/`) — moved to its own
+  subpackage, DEFAULT OFF (`gnn_classifier_enabled=False`); opt in via `qra gnn train`. Wired through
+  setup_wizard step 11d, `qra gnn train`, `analysis/runner.run_analysis(force_classifier=...)`. Dead
+  mechanism-on-classifier path deleted (`influence.py` + its test; dead `counterfactual*` /
+  `influence_bootstrap_n` config flags removed — config is field-filtered, deserialization-safe).
+
+**WS1 — H6 discriminant validity.** Same Qwen embeddings, participant-grouped folds, clustered CIs:
+probe (supervised, 6-class No-code) human kappa = 0.365 [0.228, 0.513] / LLM 0.283; content-similarity
+(Correct-&-Smooth) 0.196 [0.117, 0.319] / 0.069; chance 0.000 / -0.083. Paired probe-minus-content
+Delta-kappa: human 0.170 [0.002, 0.318], LLM 0.214 [0.150, 0.274] (CIs exclude 0). Geometry (honest):
+the stage signal IS partly carried by leading content PCs (top-50 grouped-CV kappa 0.297 ~ full 0.307)
+-- not an exotic subspace; what defeats similarity is LOCAL kNN non-homophily (1-NN same-stage 0.47 vs
+base 0.25, lift ~1.9x decaying with k; Metacognition below base rate). Community x stage ARI ~ 0.006.
+Ledger rows: H6-probe / H6-content / H6-chance-mode / H6-chance-strat.
+
+**WS-T — dyadic FROM->CUE->TO transition model (mechanism rebuild).** 161 triples, 19 participants.
+Earns-its-place: NEGATIVE -- adding the cue does not lower held-out TO error (Delta KL +0.37, Delta
+E[stage] MAE +0.15) -> under-identified at n~32 (consistent with H2 pilot status); mechanism.py leads.
+BUT triangulation POSITIVE: learned per-cell counterfactual Spearman rho ~ +0.34 vs observed
+Delta-progression -- versus the retired classifier-counterfactual's -0.13. The proper transition model
+(no kNN; FROM-stage conditioned) aligns where the mis-specified classifier inverted; under-powered
+(0 FDR cells). CIs tight-by-construction (across-block, not training uncertainty); thin-support moves
+flagged as extrapolations.
+
+**WS3 — confound localization.** Signed divergence (observed - learned counterfactual) per
+(from_stage x move), participant-clustered CIs: 20 cells, 9 sign-inverting. E.g. Vigilance x Reframing
+(obs +2.09 vs cf +0.11; div +1.98 [0.98, 2.98]); Reappraisal x Reinforcement sign inversion (obs
+-0.60 vs cf +0.59; div -1.19 [-1.72, -0.94]) = the responsiveness pattern. Caveat instrument, not a
+claim.
+
+**WS2 — Track D deepened.** Default community_sim_threshold lowered 0.85 -> 0.6 (probe: instruction-
+tuned Qwen cosines run high; tau=0.85 -> noise ARI 0.003; tau=0.6 -> ARI 0.29, 24 multi-member
+communities). 223 communities, 21 stable; 2 stable dyadic routines (both Delta-prog CIs include 0 =
+honest under-powered leads). Added per-community stage/Delta-prog profile + atypical exemplars +
+dyadic routines + dyadic_routines.txt.
+
+**Cohorts 3-4 re-run triggers.** All read master_segments.csv + qra.db; re-run via `qra analyze`
+(discovery) / `qra gnn train` (classifier). H6 N-robust (CIs tighten); WS-T earns-its-place + WS3
+divergence + H2 mechanism become adjudicable at higher power; the classifier gate re-opens for any
+learned scaler at larger N.
+
+**Tests.** New: test_gnn_discriminant.py (9), test_gnn_transition.py (6), test_gnn_dyadic.py (5),
+test_gnn_confound.py (6). Reorg: classifier import-sites rewritten to gnn_layer.classifier.*;
+cue-helper patch targets -> cue_features; threshold-default test updated. Full tests/unit suite green.

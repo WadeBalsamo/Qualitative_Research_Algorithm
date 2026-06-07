@@ -43,10 +43,13 @@ python qra.py classify -o ./data/output/ --what vaamr        # classify VAAMR on
 python qra.py classify -o ./data/output/ --what vaamr --fresh # re-classify FROM SCRATCH (clear ckpts+overlay)
 python qra.py assemble -o ./data/output/                     # join frozen+overlays
 
-# GNN consensus layer (modular; add the GNN to an LLM-only project, then scale)
-python qra.py gnn train -o ./data/output/                    # train graph + reliability gate + reports
-python qra.py gnn status -o ./data/output/                   # κ(graph,LLM); ready for LLM-free scaling?
-python qra.py gnn classify -o ./data/output/                 # LLM-free label new/unlabeled segments
+# GNN discovery + mechanism layer runs automatically at analyze-time (default ON):
+#   discriminant validity (H6), dyadic transition model + confound localization, subtext
+#   communities + dyadic routines, cue motifs, coupling — all on raw embeddings, no trained model.
+# The GraphSAGE consensus-distillation CLASSIFIER is a SEPARATE concern, DEFAULT OFF (H5-refuted):
+python qra.py gnn train -o ./data/output/                    # opt IN: train the classifier + reliability gate (sets gnn_classifier_enabled)
+python qra.py gnn status -o ./data/output/                   # κ(graph,LLM); ready for LLM-free scaling? (only after `gnn train`)
+python qra.py gnn classify -o ./data/output/                 # LLM-free label new/unlabeled segments (needs a trained classifier)
 
 # Import a legacy (pre-SQLite, JSONL) project into qra.db (preview, then --run)
 python qra.py migrate -o ./data/output/                      # preview
@@ -153,7 +156,7 @@ Unit tests live in `tests/unit/` (hermetic, always run), integration tests in `t
 - Per-participant longitudinal trajectories, per-session summaries, per-theme analyses
 - Therapist cue response analysis (PURER × VAAMR)
 - Descriptive progression summary (single-arm, ordinal-safe — not efficacy) + mechanistic Δprogression (forward AND backward), avoidance barrier (bidirectional)
-- GNN representation/discovery layer (ON by default; figures + reports under `06_gnn/`): Capabilities A–E + the gate-gated LLM-free classifier (validation gate, abstention, calibration/OOD, propagation, scale-mode sim). Config-flag–driven advanced analyses: Track B model-counterfactual influence (`counterfactual`, gated), Track C MindfulBERT dataset builder (`build_mindfulbert_dataset`/`augmentation_enabled`), Track D subtext communities (`subtext_communities`). Full design record: `docs/GNN_MASTER_PLAN.md`
+- GNN discovery + mechanism layer (ON by default; figures + reports under `06_gnn/`), all on raw embeddings and hypothesis-generating (never causal): **H6 discriminant validity** (`discriminant_validity`), the **dyadic FROM→CUE→TO transition model** + **confound localization** (`transition_model`/`confound_localization` — the mechanism rebuild that replaced the mis-specified classifier-counterfactual, methodology §4.7), **subtext communities + dyadic routines** (`subtext_communities`), cue motifs, coupling factors. The GraphSAGE **consensus-distillation classifier is a SEPARATE concern in `src/gnn_layer/classifier/`, DEFAULT OFF** (`gnn_classifier_enabled`; H5-refuted at n≈32 — κ≈0.05–0.14 < human band, a probe ties/beats it); enable with `qra gnn train` to re-adjudicate at Cohorts 3–4. Track C MindfulBERT dataset builder (`build_mindfulbert_dataset`). Full design record: `docs/GNN_MASTER_PLAN.md`, `graph_experiments.md`.
 - Graph-ready CSVs, visualization figures (incl. GNN figures)
 - Session and participant LLM summaries
 - **Top-level synthesis written last**: `00_executive_summary.txt` (deterministic program-improvement brief), `00_READ_ME.txt`, `07_methods_appendix.txt`
@@ -210,7 +213,9 @@ output_dir/
 │   ├── 03_per_session/          # _overview.txt, session_<id>.txt, session_summaries.txt
 │   ├── 04_per_participant/      # participant_<id>.txt
 │   ├── 05_per_stage/            # stage_<name>.txt, codebook_exemplars.txt
-│   ├── 06_gnn/                  # validation, triangulation, emergent_motifs, coupling, construct_signal
+│   ├── 06_gnn/                  # discriminant_validity, transition_model, confound_localization,
+│   │                            #   communities, dyadic_routines, emergent_motifs, coupling
+│   │                            #   (+ validation/triangulation only when the classifier is enabled)
 │   └── 07_methods_appendix.txt  # how each metric is computed + caveats
 └── 00_index.txt
 ```
@@ -273,15 +278,15 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 | `src/analysis/reports/reports_guide.py` | `00_READ_ME.txt` (report map) + `07_methods_appendix.txt` (how metrics are computed) |
 | `src/analysis/efficacy.py` | Descriptive progression summary (ordinal-safe) + `efficacy_summary.json`; convergent-validity outcome linkage |
 | `src/analysis/mechanism.py` | Signed Δprogression mechanism + bidirectional avoidance-barrier report |
-| `src/gnn_layer/validation.py` | Graph reliability gate — κ(graph,LLM) / κ(graph,human), per-class breakdown, "ready for LLM-free scaling?" verdict |
-| `src/gnn_layer/soft_labels.py` | Soft VAAMR supervision targets from multi-run ballots (mixture over 5 stages + E[stage] coordinate) |
-| `src/gnn_layer/embeddings.py` | Qwen3 segment/anchor embeddings (reuses the VCE embedding path; cached) |
-| `src/gnn_layer/coupling.py` | Inductive participant↔therapist coupling; latent cue-block factors vs forward movement |
-| `src/gnn_layer/influence.py` | Track B — model-counterfactual influence (PURER-move swaps) + triangulation vs `mechanism.py` (gated on the reliability gate; sensitivity, not causal) |
-| `src/gnn_layer/communities.py` | Track D — subtext-similarity graph, Louvain+hierarchical communities, within-session routine transitions, participant-bootstrap stability selection |
-| `src/gnn_layer/calibration.py` | Track A3 — temperature scaling + ECE + OOD score (domain-shift confidence) |
-| `src/gnn_layer/propagation.py` | Track A4 — measured post-training soft-label diffusion |
-| `src/gnn_layer/figures.py` | GNN figures (validation κ, motif influence, coupling factors) |
+| **`src/gnn_layer/` (top level)** | **Discovery + construct-validation + mechanism work-streams** — DEFAULT ON, run on raw embeddings (no trained model), hypothesis-generating, never causal. Orchestrated by `runner.run_gnn_analysis` (classifier gated OFF by default; discovery always). |
+| `src/gnn_layer/discriminant.py` | **H6 discriminant validity** — supervised probe (above chance) vs content-similarity C&S (≈chance) on the *same* Qwen embeddings, both axes + paired Δκ CI; geometry (content-PC stage recovery, kNN stage homophily, community×stage ARI). `06_gnn/discriminant_validity.txt` |
+| `src/gnn_layer/transition.py` | **Mechanism rebuild** — dyadic FROM→CUE→TO learned response model `TO_mixture≈f(FROM_mixture, FROM_stage, pooled raw cue)`, NO kNN; earns-its-place grouped-CV (cue vs FROM-only) + learned counterfactual + triangulation vs observed Δprog. `06_gnn/transition_model.txt` |
+| `src/gnn_layer/confound.py` | **Confound localization** — signed divergence (observed − learned counterfactual) per (from_stage×move) with participant-clustered CIs; maps where the elicitation/responsiveness confound (§9.4) most distorts the observed table. `06_gnn/confound_localization.txt` |
+| `src/gnn_layer/communities.py` | **Track D + dyadic routines** — subtext-similarity graph (τ≈0.6 for Qwen), Louvain+agglomerative ARI, participant-bootstrap stability selection, community↔stage/Δprog, atypical exemplars, therapist→participant dyadic routines. `communities.txt`, `dyadic_routines.txt` |
+| `src/gnn_layer/{motifs,coupling}.py` | Cue-motif discovery + latent coupling factors (on raw pooled cue embeddings) |
+| `src/gnn_layer/cue_features.py` | Shared, model-free cue-block builder + mean-pool (used by discovery AND `analysis/mechanism`, `language_atlas`, `mindfulbert`) |
+| `src/gnn_layer/{embeddings,soft_labels,figures,reports,config}.py` | Shared substrate: Qwen3 embeddings (cached), soft VAAMR mixtures from ballots, figures, report writers, `GnnLayerConfig` |
+| **`src/gnn_layer/classifier/`** | **GraphSAGE consensus-distillation CLASSIFIER — separate concern, DEFAULT OFF** (`gnn_classifier_enabled=False`). Pilot-refuted as a scaler (H5: grouped-CV κ≈0.05–0.14 < human↔human band; a probe ties/beats it; VAAMR not homophilous). Kept + re-adjudicable at Cohorts 3–4. Contains `model/train/graph_builder/validation`(gate)`/triangulation/inference/calibration/propagation/ablation/anchors/gnn_lift`. Enable via `qra gnn train`. |
 | `src/process/assembly/__init__.py` | Assembly module exports |
 | `src/process/assembly/master_dataset.py` | `assemble_master_dataset` (gate-gated `gnn_consensus` promotion) |
 | `src/process/assembly/mindfulbert_dataset.py` | Track C — MindfulBERT (cue language → observed Δprogression) dataset builder + augmentation-validation harness + datasheet |

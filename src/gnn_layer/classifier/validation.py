@@ -464,7 +464,7 @@ def scale_mode_simulation(df_all, segment_embeddings, config, framework=None,
     from . import graph_builder as _gb
     from . import train as _tr
     from .inference import infer_head_predictions
-    from .soft_labels import build_soft_targets
+    from ..soft_labels import build_soft_targets
     from .triangulation import _kappa
 
     if 'session_id' not in df_all.columns:

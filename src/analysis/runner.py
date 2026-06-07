@@ -93,7 +93,7 @@ def _load_analysis_context(output_dir: str, llm_log_path, log) -> _AnalysisConte
 
 
 def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None,
-                 force_gnn: bool = None) -> dict:
+                 force_gnn: bool = None, force_classifier: bool = None) -> dict:
     """Execute the full results analysis on an existing pipeline output directory.
 
     Reads master_segments.{jsonl,csv} and theme_definitions.json from output_dir.
@@ -487,6 +487,12 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
         if _gnn_cfg is None and force_gnn:
             from gnn_layer.config import GnnLayerConfig
             _gnn_cfg = GnnLayerConfig(enabled=True)
+    # `qra gnn train` opts into the (default-OFF, H5-refuted) consensus-distillation classifier.
+    if force_classifier is not None and _gnn_cfg is not None:
+        try:
+            _gnn_cfg.gnn_classifier_enabled = bool(force_classifier)
+        except Exception:
+            pass
     _gnn_ran = False
     if df_all is not None and _gnn_cfg is not None and _gnn_enabled:
         try:

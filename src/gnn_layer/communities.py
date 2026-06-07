@@ -35,12 +35,21 @@ from process import output_paths as _paths
 
 
 def _seg_meta(df_all) -> Dict[str, dict]:
-    """segment_id → {session_id, participant_id, cohort_id, session_number, start, text, speaker}."""
+    """segment_id → {session_id, participant_id, cohort_id, session_number, start, text,
+    speaker, final_label, progression_coord}."""
+    import pandas as pd
     out: Dict[str, dict] = {}
+    has_prog = 'progression_coord' in df_all.columns
     for _, r in df_all.iterrows():
         sid = str(r.get('segment_id', ''))
         if not sid:
             continue
+        fl = r.get('final_label')
+        try:
+            fl = int(fl) if (fl is not None and not (isinstance(fl, float) and pd.isna(fl))) else None
+        except (TypeError, ValueError):
+            fl = None
+        pc = r.get('progression_coord') if has_prog else None
         out[sid] = {
             'session_id': str(r.get('session_id', '') or ''),
             'participant_id': r.get('participant_id'),
@@ -49,6 +58,8 @@ def _seg_meta(df_all) -> Dict[str, dict]:
             'start': int(r.get('start_time_ms', 0) or 0),
             'text': str(r.get('text', '') or ''),
             'speaker': str(r.get('speaker', '') or ''),
+            'final_label': fl,
+            'progression_coord': float(pc) if (has_prog and pd.notna(pc)) else None,
         }
     return out
 
@@ -304,6 +315,204 @@ def name_communities(communities: List[set], meta: Dict[str, dict],
 
 
 # ---------------------------------------------------------------------------
+# WS2 — community ↔ VAAMR stage / Δprogression, and dyadic routines
+# ---------------------------------------------------------------------------
+
+def community_stage_profile(communities: List[set], meta: Dict[str, dict],
+                            config) -> Dict[int, dict]:
+    """Per community: VAAMR-stage distribution + mean E[stage] of its participant members.
+
+    Descriptive, hypothesis-generating. Lets the report say where on the developmental arc a
+    (content) community sits — and, with the H6 community×stage independence (WS1), why that is a
+    weak/contentful signal rather than a stage cluster.
+    """
+    import numpy as np
+    min_size = int(getattr(config, 'community_min_size', 3))
+    out: Dict[int, dict] = {}
+    names = {0: 'Vigilance', 1: 'Avoidance', 2: 'AttentionReg', 3: 'Metacognition', 4: 'Reappraisal'}
+    for ci, c in enumerate(communities):
+        if len(c) < min_size:
+            continue
+        stages = [meta[s]['final_label'] for s in c
+                  if meta.get(s) and meta[s]['speaker'] == 'participant'
+                  and meta[s]['final_label'] is not None]
+        progs = [meta[s]['progression_coord'] for s in c
+                 if meta.get(s) and meta[s]['progression_coord'] is not None]
+        if not stages and not progs:
+            continue
+        dist = Counter(stages)
+        out[ci] = {
+            'n_participant_labeled': len(stages),
+            'stage_distribution': {names.get(k, str(k)): v for k, v in sorted(dist.items())},
+            'dominant_stage': names.get(dist.most_common(1)[0][0]) if dist else None,
+            'mean_estage': round(float(np.mean(progs)), 3) if progs else None,
+        }
+    return out
+
+
+def atypical_exemplars(communities: List[set], seg_emb: Dict[str, "object"],
+                       meta: Dict[str, dict], config) -> Dict[int, dict]:
+    """Per community: the member farthest from the community centroid (an atypical moment for
+    human close reading) alongside the nearest (most prototypical)."""
+    import numpy as np
+    min_size = int(getattr(config, 'community_min_size', 3))
+    out: Dict[int, dict] = {}
+    for ci, c in enumerate(communities):
+        members = [s for s in c if s in seg_emb and meta.get(s)]
+        if len(members) < max(min_size, 3):
+            continue
+        X = np.stack([np.asarray(seg_emb[s], dtype=np.float32) for s in members])
+        Xn = X / np.clip(np.linalg.norm(X, axis=1, keepdims=True), 1e-9, None)
+        centroid = Xn.mean(axis=0)
+        sims = Xn @ centroid
+        far = members[int(np.argmin(sims))]
+        near = members[int(np.argmax(sims))]
+        out[ci] = {
+            'prototypical': meta[near]['text'][:200],
+            'atypical': meta[far]['text'][:200],
+            'atypical_similarity': round(float(sims.min()), 3),
+        }
+    return out
+
+
+def _block_community_rows(df_all, labels: Dict[str, int], meta: Dict[str, dict]) -> List[dict]:
+    """Per cue block: FROM/TO/CUE community ids + observed Δprogression + participant."""
+    from .cue_features import build_cue_blocks_with_segments
+    rows = []
+    for b in build_cue_blocks_with_segments(df_all):
+        fs, ts = b['from_seg_id'], b['to_seg_id']
+        cue_comms = [labels[s] for s in b['therapist_seg_ids'] if s in labels]
+        cue_comm = Counter(cue_comms).most_common(1)[0][0] if cue_comms else None
+        pf = meta.get(fs, {}).get('progression_coord')
+        pt = meta.get(ts, {}).get('progression_coord')
+        rows.append({
+            'from_comm': labels.get(fs), 'to_comm': labels.get(ts), 'cue_comm': cue_comm,
+            'delta_prog': (pt - pf) if (pf is not None and pt is not None) else None,
+            'participant_id': meta.get(fs, {}).get('participant_id'),
+        })
+    return rows
+
+
+def dyadic_routines(df_all, labels: Dict[str, int], meta: Dict[str, dict], config,
+                    stable_ids: Optional[set] = None, min_count: int = 3) -> List[dict]:
+    """D-dyad — therapist-community(CUE) → following participant-community(TO) routines.
+
+    "This kind of therapist language tends to precede this kind of participant language."
+    Each routine carries the observed mean Δprogression of its blocks (participant-clustered CI)
+    and a participant-bootstrap SELECTION FREQUENCY (how often it survives resampling) — only
+    routines between STABLE communities (WS1/D4) are reported as findings. Hypothesis-generating.
+    """
+    import numpy as np
+    from analysis import stats as _stats
+
+    rows = _block_community_rows(df_all, labels, meta)
+    cnt = Counter()
+    deltas: Dict[tuple, list] = defaultdict(list)
+    parts: Dict[tuple, list] = defaultdict(list)
+    pid_blocks: Dict[object, list] = defaultdict(list)
+    for i, r in enumerate(rows):
+        pid_blocks[r['participant_id']].append(i)
+        if r['cue_comm'] is None or r['to_comm'] is None:
+            continue
+        key = (r['cue_comm'], r['to_comm'])
+        cnt[key] += 1
+        if r['delta_prog'] is not None:
+            deltas[key].append(r['delta_prog'])
+            parts[key].append(r['participant_id'])
+
+    # participant-bootstrap selection frequency
+    participants = sorted([p for p in pid_blocks if p is not None], key=str)
+    boots = int(getattr(config, 'community_stability_boots', 50))
+    rng = np.random.default_rng(int(getattr(config, 'seed', 42)))
+    sel = Counter()
+    if len(participants) >= 2:
+        for _ in range(boots):
+            chosen = rng.choice(len(participants), size=len(participants), replace=True)
+            bcnt = Counter()
+            for pi in chosen:
+                for i in pid_blocks[participants[pi]]:
+                    r = rows[i]
+                    if r['cue_comm'] is not None and r['to_comm'] is not None:
+                        bcnt[(r['cue_comm'], r['to_comm'])] += 1
+            for key, c in bcnt.items():
+                if c >= min_count:
+                    sel[key] += 1
+
+    out = []
+    for key, c in cnt.most_common():
+        if c < min_count:
+            continue
+        cc, tc = key
+        stable = (stable_ids is None) or (cc in stable_ids and tc in stable_ids)
+        ci = (_stats.cluster_bootstrap_ci(deltas[key], parts[key], statistic=np.mean, n_boot=500)
+              if deltas[key] else {'point': float('nan'), 'lo': float('nan'),
+                                   'hi': float('nan'), 'n_clusters': 0})
+        out.append({
+            'cue_community': cc, 'to_community': tc, 'count': c,
+            'selection_freq': round(sel[key] / boots, 3) if boots else None,
+            'mean_delta_prog': round(ci['point'], 4) if ci['point'] == ci['point'] else None,
+            'ci_lo': round(ci['lo'], 4) if ci['lo'] == ci['lo'] else None,
+            'ci_hi': round(ci['hi'], 4) if ci['hi'] == ci['hi'] else None,
+            'n_participants': ci['n_clusters'], 'stable': bool(stable),
+        })
+    return out
+
+
+def write_dyadic_csv(routines: List[dict], output_dir: str) -> Optional[str]:
+    import pandas as pd
+    if not routines:
+        return None
+    gnn = _paths.gnn_data_dir(output_dir)
+    os.makedirs(gnn, exist_ok=True)
+    path = os.path.join(gnn, 'dyadic_routines.csv')
+    pd.DataFrame(routines).to_csv(path, index=False)
+    return path
+
+
+def write_dyadic_report(routines: List[dict], name_rows: List[dict], output_dir: str) -> str:
+    W = 78
+    term = {r['community_id']: ', '.join(r.get('top_terms', [])[:4]) for r in name_rows}
+    spk = {r['community_id']: r.get('dominant_speaker') for r in name_rows}
+    L = ["=" * W, "DYADIC ROUTINES — therapist language → following participant language", "=" * W, ""]
+    L.append("HYPOTHESIS-GENERATING / NOT causal (n≈32, elicitation confound §9.4). A 'routine' is a")
+    L.append("therapist-CUE community followed by the next participant community in the cue block.")
+    L.append("Only routines between STABILITY-SELECTED communities are findings; each carries the")
+    L.append("observed mean Δprogression of its blocks (participant-clustered CI) and a participant-")
+    L.append("bootstrap selection frequency. Communities are CONTENT clusters (WS1: ≈ stage-")
+    L.append("independent) — these are leads for human close reading, not effects.")
+    L.append("")
+    stable = [r for r in routines if r.get('stable')]
+    unstable = [r for r in routines if not r.get('stable')]
+    L.append("-" * W)
+    L.append(f"STABLE ROUTINES (reported): {len(stable)}")
+    L.append("-" * W)
+    if not stable:
+        L.append("  (none between stability-selected communities at n≈32 — treat all as exploratory.)")
+    for r in stable[:25]:
+        cc, tc = r['cue_community'], r['to_community']
+        dp = (f"Δprog {r['mean_delta_prog']:+.3f} [{r['ci_lo']:+.3f}, {r['ci_hi']:+.3f}]"
+              if r['mean_delta_prog'] is not None else "Δprog n/a")
+        L.append(f"  therapist C{cc} [{spk.get(cc)}: {term.get(cc, '')}]")
+        L.append(f"    → participant C{tc} [{term.get(tc, '')}]   "
+                 f"n={r['count']}, sel={r['selection_freq']}, {dp}")
+    L.append("")
+    if unstable:
+        L.append("-" * W)
+        L.append(f"UNSTABLE / SUPPRESSED ROUTINES (flagged, not findings): {len(unstable)}")
+        L.append("-" * W)
+        for r in unstable[:15]:
+            L.append(f"  C{r['cue_community']} → C{r['to_community']}  "
+                     f"n={r['count']}, sel={r['selection_freq']}")
+        L.append("")
+    rep = _paths.reports_gnn_dir(output_dir)
+    os.makedirs(rep, exist_ok=True)
+    path = os.path.join(rep, 'dyadic_routines.txt')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write("\n".join(L))
+    return path
+
+
+# ---------------------------------------------------------------------------
 # Writers
 # ---------------------------------------------------------------------------
 
@@ -318,6 +527,7 @@ def write_communities_csv(rows: List[dict], output_dir: str) -> Optional[str]:
             'community_id': r['community_id'], 'size': r['size'],
             'n_sessions': r['n_sessions'], 'n_cohorts': r['n_cohorts'],
             'dominant_speaker': r['dominant_speaker'],
+            'dominant_stage': r.get('dominant_stage'), 'mean_estage': r.get('mean_estage'),
             'stability': r['stability'], 'stable': r['stable'],
             'top_terms': '; '.join(r['top_terms']),
         })
@@ -379,8 +589,13 @@ def write_communities_report(rows, trans, graph_info, detect_info, output_dir: s
                  f"{r['dominant_speaker']})")
         if r['top_terms']:
             L.append(f"    terms: {', '.join(r['top_terms'])}")
+        if r.get('dominant_stage') or r.get('mean_estage') is not None:
+            L.append(f"    VAAMR: dominant {r.get('dominant_stage')} "
+                     f"(mean E[stage] {r.get('mean_estage')}); dist {r.get('stage_distribution')}")
         for ex in r['exemplars'][:2]:
             L.append(f"    “{ex}”")
+        if r.get('atypical'):
+            L.append(f"    atypical: “{r['atypical']}”")
         if r['cohort_distribution']:
             L.append(f"    cohort spread: {r['cohort_distribution']}")
     L.append("")
@@ -435,6 +650,17 @@ def run_subtext_communities(df_all, seg_emb, output_dir: str, config) -> dict:
     stability = community_stability(seg_emb, meta, config, labels, communities)
     rows = name_communities(communities, meta, stability, config)
 
+    # WS2: enrich each community with its VAAMR-stage profile + an atypical exemplar (human reading)
+    stage_prof = community_stage_profile(communities, meta, config)
+    atyp = atypical_exemplars(communities, seg_emb, meta, config)
+    for r in rows:
+        ci = r['community_id']
+        sp = stage_prof.get(ci, {})
+        r['dominant_stage'] = sp.get('dominant_stage')
+        r['mean_estage'] = sp.get('mean_estage')
+        r['stage_distribution'] = sp.get('stage_distribution')
+        r['atypical'] = atyp.get(ci, {}).get('atypical')
+
     p = write_communities_csv(rows, output_dir)
     if p:
         files.append(p)
@@ -443,7 +669,17 @@ def run_subtext_communities(df_all, seg_emb, output_dir: str, config) -> dict:
         files.append(p)
     files.append(write_communities_report(rows, trans, graph_info, detect, output_dir))
 
+    # WS2: dyadic routines (therapist-community → following participant-community), stability-selected
+    stable_ids = {r['community_id'] for r in rows if r.get('stable')}
+    routines = dyadic_routines(df_all, labels, meta, config, stable_ids=stable_ids)
+    p = write_dyadic_csv(routines, output_dir)
+    if p:
+        files.append(p)
+    files.append(write_dyadic_report(routines, rows, output_dir))
+
     n_stable = sum(1 for r in rows if r.get('stable'))
     return {'files_written': files, 'n_communities': detect['n_communities'],
             'n_stable': n_stable, 'ari': detect.get('ari_louvain_vs_hierarchical'),
+            'n_routines': len(routines),
+            'n_stable_routines': sum(1 for r in routines if r.get('stable')),
             'status': 'ok'}

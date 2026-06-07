@@ -1435,25 +1435,32 @@ class SetupWizard:
     # -----------------------------------------------------------------
 
     def _step_11d_gnn(self):
-        print("--- Step 11d/17: GNN Layer (discovery + consensus distillation) ---")
-        print("    The GNN layer is an OPTIONAL analysis-time graph over the same Qwen3")
-        print("    embeddings QRA already uses (no second model loads). It does THREE things:")
+        print("--- Step 11d/17: GNN Discovery + Mechanism Layer ---")
+        print("    An analysis-time graph layer over the same Qwen3 embeddings (no second model")
+        print("    loads). Two SEPARATE concerns:")
         print()
-        print("      1. DISCOVERS therapist-language motifs and participant<->therapist")
-        print("         coupling factors that drive forward VAAMR movement across the")
-        print("         avoidance barrier — needs no PURER labels (02_mechanism/purer.txt).")
-        print("      2. TRIANGULATES its own VAAMR/PURER reads against the LLM and the")
-        print("         human-coded subset (06_gnn/triangulation.txt).")
-        print("      3. DISTILLS the multi-run LLM consensus into a fast graph classifier.")
-        print("         Once it reproduces that consensus to reliability ON HELD-OUT")
-        print("         segments (06_gnn/validation.txt), it can label NEW data with")
-        print("         NO LLM calls and — only if you choose — become the label of record.")
+        print("    A) DISCOVERY + CONSTRUCT-VALIDATION + MECHANISM  (default ON):")
+        print("       1. H6 DISCRIMINANT VALIDITY — shows VAAMR stage is recoverable by")
+        print("          supervision yet orthogonal to content similarity (developmental, not")
+        print("          topical): 06_gnn/discriminant_validity.txt.")
+        print("       2. DYADIC FROM->CUE->TO TRANSITION MODEL + CONFOUND LOCALIZATION — a")
+        print("          learned response function for how therapist language relates to the")
+        print("          next participant state, with the elicitation/responsiveness confound")
+        print("          mapped per cell (06_gnn/transition_model.txt, confound_localization.txt).")
+        print("       3. SUBTEXT COMMUNITIES + DYADIC ROUTINES, cue motifs, coupling factors")
+        print("          (06_gnn/communities.txt, dyadic_routines.txt, emergent_motifs.txt).")
+        print("       All hypothesis-generating (never causal), run on raw embeddings, and")
+        print("       NEVER overwrite frozen segments.")
         print()
-        print("    Default is OFF. The pipeline runs identically whether or not this is on;")
-        print("    when on, it adds reports under 03_analysis_data/gnn/ and 06_reports/ and")
-        print("    NEVER overwrites frozen segments.")
+        print("    B) CONSENSUS-DISTILLATION CLASSIFIER  (default OFF -- pilot-refuted, H5):")
+        print("       A GraphSAGE classifier meant to reproduce the LLM consensus for LLM-free")
+        print("       scaling. On Cohorts 1-2 it reached only kappa~0.05-0.14 (below the")
+        print("       human<->human band; a linear probe on the same features ties/beats it) --")
+        print("       VAAMR is not homophilous in embedding space. Kept as a separate, documented")
+        print("       instrument (gnn_layer/classifier/) to re-adjudicate at Cohorts 3-4 scale.")
+        print("       The LLM consensus and the Qwen probe remain the labels of record.")
         print()
-        enabled = _prompt_yes_no("Enable the GNN layer?", False)
+        enabled = _prompt_yes_no("Enable the GNN discovery + mechanism layer?", True)
         if not enabled:
             self.config_data['gnn_layer'] = {'enabled': False}
             print("    GNN layer OFF. You can still force it later with: qra analyze --gnn")
@@ -1463,58 +1470,40 @@ class SetupWizard:
         gnn: dict = {'enabled': True}
 
         print()
-        print("    LABEL MODE — what the graph trains on:")
-        print("      weak            : train on the multi-run LLM ballots (default; the")
-        print("                        consensus-distillation path — what enables scaling).")
-        print("      human           : train only on the human-validated subset (strongest")
-        print("                        independence claim; needs enough human labels first).")
-        print("      self_supervised : graph structure only, no labels (independence control;")
-        print("                        produces geometry/motifs but no VAAMR/PURER vote).")
-        gnn['label_mode'] = _prompt_choice(
-            "Label mode", ['weak', 'human', 'self_supervised'], 'weak')
-
-        print()
-        print("    SCOPE — which speakers the graph positions (RESERVED — not yet")
-        print("    enforced: the graph currently always positions both speakers).")
-        gnn['run_on_participants'] = _prompt_yes_no(
-            "Position participant segments (VAAMR mixture / progression)?", True)
-        gnn['run_on_therapists'] = _prompt_yes_no(
-            "Position therapist segments (cue-block / PURER)?", True)
-
-        print()
-        print("    RELIABILITY GATE — out-of-sample agreement that licenses LLM-free scaling.")
-        print("    Cross-validated, per-VAAMR-stage and per-PURER-move (the per-class recall")
-        print("    is the safeguard against over-smoothing a rare stage like Reappraisal).")
-        gnn['validation_folds'] = _prompt_int("Cross-validation folds for the gate", 5)
-        gnn['irr_target'] = _prompt_float(
-            "Target kappa vs LLM consensus to recommend graph-only scaling", 0.70)
-
-        print()
-        print("    AUTHORITATIVE LABELS — make graph labels the label of record.")
-        print("    Recommended OFF until 06_gnn/validation.txt says the graph is ready.")
-        print("    When ON, final labels resolve adjudicated > human > GNN > LLM, and the")
-        print("    raw LLM ballots stay visible per segment for audit.")
-        gnn['gnn_authoritative'] = _prompt_yes_no(
-            "Make GNN labels authoritative now?", False)
-
-        print()
-        print("    ABLATION (Capability D) — retrains per construct head to measure how much")
-        print("    independent signal VCE / PURER each carry. This is the tool")
-        print("    for deciding whether the VCE codebook justifies further research. Doubles")
-        print("    training cost. (VCE graph nodes are OFF by default; turn on ablation only")
-        print("    when you have set include_vce_nodes=True in the config to test VCE.)")
-        gnn['run_gnn_ablation'] = _prompt_yes_no("Run construct-signal ablation?", False)
-
-        print()
         print("    DISCOVERY granularity:")
         gnn['n_motif_clusters'] = _prompt_int("Number of cue-language motif clusters", 12)
         gnn['n_latent_factors'] = _prompt_int("Number of coupling latent factors", 5)
+        gnn['subtext_communities'] = _prompt_yes_no(
+            "Run subtext communities + dyadic routines (Track D)?", True)
+        gnn['community_sim_threshold'] = _prompt_float(
+            "Subtext-community cosine threshold (~0.6 for Qwen; raise toward 0.85 for MiniLM)", 0.6)
+
+        print()
+        print("    CLASSIFIER (separate concern; DEFAULT OFF -- pilot-refuted, see note above).")
+        print("    Enable only to train + gate the GraphSAGE consensus-distillation classifier")
+        print("    (e.g. to re-adjudicate it at Cohorts 3-4 scale).")
+        clf = _prompt_yes_no("Enable the consensus-distillation classifier?", False)
+        gnn['gnn_classifier_enabled'] = clf
+        if clf:
+            print()
+            print("    LABEL MODE — what the classifier trains on:")
+            print("      weak            : the multi-run LLM ballots (consensus distillation).")
+            print("      human           : the human-validated subset only (independence claim).")
+            print("      self_supervised : graph structure only (independence/null control).")
+            gnn['label_mode'] = _prompt_choice(
+                "Label mode", ['weak', 'human', 'self_supervised'], 'weak')
+            gnn['validation_folds'] = _prompt_int("Cross-validation folds for the gate", 5)
+            gnn['irr_target'] = _prompt_float(
+                "Target kappa vs LLM consensus to recommend graph-only scaling", 0.70)
+            print()
+            print("    AUTHORITATIVE LABELS — recommended OFF until 06_gnn/validation.txt says")
+            print("    the graph is ready. When ON: adjudicated > human > GNN > LLM (ballots kept).")
+            gnn['gnn_authoritative'] = _prompt_yes_no("Make GNN labels authoritative now?", False)
 
         self.config_data['gnn_layer'] = gnn
 
         print()
         print("    --- Full knob reference (expert knobs stay in qra_config.json) ---")
-        print("    The knobs above are the high-impact ones. Every GnnLayerConfig field:")
         for line in _GNN_KNOB_REFERENCE:
             print(f"      {line}")
         print()

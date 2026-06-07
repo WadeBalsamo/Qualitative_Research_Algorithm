@@ -468,7 +468,7 @@ def _gnn_promotion_flags(config, output_dir: str):
     if not auth:
         return False, False
     try:
-        from gnn_layer import validation as _gval
+        from gnn_layer.classifier import validation as _gval
         gate = _gval.gate_ready_for_scaling(output_dir)
     except Exception:
         gate = False
