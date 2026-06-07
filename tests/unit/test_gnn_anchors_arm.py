@@ -32,7 +32,7 @@ if _QRA_ROOT not in sys.path:
 from experiments.gnn_reliability import anchors_arm
 from experiments.gnn_reliability import harness
 from gnn_layer.config import GnnLayerConfig
-from gnn_layer import graph_builder as gb
+from gnn_layer.classifier import graph_builder as gb
 
 
 _DIM = 16

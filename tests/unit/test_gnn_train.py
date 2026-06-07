@@ -33,7 +33,7 @@ from gnn_layer.config import GnnLayerConfig
 
 def _build_graph(df, cfg=None, n_sessions=1, dim=16, seed=0):
     """Build a test HeteroGraph from synthetic_df without touching the embedding model."""
-    from gnn_layer import graph_builder
+    from gnn_layer.classifier import graph_builder
     if cfg is None:
         cfg = GnnLayerConfig(knn_k=2, cache_embeddings=False, hidden_dim=8)
     rng = np.random.default_rng(seed)
@@ -49,7 +49,7 @@ class TestSetSeed(unittest.TestCase):
 
     def test_produces_identical_tensors_on_repeat(self):
         import torch
-        from gnn_layer.train import set_seed
+        from gnn_layer.classifier.train import set_seed
         set_seed(42)
         a = torch.randn(10)
         set_seed(42)
@@ -59,7 +59,7 @@ class TestSetSeed(unittest.TestCase):
 
     def test_different_seeds_produce_different_tensors(self):
         import torch
-        from gnn_layer.train import set_seed
+        from gnn_layer.classifier.train import set_seed
         set_seed(1)
         a = torch.randn(10)
         set_seed(2)
@@ -67,7 +67,7 @@ class TestSetSeed(unittest.TestCase):
         self.assertFalse(torch.allclose(a, b))
 
     def test_numpy_seeded(self):
-        from gnn_layer.train import set_seed
+        from gnn_layer.classifier.train import set_seed
         set_seed(99)
         a = np.random.rand(5)
         set_seed(99)
@@ -82,19 +82,19 @@ class TestSetSeed(unittest.TestCase):
 class TestReplaceSeed(unittest.TestCase):
 
     def test_new_seed_value(self):
-        from gnn_layer.train import _replace_seed
+        from gnn_layer.classifier.train import _replace_seed
         cfg = GnnLayerConfig(seed=42)
         cfg2 = _replace_seed(cfg, 99)
         self.assertEqual(cfg2.seed, 99)
 
     def test_original_unchanged(self):
-        from gnn_layer.train import _replace_seed
+        from gnn_layer.classifier.train import _replace_seed
         cfg = GnnLayerConfig(seed=42)
         _replace_seed(cfg, 99)
         self.assertEqual(cfg.seed, 42)
 
     def test_other_fields_preserved(self):
-        from gnn_layer.train import _replace_seed
+        from gnn_layer.classifier.train import _replace_seed
         cfg = GnnLayerConfig(seed=1, hidden_dim=64, lr=0.01)
         cfg2 = _replace_seed(cfg, 7)
         self.assertEqual(cfg2.hidden_dim, 64)
@@ -109,7 +109,7 @@ class TestSubsetTargets(unittest.TestCase):
 
     def setUp(self):
         import torch
-        from gnn_layer.train import _subset_targets
+        from gnn_layer.classifier.train import _subset_targets
         self._subset = _subset_targets
         self.targets = {
             'vaamr_idx': torch.tensor([10, 11, 12, 13]),
@@ -187,31 +187,31 @@ class TestAssembleTargets(unittest.TestCase):
         return build_soft_targets(self.df)
 
     def test_vaamr_idx_and_mix_present(self):
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         t = assemble_targets(self.g, self._soft(), self.cfg, df_all=self.df)
         self.assertIn('vaamr_idx', t)
         self.assertIn('vaamr_mix', t)
 
     def test_vaamr_mix_shape(self):
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         t = assemble_targets(self.g, self._soft(), self.cfg, df_all=self.df)
         n = t['vaamr_idx'].numel()
         self.assertEqual(t['vaamr_mix'].shape, (n, 5))
 
     def test_prog_val_shape_matches_vaamr_idx(self):
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         t = assemble_targets(self.g, self._soft(), self.cfg, df_all=self.df)
         self.assertEqual(t['prog_val'].shape, t['vaamr_idx'].shape)
 
     def test_purer_idx_present_when_purer_in_objectives(self):
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         t = assemble_targets(self.g, self._soft(), self.cfg, df_all=self.df)
         self.assertIn('purer_idx', t)
         self.assertIn('purer_label', t)
         self.assertGreater(t['purer_idx'].numel(), 0)
 
     def test_purer_absent_without_objective(self):
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         cfg_no_purer = GnnLayerConfig(
             objectives=['soft_vaamr', 'progression'], knn_k=2, cache_embeddings=False
         )
@@ -219,20 +219,20 @@ class TestAssembleTargets(unittest.TestCase):
         self.assertNotIn('purer_idx', t)
 
     def test_pos_and_neg_edges_present(self):
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         t = assemble_targets(self.g, self._soft(), self.cfg, df_all=self.df)
         self.assertIn('pos_edges', t)
         self.assertIn('neg_edges', t)
 
     def test_contrast_idx_and_label_match_vaamr(self):
         import torch
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         t = assemble_targets(self.g, self._soft(), self.cfg, df_all=self.df)
         self.assertEqual(t['contrast_idx'].tolist(), t['vaamr_idx'].tolist())
         self.assertEqual(t['contrast_label'].shape, t['vaamr_idx'].shape)
 
     def test_empty_soft_targets_gives_zero_length_tensors(self):
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         t = assemble_targets(self.g, {}, self.cfg, df_all=self.df)
         self.assertEqual(t['vaamr_idx'].numel(), 0)
         self.assertEqual(t['vaamr_mix'].shape, (0, 5))
@@ -259,36 +259,36 @@ class TestTrainModel(unittest.TestCase):
 
     def _targets(self):
         from gnn_layer.soft_labels import build_soft_targets
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         soft = build_soft_targets(self.df)
         return assemble_targets(self.g, soft, self.cfg, df_all=self.df)
 
     def test_returns_model_and_metrics(self):
-        from gnn_layer.train import train_model
+        from gnn_layer.classifier.train import train_model
         model, metrics = train_model(self.g, self._targets(), self.cfg)
         self.assertIsNotNone(model)
         self.assertIsInstance(metrics, dict)
 
     def test_metrics_contains_expected_keys(self):
-        from gnn_layer.train import train_model
+        from gnn_layer.classifier.train import train_model
         _, metrics = train_model(self.g, self._targets(), self.cfg)
         self.assertIn('best_loss', metrics)
         self.assertIn('epochs_run', metrics)
         self.assertIn('final_terms', metrics)
 
     def test_best_loss_is_float(self):
-        from gnn_layer.train import train_model
+        from gnn_layer.classifier.train import train_model
         _, metrics = train_model(self.g, self._targets(), self.cfg)
         self.assertIsInstance(metrics['best_loss'], float)
 
     def test_epochs_run_within_budget(self):
-        from gnn_layer.train import train_model
+        from gnn_layer.classifier.train import train_model
         _, metrics = train_model(self.g, self._targets(), self.cfg)
         self.assertGreaterEqual(metrics['epochs_run'], 1)
         self.assertLessEqual(metrics['epochs_run'], self.cfg.epochs)
 
     def test_final_terms_keys(self):
-        from gnn_layer.train import train_model
+        from gnn_layer.classifier.train import train_model
         _, metrics = train_model(self.g, self._targets(), self.cfg)
         # objectives present → their loss keys should appear in final_terms
         for term in ('soft_vaamr', 'progression', 'purer', 'total'):
@@ -296,7 +296,7 @@ class TestTrainModel(unittest.TestCase):
 
     def test_early_stop_fires_with_tiny_patience(self):
         """patience=1 must stop well before epochs budget."""
-        from gnn_layer.train import train_model
+        from gnn_layer.classifier.train import train_model
         cfg_fast = GnnLayerConfig(
             objectives=['soft_vaamr'], knn_k=2, cache_embeddings=False,
             hidden_dim=8, n_layers=1, epochs=50, seed=1, patience=1,
@@ -326,21 +326,21 @@ class TestCheckpointRoundtrip(unittest.TestCase):
 
     def _trained_model(self):
         from gnn_layer.soft_labels import build_soft_targets
-        from gnn_layer.train import assemble_targets, train_model
+        from gnn_layer.classifier.train import assemble_targets, train_model
         soft = build_soft_targets(self.df)
         t = assemble_targets(self.g, soft, self.cfg, df_all=self.df)
         model, metrics = train_model(self.g, t, self.cfg)
         return model, metrics
 
     def test_weights_file_created(self):
-        from gnn_layer.train import export_checkpoint
+        from gnn_layer.classifier.train import export_checkpoint
         model, metrics = self._trained_model()
         wp = export_checkpoint(model, self.cfg, self.tmp, metrics)
         self.assertTrue(os.path.isfile(wp))
         self.assertEqual(os.path.basename(wp), 'weights.pt')
 
     def test_manifest_file_created(self):
-        from gnn_layer.train import export_checkpoint
+        from gnn_layer.classifier.train import export_checkpoint
         model, metrics = self._trained_model()
         export_checkpoint(model, self.cfg, self.tmp, metrics)
         manifest_p = os.path.join(self.tmp, 'manifest.json')
@@ -348,7 +348,7 @@ class TestCheckpointRoundtrip(unittest.TestCase):
 
     def test_manifest_contains_seed(self):
         import json
-        from gnn_layer.train import export_checkpoint
+        from gnn_layer.classifier.train import export_checkpoint
         model, metrics = self._trained_model()
         export_checkpoint(model, self.cfg, self.tmp, metrics)
         manifest_p = os.path.join(self.tmp, 'manifest.json')
@@ -358,7 +358,7 @@ class TestCheckpointRoundtrip(unittest.TestCase):
 
     def test_loaded_weights_match_saved(self):
         import torch
-        from gnn_layer.train import export_checkpoint, load_checkpoint
+        from gnn_layer.classifier.train import export_checkpoint, load_checkpoint
         model, metrics = self._trained_model()
         export_checkpoint(model, self.cfg, self.tmp, metrics)
         model2 = load_checkpoint(self.tmp, self.g, self.cfg)
@@ -370,7 +370,7 @@ class TestCheckpointRoundtrip(unittest.TestCase):
                             f"Mismatch in layer {k}")
 
     def test_load_nonexistent_raises(self):
-        from gnn_layer.train import load_checkpoint
+        from gnn_layer.classifier.train import load_checkpoint
         with self.assertRaises(Exception):
             load_checkpoint(os.path.join(self.tmp, 'nonexistent'), self.g, self.cfg)
 
@@ -396,19 +396,19 @@ class TestCrossvalPredictions(unittest.TestCase):
 
     def _targets(self):
         from gnn_layer.soft_labels import build_soft_targets
-        from gnn_layer.train import assemble_targets
+        from gnn_layer.classifier.train import assemble_targets
         soft = build_soft_targets(self.df)
         return assemble_targets(self.g, soft, self.cfg, df_all=self.df)
 
     def test_returns_vaamr_and_purer_keys(self):
-        from gnn_layer.train import crossval_predictions
+        from gnn_layer.classifier.train import crossval_predictions
         t = self._targets()
         cv = crossval_predictions(self.g, t, self.cfg)
         self.assertIn('vaamr', cv)
         self.assertIn('purer', cv)
 
     def test_every_labeled_vaamr_node_predicted_once(self):
-        from gnn_layer.train import crossval_predictions
+        from gnn_layer.classifier.train import crossval_predictions
         t = self._targets()
         cv = crossval_predictions(self.g, t, self.cfg)
         n_labeled = t['vaamr_idx'].numel()
@@ -416,7 +416,7 @@ class TestCrossvalPredictions(unittest.TestCase):
                          "Every labeled node must appear exactly once across folds")
 
     def test_no_duplicate_segment_ids_in_vaamr(self):
-        from gnn_layer.train import crossval_predictions
+        from gnn_layer.classifier.train import crossval_predictions
         t = self._targets()
         cv = crossval_predictions(self.g, t, self.cfg)
         ids = [sid for sid, _ in cv['vaamr']]
@@ -424,14 +424,14 @@ class TestCrossvalPredictions(unittest.TestCase):
                          "Each segment must be held out in exactly one fold")
 
     def test_every_labeled_purer_node_predicted_once(self):
-        from gnn_layer.train import crossval_predictions
+        from gnn_layer.classifier.train import crossval_predictions
         t = self._targets()
         cv = crossval_predictions(self.g, t, self.cfg)
         n_labeled_p = t['purer_idx'].numel()
         self.assertEqual(len(cv['purer']), n_labeled_p)
 
     def test_predictions_are_valid_class_indices(self):
-        from gnn_layer.train import crossval_predictions
+        from gnn_layer.classifier.train import crossval_predictions
         t = self._targets()
         cv = crossval_predictions(self.g, t, self.cfg)
         for _, pred in cv['vaamr']:
@@ -440,7 +440,7 @@ class TestCrossvalPredictions(unittest.TestCase):
             self.assertIn(pred, range(5))
 
     def test_determinism_with_same_seed(self):
-        from gnn_layer.train import crossval_predictions
+        from gnn_layer.classifier.train import crossval_predictions
         t = self._targets()
         cv1 = crossval_predictions(self.g, t, self.cfg)
         cv2 = crossval_predictions(self.g, t, self.cfg)
@@ -451,7 +451,7 @@ class TestCrossvalPredictions(unittest.TestCase):
 
     def test_empty_targets_returns_empty(self):
         import torch
-        from gnn_layer.train import crossval_predictions, assemble_targets
+        from gnn_layer.classifier.train import crossval_predictions, assemble_targets
         t_empty = assemble_targets(self.g, {}, self.cfg, df_all=None)
         cv = crossval_predictions(self.g, t_empty, self.cfg)
         self.assertEqual(cv['vaamr'], [])

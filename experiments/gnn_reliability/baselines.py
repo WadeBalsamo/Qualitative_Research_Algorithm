@@ -280,7 +280,7 @@ def _diffuse(signal, edge_index, edge_weight, n_nodes, alpha, n_iter):
     may be negative).
     """
     import numpy as np
-    from gnn_layer.propagation import neighbour_weighted_mean
+    from gnn_layer.classifier.propagation import neighbour_weighted_mean
     F0 = np.asarray(signal, dtype=np.float64)
     F = F0.copy()
     a = float(alpha)
@@ -300,7 +300,7 @@ def run_correct_smooth(df_all, embeddings, folds, config) -> Dict[str, int]:
     corrected/true labels. Returns OOF argmax for every labeled participant segment.
     """
     import numpy as np
-    from gnn_layer.graph_builder import build_graph
+    from gnn_layer.classifier.graph_builder import build_graph
 
     seg_ids, labels, n_classes = _prepare_labeled(df_all, embeddings, config)
     if not seg_ids:

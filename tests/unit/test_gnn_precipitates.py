@@ -38,7 +38,7 @@ def _seg_emb(df, dim=16, seed=0):
 class TestPrecipitatesGraph(unittest.TestCase):
 
     def _build(self, precipitates):
-        from gnn_layer.graph_builder import build_graph
+        from gnn_layer.classifier.graph_builder import build_graph
         df = synthetic_df(n_sessions=3)
         cfg = GnnLayerConfig(knn_k=3, cache_embeddings=False, precipitates_edges=precipitates)
         return build_graph(df, _seg_emb(df), cfg)
@@ -67,14 +67,14 @@ class TestPrecipitatesGraph(unittest.TestCase):
             self.assertEqual(g.edge_type_ids.numel(), g.edge_index.size(1))
 
     def test_edge_type_vocab_recorded(self):
-        from gnn_layer.graph_builder import EDGE_TYPE_VOCAB
+        from gnn_layer.classifier.graph_builder import EDGE_TYPE_VOCAB
         g = self._build(precipitates=True)
         self.assertEqual(tuple(g.meta['edge_type_vocab']), EDGE_TYPE_VOCAB)
 
     def test_precipitates_connect_therapist_to_participant(self):
         # Every precipitates edge's two endpoints must be one therapist + one participant.
         g = self._build(precipitates=True)
-        from gnn_layer.graph_builder import EDGE_TYPE_TO_ID
+        from gnn_layer.classifier.graph_builder import EDGE_TYPE_TO_ID
         pid = EDGE_TYPE_TO_ID['precipitates']
         et = g.edge_type_ids.tolist()
         ei = g.edge_index.t().tolist()
@@ -91,13 +91,13 @@ class TestPrecipitatesGraph(unittest.TestCase):
 class TestPrecipitatesSaveLoadAttach(unittest.TestCase):
 
     def _build(self):
-        from gnn_layer.graph_builder import build_graph
+        from gnn_layer.classifier.graph_builder import build_graph
         df = synthetic_df(n_sessions=3)
         cfg = GnnLayerConfig(knn_k=3, cache_embeddings=False, precipitates_edges=True)
         return build_graph(df, _seg_emb(df), cfg), cfg
 
     def test_save_load_roundtrip_preserves_edge_type_ids(self):
-        from gnn_layer.graph_builder import save_graph, load_graph
+        from gnn_layer.classifier.graph_builder import save_graph, load_graph
         g, _ = self._build()
         d = tempfile.mkdtemp()
         save_graph(g, d)
@@ -107,7 +107,7 @@ class TestPrecipitatesSaveLoadAttach(unittest.TestCase):
         self.assertTrue(bool((g2.edge_type_ids == g.edge_type_ids).all()))
 
     def test_attach_keeps_edge_type_ids_aligned(self):
-        from gnn_layer.graph_builder import attach_new_segments
+        from gnn_layer.classifier.graph_builder import attach_new_segments
         g, cfg = self._build()
         rng = np.random.default_rng(9)
         new = {'cNEW_0': rng.standard_normal(16).astype('float32')}
@@ -118,14 +118,14 @@ class TestPrecipitatesSaveLoadAttach(unittest.TestCase):
 class TestLearnableEdgeTypeGate(unittest.TestCase):
 
     def _graph(self, precipitates):
-        from gnn_layer.graph_builder import build_graph
+        from gnn_layer.classifier.graph_builder import build_graph
         df = synthetic_df(n_sessions=2)
         cfg = GnnLayerConfig(knn_k=3, hidden_dim=16, n_layers=2,
                              cache_embeddings=False, precipitates_edges=precipitates)
         return build_graph(df, _seg_emb(df), cfg), cfg
 
     def test_gate_absent_when_precipitates_off(self):
-        from gnn_layer.model import build_model
+        from gnn_layer.classifier.model import build_model
         g, cfg = self._graph(precipitates=False)
         model = build_model(g, cfg)
         for conv in model.convs:
@@ -133,8 +133,8 @@ class TestLearnableEdgeTypeGate(unittest.TestCase):
             self.assertIsNone(conv.edge_type_gate)
 
     def test_gate_present_when_precipitates_on(self):
-        from gnn_layer.model import build_model
-        from gnn_layer.graph_builder import EDGE_TYPE_VOCAB
+        from gnn_layer.classifier.model import build_model
+        from gnn_layer.classifier.graph_builder import EDGE_TYPE_VOCAB
         g, cfg = self._graph(precipitates=True)
         model = build_model(g, cfg)
         for conv in model.convs:
@@ -145,7 +145,7 @@ class TestLearnableEdgeTypeGate(unittest.TestCase):
         # At init softplus(gate)==1, so passing edge_type_ids must NOT change the forward
         # output vs not passing it (backward-compatible default).
         import torch
-        from gnn_layer.model import build_model
+        from gnn_layer.classifier.model import build_model
         g, cfg = self._graph(precipitates=True)
         model = build_model(g, cfg)
         model.eval()
@@ -156,7 +156,7 @@ class TestLearnableEdgeTypeGate(unittest.TestCase):
 
     def test_off_model_param_count_unchanged(self):
         # The OFF path must add zero parameters vs a precipitates-unaware model.
-        from gnn_layer.model import build_model
+        from gnn_layer.classifier.model import build_model
         g_off, cfg_off = self._graph(precipitates=False)
         model_off = build_model(g_off, cfg_off)
         g_on, cfg_on = self._graph(precipitates=True)
@@ -164,14 +164,14 @@ class TestLearnableEdgeTypeGate(unittest.TestCase):
         n_off = sum(p.numel() for p in model_off.parameters())
         n_on = sum(p.numel() for p in model_on.parameters())
         # ON adds exactly the per-edge-type gate params (n_edge_types per conv layer).
-        from gnn_layer.graph_builder import EDGE_TYPE_VOCAB
+        from gnn_layer.classifier.graph_builder import EDGE_TYPE_VOCAB
         self.assertEqual(n_on - n_off, len(EDGE_TYPE_VOCAB) * len(model_on.convs))
 
 
 class TestPrecipitatesAblation(unittest.TestCase):
 
     def test_contribution_inconclusive_without_human_subset(self):
-        from gnn_layer import ablation as ABL
+        from gnn_layer.classifier import ablation as ABL
         df = synthetic_df(n_sessions=4)
         cfg = GnnLayerConfig(hidden_dim=16, n_layers=2, knn_k=3, epochs=6,
                              validation_folds=2, cache_embeddings=False, seed=1,
@@ -184,7 +184,7 @@ class TestPrecipitatesAblation(unittest.TestCase):
         self.assertFalse(res['recommend_precipitates'])
 
     def test_contribution_report_written(self):
-        from gnn_layer import ablation as ABL
+        from gnn_layer.classifier import ablation as ABL
         df = synthetic_df(n_sessions=4)
         cfg = GnnLayerConfig(hidden_dim=16, n_layers=2, knn_k=3, epochs=4,
                              validation_folds=2, cache_embeddings=False, seed=1,
