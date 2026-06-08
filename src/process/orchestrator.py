@@ -413,6 +413,8 @@ def stage_assemble(
     segments: Optional[List[Segment]] = None,
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
+    probe_ready: Optional[bool] = None,
+    gnn_ready: Optional[bool] = None,
 ):
     """
     Dataset assembly stage.
@@ -420,6 +422,11 @@ def stage_assemble(
     Joins frozen segments + all present overlays and writes
     master_segments.csv.  Returns the master pd.DataFrame.
     When segments=None, loads from disk.
+
+    ``probe_ready`` / ``gnn_ready`` default to None → resolved from the persisted reliability
+    gates (``_probe_promotion_flag`` / ``_gnn_promotion_flag``). A caller that has already
+    authorized a cheap-tier fill for this assembly (e.g. ``qra probe classify`` / ``--force``)
+    may pass True/False explicitly to override the gate lookup for this call only.
     """
     import pandas as pd
     from dataclasses import asdict
@@ -429,7 +436,7 @@ def stage_assemble(
 
     if segments is None:
         segments = segments_io.load_segments_for_stage(
-            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn'),
+            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn', 'probe'),
         )
 
     confidence_tiers: dict = {}
@@ -438,13 +445,14 @@ def stage_assemble(
 
     _ms_dir = _paths.master_segments_dir(_od)
     os.makedirs(_ms_dir, exist_ok=True)
-    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, _od)
+    _probe_ready = _probe_promotion_flag(config, _od) if probe_ready is None else probe_ready
+    _gnn_ready = _gnn_promotion_flag(config, _od) if gnn_ready is None else gnn_ready
     master_df = assemble_master_dataset(
         segments,
         os.path.join(_ms_dir, 'master_segments.csv'),
         confidence_tiers=confidence_tiers,
-        gnn_authoritative=_gnn_auth,
-        gate_passed=_gate_ok,
+        probe_ready=_probe_ready,
+        gnn_ready=_gnn_ready,
     )
 
     return master_df
@@ -455,31 +463,129 @@ def stage_assemble(
 # (extracted from run_full_pipeline body to avoid duplication)
 # ---------------------------------------------------------------------------
 
-def _gnn_promotion_flags(config, output_dir: str):
-    """Resolve (gnn_authoritative, gate_passed) for label-of-record promotion.
+def _probe_promotion_flag(config, output_dir: str) -> bool:
+    """probe_ready: the probe may FILL unlabeled segments (below the LLM) only when its
+    persisted participant-grouped gate (03_analysis_data/probe/probe_gate.json) reports
+    ready_for_scaling — symmetric with ``_gnn_promotion_flag``. The gate file exists only
+    after the operator ran ``qra probe train``, so default projects (no probe) never promote
+    and the label tiers stay byte-identical to the LLM pipeline.
 
-    The graph can become the authoritative label of record only when the operator
-    opted in (config.gnn_layer.gnn_authoritative) AND the persisted reliability-gate
-    verdict says ready_for_scaling. A config flag alone never promotes an un-gated
-    graph (Track 0.2). If the operator opted in but the gate is missing/failing, we
-    force no-promotion and log a clear warning.
-    """
-    auth = bool(getattr(getattr(config, 'gnn_layer', None), 'gnn_authoritative', False))
-    if not auth:
-        return False, False
+    Note: ``config.probe.enabled`` separately controls whether the FULL pipeline AUTO-RUNS
+    the probe stage (run_full_pipeline Stage-6b); it does NOT gate promotion of an overlay an
+    operator already produced via ``qra probe classify`` / the TUI."""
+    try:
+        from classification_tools import probe_classifier as _pc
+        return bool(_pc.probe_gate_ready(output_dir))
+    except Exception:
+        return False
+
+
+def _gnn_promotion_flag(config, output_dir: str) -> bool:
+    """gnn_ready: the demoted GNN classifier may FILL unlabeled segments (below the LLM)
+    only when its reliability gate (03_analysis_data/gnn/gnn_gate.json) reports
+    ready_for_scaling. There is no 'authoritative' override any more — the GNN can never
+    overwrite an LLM/human label. False (no fill) unless the classifier was trained and
+    cleared its gate (default-OFF classifier ⇒ no gate ⇒ no fill)."""
     try:
         from gnn_layer.classifier import validation as _gval
-        gate = _gval.gate_ready_for_scaling(output_dir)
+        return bool(_gval.gate_ready_for_scaling(output_dir))
     except Exception:
-        gate = False
-    if not gate:
-        print(
-            "  Warning: gnn_authoritative=True but the GNN reliability gate has not "
-            "passed (missing or failing verdict at 03_analysis_data/gnn/gnn_gate.json). "
-            "Keeping LLM-consensus labels of record; the graph will not become "
-            "authoritative until the gate reports ready_for_scaling."
-        )
-    return auth, gate
+        return False
+
+
+def _run_probe_stage(config, output_dir: str, df_all, segments, verbose: bool = True) -> int:
+    """Train + gate the LLM-free probe scaler; if the gate passes, FILL unlabeled segments.
+
+    Operates on the just-assembled ``df_all`` (carries rater_votes + final_label). Writes the
+    gate verdict + report regardless; only fills (writes the probe_labels overlay) when the
+    per-project gate passes. Applies the fresh overlay to the in-memory ``segments`` so the
+    caller's re-assembly folds in the probe_consensus tier. Returns the number of segments
+    filled. Graceful: any failure (e.g. the embedding backend is unreachable) is logged and
+    skipped — the LLM-consensus labels of record are unaffected.
+    """
+    from classification_tools import probe_classifier as _pc
+    cfg = getattr(config, 'probe', None)
+    if cfg is None:
+        return 0
+    try:
+        print("\n  Probe scaling tier (LLM-free, gated) — training + reliability gate...")
+        _pc.train_probe(df_all, output_dir, cfg)
+        verdict = _pc.evaluate_probe(df_all, output_dir, cfg)
+        hk = verdict.get('probe_human_kappa')
+        ready = bool(verdict.get('ready_for_scaling'))
+        print(f"    probe gate: human κ={hk if hk is None else round(hk, 3)}; "
+              f"ready_for_scaling={ready} "
+              f"(06_reports/06_classifier/probe_validation.txt)")
+        if not ready:
+            print("    Gate not passed — probe stays assistive; no fill (LLM stays primary).")
+            return 0
+        n = _pc.classify_with_probe(df_all, output_dir, cfg)
+        if n:
+            _cio.apply_probe_overlay(output_dir, {s.segment_id: s for s in segments})
+        print(f"    probe filled {n} previously-unlabeled participant segment(s) "
+              "(tagged probe_consensus, below the LLM).")
+        return n
+    except Exception as e:  # noqa: BLE001 — never let the optional probe break a run
+        print(f"    Probe stage skipped: {e}")
+        if verbose:
+            import traceback as _tb
+            _tb.print_exc()
+        return 0
+
+
+def _segments_to_scaler_df(segments):
+    """Minimal DataFrame the probe/GNN scalers consume (rater_votes re-serialized to JSON)."""
+    import json as _json
+    import pandas as _pd
+    rows = []
+    for s in segments:
+        rv = getattr(s, 'rater_votes', None)
+        rows.append({
+            'segment_id': s.segment_id, 'text': s.text, 'speaker': s.speaker,
+            'session_id': s.session_id, 'participant_id': s.participant_id,
+            'final_label': s.final_label, 'primary_stage': s.primary_stage,
+            'rater_votes': (_json.dumps(rv) if isinstance(rv, (list, dict)) else rv),
+            'purer_primary': getattr(s, 'purer_primary', None),
+        })
+    return _pd.DataFrame(rows)
+
+
+def _classify_new_with_scaler(mode, config, framework, segments, new_sids, output_dir) -> int:
+    """LLM-free label the NEW participant segments with the probe or the demoted GNN.
+
+    The operator chose this mode in the add-data picker (informed by the IRR comparison).
+    For the probe: (re)train + gate on the EXISTING corpus, then fill the new segments. For
+    the GNN: run the trained graph on the new/unlabeled segments. Fresh overlay rows are
+    applied to the in-memory ``segments`` so Phase-4 re-assembly folds them in. Returns the
+    number filled; any failure is logged and leaves the new segments unlabeled (never a
+    silent LLM fallback — the operator picked LLM-free).
+    """
+    from . import classifications_io as _cio
+    new_set = set(map(str, new_sids))
+    try:
+        df = _segments_to_scaler_df(segments)
+        if mode == 'probe':
+            from classification_tools import probe_classifier as _pc
+            cfg = getattr(config, 'probe', None) or _pc.ProbeConfig()
+            existing = df[~df['session_id'].astype(str).isin(new_set)]
+            _pc.train_probe(existing, output_dir, cfg)
+            _pc.evaluate_probe(existing, output_dir, cfg)
+            n = _pc.classify_with_probe(df, output_dir, cfg, only_session_ids=new_sids)
+            _cio.apply_probe_overlay(output_dir, {s.segment_id: s for s in segments})
+            return n
+        if mode == 'gnn':
+            from gnn_layer.runner import run_gnn_classify
+            res = run_gnn_classify(df, output_dir, framework=framework,
+                                   config=config.gnn_layer, verbose=True,
+                                   only_unlabeled=True)
+            _cio.apply_gnn_overlay(output_dir, {s.segment_id: s for s in segments})
+            return int(res.get('n_classified', 0)) if isinstance(res, dict) else 0
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARNING: {mode} classification of new data failed: {e}")
+        print(f"  New segments left unlabeled — re-run add-data (LLM mode) or fix the "
+              f"{mode} backend.")
+    return 0
+
 
 def resolve_pinned_classifier_config(
     run_dir: str,
@@ -1184,7 +1290,7 @@ def stage_validation_artifacts(
 
     if segments is None:
         segments = segments_io.load_segments_for_stage(
-            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn'),
+            _od, apply=('theme', 'purer', 'codebook', 'cv', 'gnn', 'probe'),
         )
 
     if framework is None:
@@ -1669,6 +1775,7 @@ def run_incremental_pipeline(
     observer: Optional[PipelineObserver] = None,
     *,
     walkthrough: bool = False,
+    classify_mode: str = 'llm',
 ) -> pd.DataFrame:
     """Add new transcripts to an existing project without disturbing frozen artifacts.
 
@@ -1761,13 +1868,23 @@ def run_incremental_pipeline(
         print("\n  No new sessions to classify. Skipping classification stages.")
     else:
         if 'theme' in manifest and config.run_theme_labeler:
-            pinned = resolve_pinned_classifier_config(output_dir, 'theme', config, framework=framework)
-            all_segments = stage_classify_theme(
-                pinned, framework,
-                segments=all_segments, output_dir=output_dir, observer=observer,
-                only_session_ids=new_sids,
-            )
-            kinds_applied.append('theme')
+            _mode = (classify_mode or 'llm').lower()
+            if _mode in ('probe', 'gnn'):
+                # LLM-free scaling of the NEW participant segments with the chosen cheap
+                # classifier (the operator picked this in the add-data mode picker, informed
+                # by the IRR comparison). Fills below the LLM; existing labels are untouched.
+                n_scaled = _classify_new_with_scaler(
+                    _mode, config, framework, all_segments, new_sids, output_dir)
+                kinds_applied.append(_mode)
+                print(f"  {_mode}: filled {n_scaled} new participant segment(s) (LLM-free).")
+            else:
+                pinned = resolve_pinned_classifier_config(output_dir, 'theme', config, framework=framework)
+                all_segments = stage_classify_theme(
+                    pinned, framework,
+                    segments=all_segments, output_dir=output_dir, observer=observer,
+                    only_session_ids=new_sids,
+                )
+                kinds_applied.append('theme')
 
         if 'purer' in manifest and config.run_purer_labeler and any(
                 s.speaker == 'therapist' for s in all_segments):
@@ -1807,13 +1924,17 @@ def run_incremental_pipeline(
     confidence_tier_config = asdict(config.confidence_tiers)
     _msdir = _paths.master_segments_dir(output_dir)
     os.makedirs(_msdir, exist_ok=True)
-    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, output_dir)
+    # When the operator picked a cheap mode for the new data (informed by the IRR picker),
+    # that choice authorizes promoting the new probe/GNN fills for THIS batch — otherwise fall
+    # back to the standing per-project gate. The probe/GNN still fill only BELOW the LLM.
+    _probe_ready = (classify_mode == 'probe') or _probe_promotion_flag(config, output_dir)
+    _gnn_ready = (classify_mode == 'gnn') or _gnn_promotion_flag(config, output_dir)
     master_df = assemble_master_dataset(
         all_segments,
         os.path.join(_msdir, 'master_segments.csv'),
         confidence_tiers=confidence_tier_config,
-        gnn_authoritative=_gnn_auth,
-        gate_passed=_gate_ok,
+        probe_ready=_probe_ready,
+        gnn_ready=_gnn_ready,
     )
 
     # ------------------------------------------------------------------
@@ -2103,14 +2224,32 @@ def run_full_pipeline(
     confidence_tier_config = asdict(config.confidence_tiers)
     _msdir = _paths.master_segments_dir(output_dir)
     os.makedirs(_msdir, exist_ok=True)
-    _gnn_auth, _gate_ok = _gnn_promotion_flags(config, output_dir)
+    _probe_ready = _probe_promotion_flag(config, output_dir)
+    _gnn_ready = _gnn_promotion_flag(config, output_dir)
     master_df = assemble_master_dataset(
         all_segments,
         os.path.join(_msdir, 'master_segments.csv'),
         confidence_tiers=confidence_tier_config,
-        gnn_authoritative=_gnn_auth,
-        gate_passed=_gate_ok,
+        probe_ready=_probe_ready,
+        gnn_ready=_gnn_ready,
     )
+
+    # Stage 6b — OPTIONAL probe scaling tier (LLM-free; methodology §8.6). Train + gate the
+    # probe on the assembled labels; if its per-project gate passes, FILL unlabeled
+    # participant segments (probe_consensus, below the LLM) and re-assemble. At initial-run
+    # scale every segment is LLM-labeled, so this typically fills 0 — its value is the gate
+    # report; the fill pays off at add-data / bulk-corpus time.
+    if getattr(getattr(config, 'probe', None), 'enabled', False):
+        _n_probe = _run_probe_stage(config, output_dir, master_df, all_segments)
+        if _n_probe:
+            _probe_ready = _probe_promotion_flag(config, output_dir)
+            master_df = assemble_master_dataset(
+                all_segments,
+                os.path.join(_msdir, 'master_segments.csv'),
+                confidence_tiers=confidence_tier_config,
+                probe_ready=_probe_ready,
+                gnn_ready=_gnn_ready,
+            )
 
     observer.on_stage_complete(
         "Dataset Assembly",
