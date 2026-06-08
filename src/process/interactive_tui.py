@@ -1123,9 +1123,8 @@ def _recommend_add_data_mode(probe: dict, gnn: dict, n_new: Optional[int]):
                        'here and stays the human-level label of record.')
     if probe_ready:
         pk = probe.get('human_kappa')
-        return 'probe', (f'a larger addition and the probe gate passed (↔human κ '
-                         f'{pk:.2f}{"" if pk is None else ""}); it scales LLM-free, tagged '
-                         'below the LLM.' if pk is not None else
+        return 'probe', (f'a larger addition and the probe gate passed (↔human κ {pk:.2f}); '
+                         'it scales LLM-free, tagged below the LLM.' if pk is not None else
                          'a larger addition and the probe gate passed; it scales LLM-free.')
     return 'gnn', ('a larger addition and the GNN gate passed; it scales LLM-free, '
                    'tagged below the LLM.')
@@ -1433,7 +1432,12 @@ def _action_probe_classify(config, output_dir: str, state: dict) -> None:
     try:
         n = _pc.classify_with_probe(df, output_dir, probe_cfg)
         _ok(f'Probe labeled {n} previously-unlabeled participant segment(s) → probe_labels overlay.')
-        _info('Run "Assemble master dataset" to fold probe_consensus labels into master_segments.')
+        if n:
+            # The operator opted in here (gate passed, or confirmed despite a failing gate),
+            # so promote this batch's fills on the re-assemble — still BELOW the LLM.
+            from .orchestrator import stage_assemble
+            stage_assemble(config, output_dir=output_dir, probe_ready=True)
+            _ok('master_segments updated — probe_consensus labels folded in (below the LLM).')
     except Exception as exc:
         _err(f'probe classify failed: {exc}')
     _pause()
