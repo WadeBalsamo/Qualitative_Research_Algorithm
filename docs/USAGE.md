@@ -49,6 +49,11 @@ python qra.py run \
 | `python qra.py classify -o ./output/ --what vaamr` | Run VAAMR classification only |
 | `python qra.py analyze -o ./output/` | Generate analysis reports (superposition, mechanism, efficacy, language atlas) |
 | `python qra.py analyze -o ./output/ --gnn` | Analysis + GNN layer (segment positioning, cue motifs, triangulation, coupling) |
+| `python qra.py probe train -o ./output/` | Fit LLM-free VAAMR scaler (per-rater ensemble) + run reliability gate |
+| `python qra.py probe status -o ./output/` | Show gate verdict (probe↔human / probe↔LLM κ) |
+| `python qra.py probe classify -o ./output/` | LLM-free fill of unlabeled participant segments (gated; abstains; `probe_consensus` tier) |
+| `python qra.py irr import -o ./output/ --csv data/irr/human_coded_testsets.csv` | Import human-coded CSV → `qra.db` (ground truth) |
+| `python qra.py irr run -o ./output/` | Pull live LLM+GNN, compute κ/α, write IRR report + figures |
 
 ## Workflow for Existing Projects
 
@@ -454,6 +459,7 @@ Running `python qra.py` with **no subcommand** launches the interactive TUI (see
 | `validate` | Refresh human/AI validation artifacts without re-classifying |
 | `analyze` | Post-hoc results analysis (`--gnn` / `--no-gnn` to force the GNN layer) |
 | `gnn train` / `classify` / `status` | GNN consensus layer: train + reliability gate / LLM-free scale-mode classify / κ verdict |
+| `probe train` / `classify` / `status` | Probe scaler (recommended LLM-free VAAMR): fit per-rater ensemble + gate / fill unlabeled segments / κ verdict |
 | `migrate` | Import a legacy (pre-SQLite, JSONL) project into `qra.db` (preview by default; `--run` to perform) |
 | `reclassify-run` | Redo a single classification run (e.g. fix one run's model) |
 | `testset create` / `refresh` / `list` | Manage frozen validation test sets (`--kind vaamr\|purer\|codebook`) |
@@ -1055,15 +1061,17 @@ Each row in `master_segments.csv` (and each segment row joined from `qra.db`) is
 
 | File | Description |
 |------|-------------|
-| `llm_client.py` | Unified LLM API client (OpenRouter, Ollama, LM Studio) |
+| `llm_client.py` | Unified LLM API client (OpenRouter, Ollama, LM Studio, HuggingFace, Replicate) |
 | `data_structures.py` | `Segment` dataclass and core data structures |
-| `llm_classifier.py` | Theme, PURER, and codebook LLM classification logic |
-| `majority_vote.py` | Interrater reliability voting aggregation |
+| `theme_llm/llm_classifier.py` | Zero-shot VAAMR/PURER LLM prompt construction and response parsing |
+| `codebook_multilabel/embedding_classifier.py` | Sentence-transformer embedding-based VCE codebook classification |
+| `codebook_multilabel/ensemble.py` | Embedding + LLM ensemble reconciliation for codebook labels |
+| `codebook_multilabel/config.py` | Codebook classifier configuration |
+| `probe/probe_classifier.py` | **LLM-free VAAMR scaler** — per-rater ensemble (one class-weighted L2-LogReg probe per LLM rater, mean proba) + calibration/abstention; `train_probe`/`evaluate_probe`(gate)/`classify_with_probe` |
+| `majority_vote.py` | Ballot aggregation (unanimous/majority/split/none) |
 | `response_parser.py` | Parse LLM outputs into structured format |
-| `reliability.py` | Reliability metrics (Krippendorff's alpha, etc.) |
-| `validation.py` | Evaluation set creation and consistency checking |
-| `model_loader.py` | HuggingFace model downloading and loading |
-| `classification_loop.py` | Classification loop with checkpointing |
+| `classification_loop.py` | Multi-run consensus voting with checkpointing |
+| `zeroshot_reporting.py` | `write_zeroshot_report` — graded `--test-zeroshot` content-validity report |
 
 ### Process (`process/`)
 
@@ -1151,18 +1159,22 @@ Each row in `master_segments.csv` (and each segment row joined from `qra.db`) is
 | `validation.py` | Out-of-sample reliability gate (per-stage/per-move κ, rare-stage floor) + scale-mode simulation + persisted gate verdict |
 | `reports.py` | GNN artifact writers: CSVs and human-readable reports |
 
-### Theme Framework (Markdown Source)
+### Constructs — Framework and Codebook Definitions (`constructs/`)
 
-The VAAMR and PURER framework definitions are now maintained as Markdown files in the repository root (`VAAMR_FRAMEWORK.md` and `PURER.md`). These files are parsed at runtime by the theme framework loader (`src/theme_framework/markdown_loader.py`) to generate the framework objects used in classification. This allows non-technical users to edit framework definitions directly without touching Python code.
-
-**Parsing Contract**: The Markdown files must follow a specific format (see `MODULARIZATION_UPDATE.md` for details). Do not alter the YAML frontmatter or heading patterns unless you intend to change the framework identity. Edits to definitions, exemplars, and criteria are safe and encouraged.
+VAAMR, PURER, and VCE codebook definitions live in `frameworks/*.md` files parsed at runtime. Edit the markdown files to change definitions — not the Python wrappers.
 
 | File | Description |
 |------|-------------|
-| `theme_framework/markdown_loader.py` | Parses VAAMR/PURER Markdown → `ThemeFramework` |
-| `theme_framework/theme_schema.py` | `ThemeDefinition` and `ThemeFramework` base classes |
-| `theme_framework/registry.py` | Name-to-path dispatch for frameworks |
-| `theme_framework/config.py` | `ThemeClassificationConfig` dataclass |
+| `constructs/vaamr.py` | `get_vaamr_framework()` — thin wrapper over `frameworks/VAAMR_FRAMEWORK.md` |
+| `constructs/purer.py` | `get_purer_framework()` — thin wrapper over `frameworks/PURER_FRAMEWORK.md` |
+| `constructs/markdown_loader.py` | Parses `frameworks/*_FRAMEWORK.md` → `ThemeFramework` / `ThemeDefinition` objects |
+| `constructs/theme_schema.py` | `ThemeDefinition`, `ThemeFramework` dataclasses |
+| `constructs/registry.py` | `load(name)` → `ThemeFramework`; name-to-path dispatch (cached) |
+| `constructs/config.py` | `ThemeClassificationConfig` dataclass |
+| `constructs/codebook/__init__.py` | Codebook construct module |
+| `constructs/codebook/phenomenology_codebook.py` | `get_phenomenology_codebook()` — 54 VCE codes, parsed from `frameworks/PHENOMENOLOGY_CODEBOOK.md` |
+| `constructs/codebook/codebook_schema.py` | `CodeDefinition`, `Codebook` dataclasses |
+| `constructs/codebook/markdown_loader.py` | Parses `frameworks/PHENOMENOLOGY_CODEBOOK.md` → `Codebook` |
 
 ## Citation
 
