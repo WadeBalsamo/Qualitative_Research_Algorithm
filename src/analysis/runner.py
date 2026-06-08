@@ -93,7 +93,8 @@ def _load_analysis_context(output_dir: str, llm_log_path, log) -> _AnalysisConte
 
 
 def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None,
-                 force_gnn: bool = None, force_classifier: bool = None) -> dict:
+                 force_gnn: bool = None, force_classifier: bool = None,
+                 force_segmentation_sensitivity: bool = None) -> dict:
     """Execute the full results analysis on an existing pipeline output directory.
 
     Reads master_segments.{jsonl,csv} and theme_definitions.json from output_dir.
@@ -219,6 +220,23 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
         os.makedirs(_d, exist_ok=True)
 
     files_generated = []
+
+    # ----------------------------------------------------------------
+    # 1b. LLM justification-grounding audit (default ON; stdlib-only, cheap).
+    #     Measures whether each classifier justification quotes the segment it
+    #     labels — bounds confabulation, complements the human↔LLM IRR.
+    # ----------------------------------------------------------------
+    log("[1b/8] Auditing LLM justification grounding...")
+    try:
+        from .reports.justification_grounding import generate_justification_grounding_report
+        jg_path = generate_justification_grounding_report(df, framework, output_dir, df_all=df_all)
+        if jg_path:
+            files_generated.append(jg_path)
+            log("    Justification grounding: 06_reports/06_classifier/justification_grounding.txt")
+    except Exception as e:
+        print(f"  Warning: justification-grounding audit failed: {e}")
+        if verbose:
+            traceback.print_exc()
 
     # ----------------------------------------------------------------
     # 2. Per-session analyses
@@ -616,6 +634,30 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                     log("    Language atlas: 06_reports/02_mechanism/language_atlas.txt")
             except Exception as e:
                 print(f"  Warning: language atlas failed: {e}")
+                if verbose:
+                    traceback.print_exc()
+
+    # ----------------------------------------------------------------
+    # 12a. Segmentation-sensitivity check (OPT-IN; LLM-free). Re-segments the
+    #      raw transcripts under a perturbation grid, reuses the frozen VAAMR
+    #      labels (no re-classification), recomputes H1 → stability verdict.
+    # ----------------------------------------------------------------
+    _val_cfg = getattr(_pipeline_config, 'validation', None) if _pipeline_config is not None else None
+    _seg_sens_on = getattr(_val_cfg, 'run_segmentation_sensitivity', False) if _val_cfg is not None else False
+    if force_segmentation_sensitivity is not None:
+        _seg_sens_on = force_segmentation_sensitivity
+    if _seg_sens_on:
+        if _pipeline_config is None:
+            log("    Segmentation-sensitivity requested but no pipeline config loaded — skipped.")
+        else:
+            try:
+                from .segmentation_sensitivity import run_segmentation_sensitivity
+                log("[12a/8] Running segmentation-sensitivity check (LLM refinement off)...")
+                ss_result = run_segmentation_sensitivity(output_dir, _pipeline_config, verbose=verbose)
+                files_generated.extend(ss_result.get('files_written', []))
+                log(f"    Segmentation sensitivity: {ss_result.get('verdict', 'n/a')}")
+            except Exception as e:
+                print(f"  Warning: segmentation-sensitivity check failed: {e}")
                 if verbose:
                     traceback.print_exc()
 
