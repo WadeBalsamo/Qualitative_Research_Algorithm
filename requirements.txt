@@ -78,6 +78,17 @@ rich==14.3.3
 # Validation & statistics
 krippendorff==0.8.2
 
+# Optional: Bayesian mechanism estimator (analysis/mechanism_model.py, estimator='bayesian'|'both').
+# NOT a live dependency — installing it here would BREAK `pip install -r requirements.txt`,
+# because bambi/pymc/pytensor require numpy>=2.0 while the pinned transformers==4.42.4 above
+# requires numpy<2.0 (the two cannot coexist in this venv). The in-process default estimator is
+# the frequentist ordinal + Gaussian-mixed interaction model (statsmodels + sklearn, numpy-agnostic),
+# which needs nothing beyond the packages already pinned above. To run the opt-in Bayesian arm,
+# create an ISOLATED environment with numpy>=2.0 and:
+#   pip install bambi>=0.13 pymc>=5.10 arviz>=0.17
+# then run experiments/mechanism/run_interaction_model.py there. The pipeline lazy-imports bambi
+# and degrades gracefully (logs a notice, falls back to the frequentist arm) when it is absent.
+
 # Dependency for transformers' filesystem access
 fsspec==2026.1.0
 huggingface-hub==0.24.6

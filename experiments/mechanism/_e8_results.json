@@ -1,0 +1,601 @@
+{
+  "design": {
+    "n_cells": 21,
+    "n_blocks": 160,
+    "n_participants": 19,
+    "K_boot": 500,
+    "seed": 42,
+    "in_support_min": 4
+  },
+  "median_ci_widening": 0.88,
+  "n_cells_boot_wider": 4,
+  "n_cells_boot_narrower": 16,
+  "n_in_support": 12,
+  "n_thin_flags": 9,
+  "cells": [
+    {
+      "from_stage": 0,
+      "from_name": "Vigilance",
+      "move": 0,
+      "move_name": "Phenomenology",
+      "n": 4,
+      "n_participants": 3,
+      "mean_delta": 1.765,
+      "naive_ci": [
+        0.2688,
+        3.2612
+      ],
+      "naive_half_width": 1.4962,
+      "boot_ci": [
+        0.5,
+        3.2451
+      ],
+      "boot_half_width": 1.3725,
+      "ci_widening": 0.92,
+      "in_support": true,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 0,
+      "from_name": "Vigilance",
+      "move": 2,
+      "move_name": "Reframing",
+      "n": 2,
+      "n_participants": 2,
+      "mean_delta": 2.0893,
+      "naive_ci": [
+        0.1643,
+        4.0143
+      ],
+      "naive_half_width": 1.925,
+      "boot_ci": [
+        1.1071,
+        3.0714
+      ],
+      "boot_half_width": 0.9821,
+      "ci_widening": 0.51,
+      "in_support": false,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 0,
+      "from_name": "Vigilance",
+      "move": 3,
+      "move_name": "Education",
+      "n": 16,
+      "n_participants": 9,
+      "mean_delta": 1.2484,
+      "naive_ci": [
+        0.5847,
+        1.9121
+      ],
+      "naive_half_width": 0.6637,
+      "boot_ci": [
+        0.719,
+        2.121
+      ],
+      "boot_half_width": 0.701,
+      "ci_widening": 1.06,
+      "in_support": true,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 1,
+      "from_name": "Avoidance",
+      "move": 0,
+      "move_name": "Phenomenology",
+      "n": 3,
+      "n_participants": 2,
+      "mean_delta": 1.7106,
+      "naive_ci": [
+        0.875,
+        2.5462
+      ],
+      "naive_half_width": 0.8356,
+      "boot_ci": [
+        1.3516,
+        2.4286
+      ],
+      "boot_half_width": 0.5385,
+      "ci_widening": 0.64,
+      "in_support": false,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 1,
+      "from_name": "Avoidance",
+      "move": 2,
+      "move_name": "Reframing",
+      "n": 3,
+      "n_participants": 2,
+      "mean_delta": 0.8971,
+      "naive_ci": [
+        0.1188,
+        1.6753
+      ],
+      "naive_half_width": 0.7783,
+      "boot_ci": [
+        0.5,
+        1.6912
+      ],
+      "boot_half_width": 0.5956,
+      "ci_widening": 0.77,
+      "in_support": false,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 1,
+      "from_name": "Avoidance",
+      "move": 3,
+      "move_name": "Education",
+      "n": 13,
+      "n_participants": 7,
+      "mean_delta": 0.2043,
+      "naive_ci": [
+        -0.483,
+        0.8917
+      ],
+      "naive_half_width": 0.6874,
+      "boot_ci": [
+        -0.4458,
+        0.9698
+      ],
+      "boot_half_width": 0.7078,
+      "ci_widening": 1.03,
+      "in_support": true,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 2,
+      "from_name": "AttnReg",
+      "move": 0,
+      "move_name": "Phenomenology",
+      "n": 18,
+      "n_participants": 11,
+      "mean_delta": 0.2563,
+      "naive_ci": [
+        -0.2909,
+        0.8035
+      ],
+      "naive_half_width": 0.5472,
+      "boot_ci": [
+        -0.272,
+        0.8732
+      ],
+      "boot_half_width": 0.5726,
+      "ci_widening": 1.05,
+      "in_support": true,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 2,
+      "from_name": "AttnReg",
+      "move": 1,
+      "move_name": "Utilization",
+      "n": 3,
+      "n_participants": 3,
+      "mean_delta": 0.2307,
+      "naive_ci": [
+        -0.8836,
+        1.345
+      ],
+      "naive_half_width": 1.1143,
+      "boot_ci": [
+        -0.6182,
+        1.3103
+      ],
+      "boot_half_width": 0.9643,
+      "ci_widening": 0.87,
+      "in_support": false,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 2,
+      "from_name": "AttnReg",
+      "move": 2,
+      "move_name": "Reframing",
+      "n": 8,
+      "n_participants": 3,
+      "mean_delta": -0.0547,
+      "naive_ci": [
+        -0.9082,
+        0.7987
+      ],
+      "naive_half_width": 0.8535,
+      "boot_ci": [
+        -0.2,
+        0.0139
+      ],
+      "boot_half_width": 0.107,
+      "ci_widening": 0.13,
+      "in_support": true,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 2,
+      "from_name": "AttnReg",
+      "move": 3,
+      "move_name": "Education",
+      "n": 23,
+      "n_participants": 11,
+      "mean_delta": 0.069,
+      "naive_ci": [
+        -0.3476,
+        0.4856
+      ],
+      "naive_half_width": 0.4166,
+      "boot_ci": [
+        -0.2616,
+        0.4775
+      ],
+      "boot_half_width": 0.3695,
+      "ci_widening": 0.89,
+      "in_support": true,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 2,
+      "from_name": "AttnReg",
+      "move": 4,
+      "move_name": "Reinforcement",
+      "n": 4,
+      "n_participants": 3,
+      "mean_delta": 1.046,
+      "naive_ci": [
+        0.2996,
+        1.7923
+      ],
+      "naive_half_width": 0.7464,
+      "boot_ci": [
+        0.3929,
+        1.7081
+      ],
+      "boot_half_width": 0.6576,
+      "ci_widening": 0.88,
+      "in_support": true,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 3,
+      "from_name": "Metacog",
+      "move": 0,
+      "move_name": "Phenomenology",
+      "n": 2,
+      "n_participants": 2,
+      "mean_delta": 0.6995,
+      "naive_ci": [
+        0.5093,
+        0.8898
+      ],
+      "naive_half_width": 0.1902,
+      "boot_ci": [
+        0.6025,
+        0.7966
+      ],
+      "boot_half_width": 0.0971,
+      "ci_widening": 0.51,
+      "in_support": false,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 3,
+      "from_name": "Metacog",
+      "move": 1,
+      "move_name": "Utilization",
+      "n": 2,
+      "n_participants": 2,
+      "mean_delta": -1.209,
+      "naive_ci": [
+        -1.6185,
+        -0.7994
+      ],
+      "naive_half_width": 0.4095,
+      "boot_ci": [
+        -1.4179,
+        -1.0
+      ],
+      "boot_half_width": 0.209,
+      "ci_widening": 0.51,
+      "in_support": false,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 3,
+      "from_name": "Metacog",
+      "move": 2,
+      "move_name": "Reframing",
+      "n": 2,
+      "n_participants": 2,
+      "mean_delta": 0.5662,
+      "naive_ci": [
+        0.3131,
+        0.8192
+      ],
+      "naive_half_width": 0.253,
+      "boot_ci": [
+        0.4371,
+        0.6952
+      ],
+      "boot_half_width": 0.1291,
+      "ci_widening": 0.51,
+      "in_support": false,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 3,
+      "from_name": "Metacog",
+      "move": 3,
+      "move_name": "Education",
+      "n": 14,
+      "n_participants": 8,
+      "mean_delta": -0.7877,
+      "naive_ci": [
+        -1.4017,
+        -0.1738
+      ],
+      "naive_half_width": 0.6139,
+      "boot_ci": [
+        -1.4263,
+        -0.2692
+      ],
+      "boot_half_width": 0.5786,
+      "ci_widening": 0.94,
+      "in_support": true,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 3,
+      "from_name": "Metacog",
+      "move": 4,
+      "move_name": "Reinforcement",
+      "n": 3,
+      "n_participants": 2,
+      "mean_delta": 0.151,
+      "naive_ci": [
+        -1.058,
+        1.3601
+      ],
+      "naive_half_width": 1.2091,
+      "boot_ci": [
+        -1.08,
+        0.7666
+      ],
+      "boot_half_width": 0.9233,
+      "ci_widening": 0.76,
+      "in_support": false,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 4,
+      "from_name": "Reappraisal",
+      "move": 0,
+      "move_name": "Phenomenology",
+      "n": 16,
+      "n_participants": 8,
+      "mean_delta": -0.7662,
+      "naive_ci": [
+        -1.2374,
+        -0.2951
+      ],
+      "naive_half_width": 0.4712,
+      "boot_ci": [
+        -1.3764,
+        -0.3151
+      ],
+      "boot_half_width": 0.5307,
+      "ci_widening": 1.13,
+      "in_support": true,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 4,
+      "from_name": "Reappraisal",
+      "move": 1,
+      "move_name": "Utilization",
+      "n": 1,
+      "n_participants": 1,
+      "mean_delta": -0.3103,
+      "naive_ci": [
+        null,
+        null
+      ],
+      "naive_half_width": null,
+      "boot_ci": [
+        null,
+        null
+      ],
+      "boot_half_width": null,
+      "ci_widening": null,
+      "in_support": false,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 4,
+      "from_name": "Reappraisal",
+      "move": 2,
+      "move_name": "Reframing",
+      "n": 4,
+      "n_participants": 4,
+      "mean_delta": -1.3487,
+      "naive_ci": [
+        -2.5878,
+        -0.1096
+      ],
+      "naive_half_width": 1.2391,
+      "boot_ci": [
+        -2.5479,
+        -0.2423
+      ],
+      "boot_half_width": 1.1528,
+      "ci_widening": 0.93,
+      "in_support": true,
+      "thin_support_large_effect": true
+    },
+    {
+      "from_stage": 4,
+      "from_name": "Reappraisal",
+      "move": 3,
+      "move_name": "Education",
+      "n": 8,
+      "n_participants": 7,
+      "mean_delta": -1.1607,
+      "naive_ci": [
+        -2.0047,
+        -0.3168
+      ],
+      "naive_half_width": 0.844,
+      "boot_ci": [
+        -1.9258,
+        -0.3327
+      ],
+      "boot_half_width": 0.7966,
+      "ci_widening": 0.94,
+      "in_support": true,
+      "thin_support_large_effect": false
+    },
+    {
+      "from_stage": 4,
+      "from_name": "Reappraisal",
+      "move": 4,
+      "move_name": "Reinforcement",
+      "n": 11,
+      "n_participants": 4,
+      "mean_delta": -0.5988,
+      "naive_ci": [
+        -1.0539,
+        -0.1437
+      ],
+      "naive_half_width": 0.4551,
+      "boot_ci": [
+        -0.9253,
+        -0.3398
+      ],
+      "boot_half_width": 0.2928,
+      "ci_widening": 0.64,
+      "in_support": true,
+      "thin_support_large_effect": false
+    }
+  ],
+  "in_support_ranking": [
+    {
+      "cell": "Vigilance\u00d7Phenomenology",
+      "n": 4,
+      "mean_delta": 1.765,
+      "boot_ci": [
+        0.5,
+        3.2451
+      ]
+    },
+    {
+      "cell": "Vigilance\u00d7Education",
+      "n": 16,
+      "mean_delta": 1.2484,
+      "boot_ci": [
+        0.719,
+        2.121
+      ]
+    },
+    {
+      "cell": "AttnReg\u00d7Reinforcement",
+      "n": 4,
+      "mean_delta": 1.046,
+      "boot_ci": [
+        0.3929,
+        1.7081
+      ]
+    },
+    {
+      "cell": "AttnReg\u00d7Phenomenology",
+      "n": 18,
+      "mean_delta": 0.2563,
+      "boot_ci": [
+        -0.272,
+        0.8732
+      ]
+    },
+    {
+      "cell": "Avoidance\u00d7Education",
+      "n": 13,
+      "mean_delta": 0.2043,
+      "boot_ci": [
+        -0.4458,
+        0.9698
+      ]
+    },
+    {
+      "cell": "AttnReg\u00d7Education",
+      "n": 23,
+      "mean_delta": 0.069,
+      "boot_ci": [
+        -0.2616,
+        0.4775
+      ]
+    },
+    {
+      "cell": "AttnReg\u00d7Reframing",
+      "n": 8,
+      "mean_delta": -0.0547,
+      "boot_ci": [
+        -0.2,
+        0.0139
+      ]
+    },
+    {
+      "cell": "Reappraisal\u00d7Reinforcement",
+      "n": 11,
+      "mean_delta": -0.5988,
+      "boot_ci": [
+        -0.9253,
+        -0.3398
+      ]
+    },
+    {
+      "cell": "Reappraisal\u00d7Phenomenology",
+      "n": 16,
+      "mean_delta": -0.7662,
+      "boot_ci": [
+        -1.3764,
+        -0.3151
+      ]
+    },
+    {
+      "cell": "Metacog\u00d7Education",
+      "n": 14,
+      "mean_delta": -0.7877,
+      "boot_ci": [
+        -1.4263,
+        -0.2692
+      ]
+    },
+    {
+      "cell": "Reappraisal\u00d7Education",
+      "n": 8,
+      "mean_delta": -1.1607,
+      "boot_ci": [
+        -1.9258,
+        -0.3327
+      ]
+    },
+    {
+      "cell": "Reappraisal\u00d7Reframing",
+      "n": 4,
+      "mean_delta": -1.3487,
+      "boot_ci": [
+        -2.5479,
+        -0.2423
+      ]
+    }
+  ],
+  "thin_support_flags": [
+    "Vigilance\u00d7Phenomenology (n=4, \u0394=1.765)",
+    "Vigilance\u00d7Reframing (n=2, \u0394=2.0893)",
+    "Avoidance\u00d7Phenomenology (n=3, \u0394=1.7106)",
+    "Avoidance\u00d7Reframing (n=3, \u0394=0.8971)",
+    "AttnReg\u00d7Reinforcement (n=4, \u0394=1.046)",
+    "Metacog\u00d7Phenomenology (n=2, \u0394=0.6995)",
+    "Metacog\u00d7Utilization (n=2, \u0394=-1.209)",
+    "Metacog\u00d7Reframing (n=2, \u0394=0.5662)",
+    "Reappraisal\u00d7Reframing (n=4, \u0394=-1.3487)"
+  ],
+  "note": "The participant-bootstrap CI is the training-uncertainty interval (resamples whole participants); the naive CI is SEM across blocks (ignores nesting). Here the two are COMPARABLE in width (median ratio \u22480.9; mixed direction) \u2014 at these cell sizes participant clustering does not dominate, and the percentile bootstrap is itself unstable in the few-participant cells. The dominant honesty problem is THIN SUPPORT: ~9/21 cells are n<5 with large effects. Counterfactual claims should be read only off in-support cells (n>=4), with the bootstrap CI, never the thin cells."
+}

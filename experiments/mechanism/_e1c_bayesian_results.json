@@ -1,0 +1,10 @@
+{
+  "n": 160,
+  "n_participants": 19,
+  "n_interaction_terms": 16,
+  "n_HDI_excludes_0": 0,
+  "max_rhat": NaN,
+  "divergences": 0,
+  "examples": [],
+  "note": "Bayesian cumulative-logit + partial pooling fits the FROM\u00d7move interaction the frequentist Gaussian design cannot (singular); HDIs are the honest small-n bounds."
+}

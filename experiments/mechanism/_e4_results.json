@@ -1,0 +1,268 @@
+{
+  "design": {
+    "n_modal_rows": 71,
+    "n_participants": 20,
+    "seed": 42
+  },
+  "trajectory": {
+    "n_rows": 34,
+    "n_participants": 14,
+    "mixed": {
+      "lag_cue_frac_forward": {
+        "coef": -0.2815,
+        "ci_lo": -1.7039,
+        "ci_hi": 1.1409,
+        "p": 0.6981,
+        "excludes_0": false
+      },
+      "session_number": {
+        "coef": 0.0792,
+        "ci_lo": -0.1689,
+        "ci_hi": 0.3272,
+        "p": 0.5316,
+        "excludes_0": false
+      }
+    },
+    "ordinal": {
+      "lag_cue_frac_forward": {
+        "coef": -0.3906,
+        "p": 0.6679
+      },
+      "session_number": {
+        "coef": 0.0972,
+        "p": 0.5455
+      }
+    }
+  },
+  "within_between": {
+    "within_session_move_effects": [
+      {
+        "move": 0,
+        "move_name": "Phenomenology",
+        "n": 43,
+        "mean_delta": 0.1382,
+        "ci_lo": -0.1406,
+        "ci_hi": 0.4173
+      },
+      {
+        "move": 2,
+        "move_name": "Reframing",
+        "n": 19,
+        "mean_delta": 0.1142,
+        "ci_lo": -0.3109,
+        "ci_hi": 0.7366
+      },
+      {
+        "move": 3,
+        "move_name": "Education",
+        "n": 74,
+        "mean_delta": 0.0528,
+        "ci_lo": -0.2586,
+        "ci_hi": 0.4606
+      },
+      {
+        "move": 4,
+        "move_name": "Reinforcement",
+        "n": 18,
+        "mean_delta": -0.1083,
+        "ci_lo": -0.274,
+        "ci_hi": 0.0623
+      },
+      {
+        "move": 1,
+        "move_name": "Utilization",
+        "n": 6,
+        "mean_delta": -0.3393,
+        "ci_lo": -0.9607,
+        "ci_hi": 0.4371
+      }
+    ],
+    "between_session_move_effects": [
+      {
+        "move": 3,
+        "move_name": "Education",
+        "n": 18,
+        "mean_d_modal": 0.5556,
+        "ci_lo": -0.2729,
+        "ci_hi": 1.2667
+      },
+      {
+        "move": 2,
+        "move_name": "Reframing",
+        "n": 4,
+        "mean_d_modal": 0.25,
+        "ci_lo": -0.75,
+        "ci_hi": 1.5
+      },
+      {
+        "move": 4,
+        "move_name": "Reinforcement",
+        "n": 2,
+        "mean_d_modal": 0.0,
+        "ci_lo": 0.0,
+        "ci_hi": 0.0
+      },
+      {
+        "move": 0,
+        "move_name": "Phenomenology",
+        "n": 9,
+        "mean_d_modal": -0.4444,
+        "ci_lo": -1.3,
+        "ci_hi": 0.625
+      },
+      {
+        "move": 1,
+        "move_name": "Utilization",
+        "n": 1,
+        "mean_d_modal": -1.0,
+        "ci_lo": null,
+        "ci_hi": null
+      }
+    ],
+    "between_n_pairs": 34
+  },
+  "routines": {
+    "n_sessions_with_routine": 19,
+    "n_bigram_types": 14,
+    "n_perm": 2000,
+    "transitions": [
+      {
+        "transition": "Education->Education",
+        "from_move": 3,
+        "to_move": 3,
+        "observed": 61,
+        "perm_p": 0.0005
+      },
+      {
+        "transition": "Reframing->Reframing",
+        "from_move": 2,
+        "to_move": 2,
+        "observed": 15,
+        "perm_p": 0.0005
+      },
+      {
+        "transition": "Phenomenology->Phenomenology",
+        "from_move": 0,
+        "to_move": 0,
+        "observed": 36,
+        "perm_p": 0.0015
+      },
+      {
+        "transition": "Utilization->Utilization",
+        "from_move": 1,
+        "to_move": 1,
+        "observed": 4,
+        "perm_p": 0.009
+      },
+      {
+        "transition": "Reinforcement->Reinforcement",
+        "from_move": 4,
+        "to_move": 4,
+        "observed": 14,
+        "perm_p": 0.0235
+      },
+      {
+        "transition": "Phenomenology->Education",
+        "from_move": 0,
+        "to_move": 3,
+        "observed": 2,
+        "perm_p": 0.7161
+      },
+      {
+        "transition": "Reinforcement->Reframing",
+        "from_move": 4,
+        "to_move": 2,
+        "observed": 1,
+        "perm_p": 0.7896
+      },
+      {
+        "transition": "Education->Utilization",
+        "from_move": 3,
+        "to_move": 1,
+        "observed": 2,
+        "perm_p": 0.915
+      },
+      {
+        "transition": "Education->Phenomenology",
+        "from_move": 3,
+        "to_move": 0,
+        "observed": 1,
+        "perm_p": 0.9715
+      },
+      {
+        "transition": "Education->Reframing",
+        "from_move": 3,
+        "to_move": 2,
+        "observed": 1,
+        "perm_p": 0.9835
+      },
+      {
+        "transition": "Reinforcement->Education",
+        "from_move": 4,
+        "to_move": 3,
+        "observed": 1,
+        "perm_p": 0.9955
+      },
+      {
+        "transition": "Education->Reinforcement",
+        "from_move": 3,
+        "to_move": 4,
+        "observed": 1,
+        "perm_p": 0.997
+      },
+      {
+        "transition": "Reframing->Phenomenology",
+        "from_move": 2,
+        "to_move": 0,
+        "observed": 1,
+        "perm_p": 0.999
+      },
+      {
+        "transition": "Phenomenology->Reframing",
+        "from_move": 0,
+        "to_move": 2,
+        "observed": 1,
+        "perm_p": 1.0
+      }
+    ],
+    "n_exceed_null_p05": 5,
+    "exceed_null": [
+      {
+        "transition": "Education->Education",
+        "from_move": 3,
+        "to_move": 3,
+        "observed": 61,
+        "perm_p": 0.0005
+      },
+      {
+        "transition": "Reframing->Reframing",
+        "from_move": 2,
+        "to_move": 2,
+        "observed": 15,
+        "perm_p": 0.0005
+      },
+      {
+        "transition": "Phenomenology->Phenomenology",
+        "from_move": 0,
+        "to_move": 0,
+        "observed": 36,
+        "perm_p": 0.0015
+      },
+      {
+        "transition": "Utilization->Utilization",
+        "from_move": 1,
+        "to_move": 1,
+        "observed": 4,
+        "perm_p": 0.009
+      },
+      {
+        "transition": "Reinforcement->Reinforcement",
+        "from_move": 4,
+        "to_move": 4,
+        "observed": 14,
+        "perm_p": 0.0235
+      }
+    ],
+    "note": "self-transitions are common; null preserves each session's move multiset so only ORDER structure is tested."
+  }
+}

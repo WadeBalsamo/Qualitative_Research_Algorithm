@@ -1,0 +1,44 @@
+{
+  "design": {
+    "n_blocks": 160,
+    "n_participants": 19,
+    "n_folds": 5,
+    "seed": 42,
+    "pca_k": 8
+  },
+  "embedding_status": "all-MiniLM-L6-v2 (384-d), PCA->8",
+  "arms": {
+    "FROM_only": {
+      "logloss": 1.552376244246059,
+      "logloss_sd": 0.09623773055950921,
+      "acc": 0.2635380241648898,
+      "n_features_base": 5
+    },
+    "PURER_move": {
+      "logloss": 1.5062845231302355,
+      "logloss_sd": 0.14492485386578444,
+      "acc": 0.3748396114664771,
+      "n_features_base": 10
+    },
+    "content_embed": {
+      "logloss": 1.8618970621666366,
+      "logloss_sd": 0.29910436358230974,
+      "acc": 0.22245676380004736,
+      "n_features_base": 5
+    },
+    "both": {
+      "logloss": 1.8324098870843457,
+      "logloss_sd": 0.29326801772585975,
+      "acc": 0.28776119402985073,
+      "n_features_base": 10
+    }
+  },
+  "headline": {
+    "PURER_move_minus_FROM": -0.0461,
+    "content_embed_minus_FROM": 0.3095,
+    "both_minus_FROM": 0.28,
+    "process_minus_content_logloss": -0.3556,
+    "process_beats_content": true
+  },
+  "note": "Participant-grouped StratifiedGroupKFold; embedding StandardScaler+PCA fit on train only. Cue = mean-pooled therapist text per block. Process feature = dominant PURER move one-hot."
+}

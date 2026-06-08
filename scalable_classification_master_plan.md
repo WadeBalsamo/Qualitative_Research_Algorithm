@@ -6,14 +6,14 @@
 > (H5). The LLM consensus stays the label of record; the probe fills gaps *below* it, cheaply, at
 > the larger scale where running the LLM on every segment is impractical.
 >
-> **Companion records:** `graph_experiments.md` (why probe > GNN), `design_decisions.md` (the battery),
+> **Companion records:** `experiments/docs/graph_experiments.md` (why probe > GNN), `experiments/docs/design_decisions.md` (the battery),
 > `docs/methodology.md` §6.4/§8.5 (manuscript), `docs/GNN_MASTER_PLAN.md` §1.1/§4.7 (GNN repositioning).
 
 ---
 
 ## 1. Decision & honest assessment — should the probe scale the LLM?
 
-**Yes, with guardrails.** The pilot battery (`design_decisions.md` §7) settled the architecture
+**Yes, with guardrails.** The pilot battery (`experiments/docs/design_decisions.md` §7) settled the architecture
 question: on identical participant-grouped folds, a class-weighted logistic probe on Qwen3-8B
 embeddings reaches **human κ = 0.365 [0.23, 0.51]** and recovers the rare stages, **beating the GNN**
 (0.36/collapse) and Correct-&-Smooth (0.16). So the probe — not the graph — is the defensible cheap

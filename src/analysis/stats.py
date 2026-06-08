@@ -391,6 +391,261 @@ def mixedlm_delta(df, outcome: str = 'delta_prog', fixed: str = 'C(behavior)',
         return None
 
 
+def _import_ordered_model():
+    """Lazy import of statsmodels' OrderedModel + patsy. Returns (OrderedModel, patsy) or (None, None)."""
+    try:
+        from statsmodels.miscmodels.ordinal_model import OrderedModel  # noqa: F401
+        import patsy  # noqa: F401
+        return OrderedModel, patsy
+    except Exception:                              # pragma: no cover
+        return None, None
+
+
+def ordered_logit(df, outcome: str, fixed: str, distr: str = 'logit') -> Optional[Dict]:
+    """Fit an ordinal cumulative-link model ``outcome ~ fixed`` (ordered logit).
+
+    Wraps statsmodels' ``OrderedModel`` on a patsy design matrix (the intercept is
+    dropped — ``OrderedModel`` carries its own thresholds). The ordinal model respects
+    that the VAAMR arc (0..4) is *ordered*, unlike the Gaussian Δprogression model.
+
+    Returns ``{llf, n_params, aic, n, converged, result}`` (``result`` is the fitted
+    statsmodels object so callers can extract params), or ``None`` when statsmodels/
+    patsy are unavailable or the fit fails (small / singular design). The ``llf`` +
+    ``n_params`` pair powers the additive-vs-interaction likelihood-ratio test.
+
+    CAVEAT (repeated measures): ``OrderedModel`` does not expose cluster-robust
+    covariance, so any in-sample LR test built on this ``llf`` IGNORES within-participant
+    correlation and is anti-conservative for nested data. It must be reported as
+    in-sample/descriptive; leakage-free inference is carried by participant-grouped
+    cross-validation (see ``mechanism_model._earns_its_place``), not by this p-value.
+    """
+    OrderedModel, patsy = _import_ordered_model()
+    if OrderedModel is None:
+        return None
+    try:
+        import numpy as _np
+        y = df[outcome].to_numpy()
+        X = patsy.dmatrix(fixed, df, return_type='dataframe')
+        if 'Intercept' in X.columns:
+            X = X.drop(columns=['Intercept'])
+        if X.shape[1] == 0:
+            return None
+        res = OrderedModel(y, X, distr=distr).fit(method='bfgs', disp=False, maxiter=400)
+        llf = float(res.llf)
+        if not _np.isfinite(llf):
+            return None
+        return {
+            'llf': llf,
+            'n_params': int(X.shape[1]),
+            'aic': float(getattr(res, 'aic', float('nan'))),
+            'n': int(len(y)),
+            'converged': bool(getattr(getattr(res, 'mle_retvals', {}), 'get', lambda *_: True)('converged', True)),
+            'result': res,
+        }
+    except Exception:
+        return None
+
+
+def likelihood_ratio_test(ll_full: float, ll_reduced: float, df_diff: int) -> Dict[str, float]:
+    """χ² likelihood-ratio test: LR = 2(ll_full − ll_reduced) ~ χ²(df_diff).
+
+    Used for additive-vs-interaction model comparison on the ordinal outcome. Returns
+    {LR, df, p_value}; p is NaN without scipy or for a non-positive df.
+    """
+    out = {'LR': float('nan'), 'df': int(df_diff), 'p_value': float('nan')}
+    try:
+        lr = 2.0 * (float(ll_full) - float(ll_reduced))
+        out['LR'] = float(lr)
+        if _sps is not None and df_diff > 0:
+            out['p_value'] = float(_sps.chi2.sf(max(lr, 0.0), df_diff))
+    except Exception:
+        pass
+    return out
+
+
+def mixedlm_interaction(df, outcome: str, fixed: str, group: str) -> Dict:
+    """Fit ``outcome ~ fixed + (1|group)`` and summarise the INTERACTION terms.
+
+    The shipped mechanism mixed model fits only the move main effect (``C(dominant_purer)``);
+    this variant accepts an interaction ``fixed`` (e.g. ``C(from_stage)*C(move)``) — the
+    FROM×move moderation that H2/§7.6 actually claims — and counts interaction contrasts
+    (terms containing ``:``) whose 95% CI excludes 0. Gaussian Δprogression outcome.
+
+    Handles the singular / under-identified design (common at n≈32, where the full
+    interaction is rank-deficient) GRACEFULLY: a failed fit or non-finite CIs are
+    reported as ``singular=True`` rather than raising. Returns a dict with
+    ``{n, n_interaction_terms, n_ci_excludes_0, examples, singular, method}`` (or an
+    ``error`` key when statsmodels is unavailable).
+    """
+    import numpy as _np
+    out = {'n': 0, 'n_interaction_terms': 0, 'n_ci_excludes_0': 0,
+           'examples': [], 'singular': False, 'method': 'none'}
+    res = mixedlm_delta(df, outcome=outcome, fixed=fixed, group=group)
+    if res is None:
+        out['singular'] = True
+        out['method'] = 'unavailable_or_unfit'
+        return out
+    try:
+        params = res.params
+        ci = res.conf_int()
+        inter = [ix for ix in params.index if ':' in str(ix)]
+        out['n_interaction_terms'] = len(inter)
+        excl = []
+        singular = False
+        for ix in inter:
+            lo, hi = float(ci.loc[ix][0]), float(ci.loc[ix][1])
+            if not (_np.isfinite(lo) and _np.isfinite(hi)):
+                singular = True
+                continue
+            if lo > 0 or hi < 0:
+                excl.append(str(ix))
+        out['n_ci_excludes_0'] = len(excl)
+        out['examples'] = excl[:6]
+        out['singular'] = singular
+        out['n'] = int(res.nobs) if hasattr(res, 'nobs') else 0
+        out['method'] = 'mixedlm'
+    except Exception:
+        out['singular'] = True
+        out['method'] = 'parse_failed'
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Confound sensitivity (E-value / Rosenbaum Γ)
+# ---------------------------------------------------------------------------
+
+def e_value(rr: float) -> float:
+    """VanderWeele–Ding E-value for a risk-ratio-scale association.
+
+    The E-value is the minimum strength of association (on the risk-ratio scale) that
+    an unmeasured confounder would need with BOTH the exposure and the outcome to fully
+    explain away an observed association of ``rr``. Symmetric in the protective
+    direction (rr<1 is inverted). Monotone in |log rr| and always ≥ 1 (E=1 at rr=1).
+    Returns NaN for non-positive / non-finite input.
+    """
+    try:
+        rr = float(rr)
+    except (TypeError, ValueError):
+        return float('nan')
+    if not math.isfinite(rr) or rr <= 0:
+        return float('nan')
+    if rr < 1.0:
+        rr = 1.0 / rr
+    return rr + math.sqrt(rr * (rr - 1.0))
+
+
+def smd_to_risk_ratio(smd: float) -> float:
+    """Approximate risk ratio from a standardized mean difference (Chinn 2000; VanderWeele 2017).
+
+    RR ≈ exp(0.91 · SMD). Used to put a continuous Δprogression cell contrast on the
+    risk-ratio scale so an E-value can be computed for it.
+    """
+    try:
+        return float(math.exp(0.91 * float(smd)))
+    except (TypeError, ValueError, OverflowError):
+        return float('nan')
+
+
+def e_value_ci_limit(smd_lo: float, smd_hi: float) -> float:
+    """E-value for the confidence limit closest to the null (SMD = 0).
+
+    VanderWeele & Ding (2017) recommend reporting the E-value for BOTH the point estimate
+    AND the CI limit nearer the null — the point-estimate E-value alone overstates
+    robustness, especially under post-hoc cell selection. This returns the E-value of the
+    SMD-CI bound closer to 0 (converted via ``smd_to_risk_ratio`` then ``e_value``):
+
+      - 1.0 when the 95% CI spans 0 (a trivial confounder already overlaps the null →
+        the association is not robust);
+      - otherwise the E-value of the smaller-magnitude (null-side) limit — the honest
+        "how robust is the *interval*" floor.
+
+    Returns NaN when either limit is non-finite/absent.
+    """
+    try:
+        lo = float(smd_lo)
+        hi = float(smd_hi)
+    except (TypeError, ValueError):
+        return float('nan')
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        return float('nan')
+    if lo <= 0.0 <= hi:                         # CI crosses the null → no robustness
+        return 1.0
+    near = lo if abs(lo) < abs(hi) else hi      # both same sign: the limit nearer 0
+    return e_value(smd_to_risk_ratio(near))
+
+
+def rosenbaum_bounds(deltas: Sequence[float], alpha: float = 0.05,
+                     max_gamma: float = 6.0, step: float = 0.05) -> Dict[str, float]:
+    """Rosenbaum Γ sensitivity bound for a one-sample sign test on signed differences.
+
+    Reports the bias factor Γ — the odds by which an unmeasured confounder could distort
+    treatment (here: move) assignment within a matched stratum — at which the association
+    (median Δ ≠ 0) first becomes non-significant at ``alpha``. Larger Γ ⇒ a more robust
+    association (a stronger hidden bias would be required to overturn it).
+
+    Uses the SIGN test (distribution-free, robust at tiny n) under the worst-case
+    assignment probability p₊ = Γ/(1+Γ). Returns
+    ``{gamma_critical, n, n_positive, direction, method}``. ``gamma_critical`` is 1.0
+    when the association is already non-significant unconfounded, and capped at
+    ``max_gamma`` when it survives the whole grid. NaN when degenerate / scipy absent.
+    """
+    out = {'gamma_critical': float('nan'), 'n': 0, 'n_positive': 0,
+           'direction': 'flat', 'method': 'rosenbaum_sign'}
+    vals = [float(x) for x in deltas if x is not None and x == x and x != 0.0]
+    n = len(vals)
+    out['n'] = n
+    if n < 3 or _sps is None:
+        return out
+    n_pos = int(sum(1 for v in vals if v > 0))
+    out['n_positive'] = n_pos
+    # Majority direction sets the one-sided test; count "successes" in that direction.
+    if n_pos == n - n_pos:
+        out['direction'] = 'flat'
+        out['gamma_critical'] = 1.0
+        return out
+    successes = max(n_pos, n - n_pos)
+    out['direction'] = 'increasing' if n_pos > n - n_pos else 'decreasing'
+
+    gamma = 1.0
+    gamma_critical = max_gamma
+    while gamma <= max_gamma + 1e-9:
+        p_plus = gamma / (1.0 + gamma)
+        # Upper-bound one-sided p-value: P(Binom(n, p_plus) >= successes).
+        upper_p = float(_sps.binom.sf(successes - 1, n, p_plus))
+        if upper_p >= alpha:
+            gamma_critical = round(gamma, 4)
+            break
+        gamma += step
+    out['gamma_critical'] = float(gamma_critical)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Within / between split (Mundlak hybrid decomposition)
+# ---------------------------------------------------------------------------
+
+def within_between_split(df, value_col: str, group_col: str,
+                         out_within: Optional[str] = None,
+                         out_between: Optional[str] = None):
+    """Mundlak within/between decomposition of ``value_col`` by ``group_col``.
+
+    Splits a (possibly time-varying) predictor into its group MEAN (the *between*
+    component — e.g. a participant's overall cue exposure) and the deviation from that
+    mean (the *within* component — momentary fluctuation). Entered together in one
+    model, the two coefficients separate a between-participant association from a
+    within-participant one — the trajectory model's "consolidation vs momentary nudge"
+    contrast. Returns a COPY of ``df`` with the two new columns added. Pure pandas.
+    """
+    import pandas as _pd
+    out_within = out_within or f'{value_col}_within'
+    out_between = out_between or f'{value_col}_between'
+    d = df.copy()
+    grp_mean = d.groupby(group_col)[value_col].transform('mean')
+    d[out_between] = grp_mean
+    d[out_within] = d[value_col] - grp_mean
+    return d
+
+
 def sign_test(n_positive: int, n_total: int) -> Dict[str, float]:
     """Two-sided sign test that the positive fraction differs from 0.5."""
     out = {'n_positive': int(n_positive), 'n_total': int(n_total), 'p_value': float('nan')}

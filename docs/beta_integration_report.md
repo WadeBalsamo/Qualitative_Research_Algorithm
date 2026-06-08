@@ -2,8 +2,8 @@
 
 **Scope.** This report records the review, fixes, and integration that landed two pull requests on `beta`
 together with a reorganized, comprehensively-documented experiments catalog. It is the narrative companion
-to the per-campaign records in `src/experiments/` (start at `src/experiments/CATALOG.md` and
-`src/experiments/WORKFLOW.md`) and the manuscript sections `docs/methodology.md` §8.5 (GNN reliability /
+to the per-campaign records in `experiments/` (start at `experiments/CATALOG.md` and
+`experiments/WORKFLOW.md`) and the manuscript sections `docs/methodology.md` §8.5 (GNN reliability /
 repositioning) and §8.6 (the distillation campaign).
 
 **Corpus throughout:** Move-MORE Cohorts 1–2, `data/Meta`, **n ≈ 32 participants**; 205 LLM-labeled + 134
@@ -25,9 +25,9 @@ is unreachable in principle at this scale and is not the target.
    embeddings. The multi-run **LLM consensus remains the label of record**; everything is
    hypothesis-generating, never causal (n ≈ 32 observational + the elicitation confound).
 2. **PR #9 — experiments archive:** a self-contained, documented archive of **every** VAAMR-classification
-   experiment under `src/experiments/` (the GNN reliability battery + the classification-scaler campaign,
+   experiment under `experiments/` (the GNN reliability battery + the classification-scaler campaign,
    including the failed arms).
-3. **Review fixes** for both PRs, and a **reorganized catalog** (`src/experiments/CATALOG.md` master table +
+3. **Review fixes** for both PRs, and a **reorganized catalog** (`experiments/CATALOG.md` master table +
    promotion ledger; `WORKFLOW.md` refinement process + assessment rubric; README index; per-campaign
    `RESULTS.md`/`CAMPAIGN_LOG.md`).
 
@@ -64,14 +64,14 @@ renames); deleted the old `influence.py` mechanism-on-classifier and its test; s
 
 ### 2.2 PR #9 — experiments archive (`experiments-archive`)
 
-**What it did.** Added `src/experiments/` — a consolidated mirror of the live reliability apparatus
-(`gnn_reliability/`) plus the unique scaler campaign (`classification_scaler/`), the result files, and the
-documentation. Purely additive.
+**What it did.** Added `experiments/` — the consolidated experiments tree: the live reliability apparatus
+(`gnn_reliability/`), the unique scaler campaign (`classification_scaler/`), the narrative docs
+(`docs/`), and the result files. Purely additive.
 
 **Review verdict — safe to merge; reproduce-scripts fixed in integration.**
 - **Non-disruption (the blocking gate) passes entirely:** `git diff --name-only beta...experiments-archive`
-  lists only `src/experiments/**`; the protected paths (`experiments`, `tests`, `src/process|analysis|
-  gnn_layer`, `qra.py`) are byte-identical to beta; nothing in the pipeline imports `src/experiments/`.
+  lists only `experiments/**`; the protected paths (`experiments`, `tests`, `src/process|analysis|
+  gnn_layer`, `qra.py`) are byte-identical to beta; nothing in the pipeline imports `experiments/`.
 - **Experiments run:** all 27 scripts compile; the 15 preserved GNN tests pass; the smoke-run reproduces the
   committed numbers (A1n 0.283/0.365, ens_softavg C=1 0.325/0.389) and the C=4 winner **0.361/0.450** — all
   reproduced live on `data/Meta`.
@@ -85,7 +85,7 @@ documentation. Purely additive.
 ### 3.1 Campaign 1 — GNN reliability battery: **H5 refuted at this scale**
 
 *Question (H5): can a content-similarity GraphSAGE GNN reproduce the LLM VAAMR consensus well enough to
-label new segments LLM-free?* Detail: `src/experiments/gnn_reliability/RESULTS.md`.
+label new segments LLM-free?* Detail: `experiments/gnn_reliability/RESULTS.md`.
 
 | Arm | What was tried | Human κ (n) | LLM κ (205) | Verdict |
 |---|---|---|---|---|
@@ -111,7 +111,7 @@ graph cannot recover is not a topic taxonomy.
 ### 3.2 Campaign 2 — classification-scaler distillation: **a better probe, but a data ceiling**
 
 *Question: can the A1n probe be distilled to LLM-equivalent fidelity?* Detail:
-`src/experiments/classification_scaler/RESULTS.md` + `CAMPAIGN_LOG.md`.
+`experiments/classification_scaler/RESULTS.md` + `CAMPAIGN_LOG.md`.
 
 | ID | Lever | LLM κ (205) | Human κ (66) | Verdict |
 |---|---|---|---|---|
@@ -192,7 +192,7 @@ rebuilds, all default-on at `qra analyze`, all hypothesis-generating:
 
 ---
 
-## 5. The reorganized experiments catalog (`src/experiments/`)
+## 5. The reorganized experiments catalog (`experiments/`)
 
 - **`CATALOG.md`** — one page, every experiment across both campaigns (what was tried, dual-axis κ, worked?)
   + a **promotion ledger**: what graduated into the codebase (participant-grouped CV; class-weighting +
@@ -208,7 +208,7 @@ rebuilds, all default-on at `qra analyze`, all hypothesis-generating:
 
 ## 6. Verification
 
-- **`pytest tests/unit -q` → 3312 passed, 10 skipped, 0 failed** (the +1 is the new mirror drift-guard).
+- **`pytest tests/unit -q` → 3312 passed, 10 skipped, 0 failed**.
 - **Reproduce verified live** on `data/Meta`: A1n 0.2831/0.3652; ens_softavg C=1 0.3254/0.3893; C=4 winner
   0.3608/0.4502 — matching the documented headlines exactly (paired Δ = +0.078).
 - Classifier confirmed **default-OFF**; **LLM consensus remains the label of record**; no causal claims.
