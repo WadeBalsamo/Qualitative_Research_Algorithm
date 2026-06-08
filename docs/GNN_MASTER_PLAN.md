@@ -19,7 +19,7 @@
 > as-built architecture is the right one for it — it is not quite; a dyadic transition model
 > is the recommended successor). Tracks below are "implemented as designed" under the
 > *original* twofold framing; read them through §1.1/§4.7. Authoritative results:
-> root `design_decisions.md` + `graph_experiments.md`; manuscript: `methodology.md` §8.5.
+> `experiments/docs/design_decisions.md` + `experiments/docs/graph_experiments.md`; manuscript: `methodology.md` §8.5.
 
 ---
 
@@ -74,7 +74,7 @@ expression.
 
 ### 1.1 Purpose, REVISED after the Cohorts 1–2 pilot (2026-06-06)
 
-The first real-corpus battery (root `design_decisions.md`, `graph_experiments.md`;
+The first real-corpus battery (`experiments/docs/design_decisions.md`, `experiments/docs/graph_experiments.md`;
 `methodology.md` §8.5, H5/H6) **refutes job (1).** Under leakage-free participant-grouped
 cross-validation a content-similarity graph reproduces the VAAMR consensus at κ ≈ 0.05–0.14
 — far below reliability — and a linear probe on the same Qwen features beats it; a graph
@@ -225,7 +225,7 @@ influence lens.
 
 The §4.2 rejection of CFiCS-style heterogeneity rested on the premise that **"QRA does not have
 CFiCS's few-shot/fine-grained constraint."** The first real-corpus VAAMR gate (workspace
-`./data/Meta`; full writeup in root `qra_gnn_trial_run_report.md` §12) **refutes that premise**:
+`./data/Meta`; full writeup in `experiments/docs/qra_gnn_trial_run_report.md` §12) **refutes that premise**:
 
 - GNN↔LLM **κ=0.247**, GNN↔human **κ=0.053**; **Avoidance and Metacognition recall = 0%** (the graph
   collapses to the majority stage). VAAMR rare-stage classification *is* a fine-grained few-shot
@@ -273,7 +273,7 @@ the larger-N cohorts, where mechanism becomes identifiable.
    flow** (participant turn → therapist cue → next participant turn; the `precipitates` edges), not
    in content similarity. The dense kNN edges dilute that process signal with topical clustering. A
    mechanism graph should be **temporal + precipitates only (directed)**, with kNN dropped or heavily
-   down-weighted — the same edges that hurt the classifier (4.2 of `graph_experiments.md`) are inert
+   down-weighted — the same edges that hurt the classifier (4.2 of `experiments/docs/graph_experiments.md`) are inert
    or harmful for mechanism too.
 
 2. **It is trained as a per-segment classifier, not a *transition* model.** The progression
@@ -538,9 +538,9 @@ gate that is the *hard precondition* for any graph label of record.
   - **Files:** `gnn_layer/validation.py`, `process/orchestrator.py`,
     `process/assembly/master_dataset.py`, tests under `tests/unit/`.
 
-### Track A0 — Reliability recovery battery (VAAMR) — **EXECUTED 2026-06-06; results in `design_decisions.md`**
+### Track A0 — Reliability recovery battery (VAAMR) — **EXECUTED 2026-06-06; results in `experiments/docs/design_decisions.md`**
 
-> **OUTCOME (authoritative record + per-arm ledger: root `design_decisions.md` + `docs/gnn_experiments/ledger.csv`).**
+> **OUTCOME (authoritative record + per-arm ledger: `experiments/docs/design_decisions.md` + `docs/gnn_experiments/ledger.csv`).**
 > A0-pre done (human subset wired into the gate via `analysis/irr_join.py`; production gate human axis
 > κ=0.053 confirmed). Qwen3-8B features via LM Studio `/v1/embeddings` (`embedding_backend='openai'`,
 > 4096-d) — the dominant fix. **Honest participant-grouped CV** revealed the published κ=0.247 was

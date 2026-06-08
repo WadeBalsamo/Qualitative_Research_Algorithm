@@ -1,0 +1,178 @@
+{
+  "design": {
+    "n": 186,
+    "n_participants": 20,
+    "n_move": 160
+  },
+  "e1a_earns_its_place": {
+    "FROM_only": {
+      "logloss": 1.5531561181489768,
+      "logloss_sd": 0.10173350572847381,
+      "acc": 0.27709357972044535,
+      "n_params": 5
+    },
+    "additive": {
+      "logloss": 1.5056210036470543,
+      "logloss_sd": 0.13779713542503025,
+      "acc": 0.36671357498223167,
+      "n_params": 9
+    },
+    "interaction": {
+      "logloss": 1.5306613964577243,
+      "logloss_sd": 0.14517130428437328,
+      "acc": 0.3752542051646529,
+      "n_params": 25
+    },
+    "_n": 160,
+    "_n_participants": 19,
+    "_n_folds": 5
+  },
+  "e1b_frequentist": {
+    "ordinal_LR": {
+      "ll_additive": -226.61,
+      "ll_interaction": -219.09,
+      "LR": 15.03,
+      "df": 16,
+      "p": 0.5220938767489554
+    },
+    "gaussian_mixed_interaction": {
+      "error": "LinAlgError: Singular matrix"
+    },
+    "additive_percell_FDR": {
+      "n_cells": 20,
+      "n_FDR_significant": 0,
+      "note": "the shipped per-cell read; 0 significant = under-powered at n\u224832"
+    }
+  },
+  "e1c_bayesian": {
+    "ok": false,
+    "error": "ModuleNotFoundError: No module named 'bambi'",
+    "tb": "Traceback (most recent call last):\n  File \"/home/wisgood/qra/Qualitative_Research_Algorithm/experiments/mechanism/run_interaction_model.py\", line 217, in bayesian_ordinal\n    import bambi as bmb\nModuleNotFoundError: No module named 'bambi'\n"
+  },
+  "e2_sensitivity": {
+    "n_cells": 12,
+    "cells": [
+      {
+        "from_stage": 1,
+        "from_name": "Avoidance",
+        "move": 3,
+        "move_name": "Education",
+        "n": 13,
+        "smd": -0.962,
+        "approx_RR": 0.417,
+        "e_value": 4.232
+      },
+      {
+        "from_stage": 2,
+        "from_name": "AttnReg",
+        "move": 4,
+        "move_name": "Reinforcement",
+        "n": 4,
+        "smd": 0.862,
+        "approx_RR": 2.192,
+        "e_value": 3.809
+      },
+      {
+        "from_stage": 3,
+        "from_name": "Metacog",
+        "move": 3,
+        "move_name": "Education",
+        "n": 14,
+        "smd": -0.782,
+        "approx_RR": 0.491,
+        "e_value": 3.491
+      },
+      {
+        "from_stage": 4,
+        "from_name": "Reappraisal",
+        "move": 2,
+        "move_name": "Reframing",
+        "n": 4,
+        "smd": -0.568,
+        "approx_RR": 0.596,
+        "e_value": 2.743
+      },
+      {
+        "from_stage": 0,
+        "from_name": "Vigilance",
+        "move": 3,
+        "move_name": "Education",
+        "n": 16,
+        "smd": -0.462,
+        "approx_RR": 0.657,
+        "e_value": 2.414
+      },
+      {
+        "from_stage": 4,
+        "from_name": "Reappraisal",
+        "move": 3,
+        "move_name": "Education",
+        "n": 8,
+        "smd": -0.4,
+        "approx_RR": 0.695,
+        "e_value": 2.233
+      },
+      {
+        "from_stage": 4,
+        "from_name": "Reappraisal",
+        "move": 4,
+        "move_name": "Reinforcement",
+        "n": 11,
+        "smd": 0.346,
+        "approx_RR": 1.37,
+        "e_value": 2.082
+      },
+      {
+        "from_stage": 0,
+        "from_name": "Vigilance",
+        "move": 0,
+        "move_name": "Phenomenology",
+        "n": 4,
+        "smd": 0.308,
+        "approx_RR": 1.324,
+        "e_value": 1.978
+      },
+      {
+        "from_stage": 2,
+        "from_name": "AttnReg",
+        "move": 2,
+        "move_name": "Reframing",
+        "n": 8,
+        "smd": -0.262,
+        "approx_RR": 0.788,
+        "e_value": 1.853
+      },
+      {
+        "from_stage": 2,
+        "from_name": "AttnReg",
+        "move": 3,
+        "move_name": "Education",
+        "n": 23,
+        "smd": -0.188,
+        "approx_RR": 0.843,
+        "e_value": 1.657
+      },
+      {
+        "from_stage": 4,
+        "from_name": "Reappraisal",
+        "move": 0,
+        "move_name": "Phenomenology",
+        "n": 16,
+        "smd": 0.133,
+        "approx_RR": 1.129,
+        "e_value": 1.511
+      },
+      {
+        "from_stage": 2,
+        "from_name": "AttnReg",
+        "move": 0,
+        "move_name": "Phenomenology",
+        "n": 18,
+        "smd": 0.089,
+        "approx_RR": 1.085,
+        "e_value": 1.388
+      }
+    ],
+    "note": "E-value = min strength (on the RR scale) an unmeasured confounder would need with both move-selection and \u0394progression to explain away the cell association"
+  }
+}

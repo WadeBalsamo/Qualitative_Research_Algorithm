@@ -598,7 +598,8 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             try:
                 from .mechanism import run_mechanism_analysis
                 log("    Running mechanistic Δprogression analysis...")
-                mech_result = run_mechanism_analysis(df, df_all, output_dir, framework)
+                _mech_cfg = getattr(_pipeline_config, 'mechanism', None) if _pipeline_config is not None else None
+                mech_result = run_mechanism_analysis(df, df_all, output_dir, framework, config=_mech_cfg)
                 files_generated.extend(mech_result.get('files_written', []))
                 log(f"    Mechanism: {mech_result.get('n_blocks', 0)} cue blocks analyzed.")
             except Exception as e:

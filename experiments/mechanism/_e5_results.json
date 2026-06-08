@@ -1,0 +1,104 @@
+{
+  "design": {
+    "n_blocks": 160,
+    "n_participants": 19,
+    "K": 200,
+    "seed": 42
+  },
+  "purer_disagreement": {
+    "found": false,
+    "rate": null,
+    "source": null
+  },
+  "default_rate": 0.3,
+  "by_rate": {
+    "rate_0.15": {
+      "rate": 0.15,
+      "k": 200,
+      "base_ranking": {
+        "Phenomenology": 0.1382,
+        "Reframing": 0.1142,
+        "Education": 0.0528,
+        "Reinforcement": -0.1083,
+        "Utilization": -0.3393
+      },
+      "base_order": [
+        "Phenomenology",
+        "Reframing",
+        "Education",
+        "Reinforcement",
+        "Utilization"
+      ],
+      "spearman": {
+        "mean": 0.4255,
+        "median": 0.6,
+        "p05": -0.605,
+        "p95": 0.9,
+        "frac_ge_0_8": 0.255,
+        "frac_ge_0_5": 0.535
+      },
+      "kendall_tau_median": 0.4
+    },
+    "rate_0.30": {
+      "rate": 0.3,
+      "k": 200,
+      "base_ranking": {
+        "Phenomenology": 0.1382,
+        "Reframing": 0.1142,
+        "Education": 0.0528,
+        "Reinforcement": -0.1083,
+        "Utilization": -0.3393
+      },
+      "base_order": [
+        "Phenomenology",
+        "Reframing",
+        "Education",
+        "Reinforcement",
+        "Utilization"
+      ],
+      "spearman": {
+        "mean": 0.245,
+        "median": 0.3,
+        "p05": -0.605,
+        "p95": 0.9,
+        "frac_ge_0_8": 0.125,
+        "frac_ge_0_5": 0.375
+      },
+      "kendall_tau_median": 0.2
+    },
+    "rate_0.45": {
+      "rate": 0.45,
+      "k": 200,
+      "base_ranking": {
+        "Phenomenology": 0.1382,
+        "Reframing": 0.1142,
+        "Education": 0.0528,
+        "Reinforcement": -0.1083,
+        "Utilization": -0.3393
+      },
+      "base_order": [
+        "Phenomenology",
+        "Reframing",
+        "Education",
+        "Reinforcement",
+        "Utilization"
+      ],
+      "spearman": {
+        "mean": 0.162,
+        "median": 0.2,
+        "p05": -0.7,
+        "p95": 0.9,
+        "frac_ge_0_8": 0.06,
+        "frac_ge_0_5": 0.295
+      },
+      "kendall_tau_median": 0.2
+    }
+  },
+  "headline": {
+    "primary_rate": 0.3,
+    "spearman_median": 0.3,
+    "spearman_p05": -0.605,
+    "frac_stable_ge_0_8": 0.125
+  },
+  "note": "Perturbation reassigns flipped blocks to a uniformly-random alternative move; ranking = per-move mean \u0394progression; Spearman \u03c1 vs the unperturbed ranking over moves present in both. Only 6 blocks are Utilization, so its rank is the most noise-sensitive."
+}
