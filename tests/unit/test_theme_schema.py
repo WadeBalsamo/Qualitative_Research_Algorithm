@@ -1,7 +1,7 @@
 """
 tests/unit/test_theme_schema.py
 --------------------------------
-Unit tests for theme_framework/theme_schema.py.
+Unit tests for constructs/theme_schema.py.
 
 Covers:
   ThemeDefinition  — construction, field defaults
@@ -24,7 +24,7 @@ _QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
 if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
-from theme_framework.theme_schema import ThemeDefinition, ThemeFramework
+from constructs.theme_schema import ThemeDefinition, ThemeFramework
 from tests.testhelpers import tiny_vaamr_framework
 
 

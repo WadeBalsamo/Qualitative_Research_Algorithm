@@ -126,14 +126,14 @@ class TestProbePromotionFlag(unittest.TestCase):
         from process import orchestrator as orch
         cfg = _config(self.run_dir)
         cfg.probe.enabled = False
-        with patch('classification_tools.probe_classifier.probe_gate_ready', return_value=True):
+        with patch('classification_tools.probe.probe_classifier.probe_gate_ready', return_value=True):
             self.assertTrue(orch._probe_promotion_flag(cfg, self.run_dir))
 
     def test_no_promotion_without_gate_even_if_enabled(self):
         from process import orchestrator as orch
         cfg = _config(self.run_dir)
         cfg.probe.enabled = True
-        with patch('classification_tools.probe_classifier.probe_gate_ready', return_value=False):
+        with patch('classification_tools.probe.probe_classifier.probe_gate_ready', return_value=False):
             self.assertFalse(orch._probe_promotion_flag(cfg, self.run_dir))
 
 

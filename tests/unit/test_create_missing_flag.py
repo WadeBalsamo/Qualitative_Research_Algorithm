@@ -47,7 +47,7 @@ class TestGenerateOrRefreshValidationTestsetsCreateMissing(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
         self.framework = get_vaamr_framework()
 
         # Create 20 labeled segments (enough for a testset)
@@ -129,7 +129,7 @@ class TestGenerateOrRefreshCVTestsetsCreateMissing(unittest.TestCase):
 
     def test_create_missing_false_skips_nonexistent_cv_testsets(self):
         from process.assembly import generate_or_refresh_content_validity_testsets
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
         from process.config import ContentValidityConfig, ContentValiditySpec
 
         framework = get_vaamr_framework()
@@ -150,7 +150,7 @@ class TestGenerateOrRefreshCVTestsetsCreateMissing(unittest.TestCase):
 
     def test_create_missing_true_creates_cv_testset(self):
         from process.assembly import generate_or_refresh_content_validity_testsets
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
         from process.config import ContentValidityConfig, ContentValiditySpec
 
         framework = get_vaamr_framework()

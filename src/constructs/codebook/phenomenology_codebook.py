@@ -14,7 +14,7 @@ from pathlib import Path
 from .codebook_schema import Codebook, CodeDefinition, slugify  # noqa: F401
 from .markdown_loader import load_codebook_md
 
-_CODEBOOK_MD = Path(__file__).resolve().parents[2] / "frameworks" / "PHENOMENOLOGY_CODEBOOK.md"
+_CODEBOOK_MD = Path(__file__).resolve().parents[3] / "frameworks" / "PHENOMENOLOGY_CODEBOOK.md"
 
 
 def get_phenomenology_codebook() -> Codebook:

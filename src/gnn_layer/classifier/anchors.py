@@ -60,7 +60,7 @@ def anchor_specs(config) -> List[Tuple[str, str]]:
 
     if getattr(config, 'include_vaamr_nodes', True):
         try:
-            from theme_framework.registry import load as _load
+            from constructs.registry import load as _load
             fw = _load('vaamr')
             if fw is not None:
                 for t in fw.themes:
@@ -70,7 +70,7 @@ def anchor_specs(config) -> List[Tuple[str, str]]:
 
     if getattr(config, 'include_purer_nodes', True):
         try:
-            from theme_framework.registry import load as _load
+            from constructs.registry import load as _load
             fw = _load('purer')
             if fw is not None:
                 for t in fw.themes:
@@ -80,7 +80,7 @@ def anchor_specs(config) -> List[Tuple[str, str]]:
 
     if getattr(config, 'include_vce_nodes', False):
         try:
-            from codebook.phenomenology_codebook import get_phenomenology_codebook
+            from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
             for c in get_phenomenology_codebook().codes:
                 specs.append((f"anchor:vce:{c.code_id}", _code_text(c)))
         except Exception:

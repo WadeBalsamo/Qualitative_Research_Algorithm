@@ -13,7 +13,7 @@ from typing import Dict, List, Tuple
 
 import pandas as pd
 
-from theme_framework.theme_schema import ThemeFramework
+from constructs.theme_schema import ThemeFramework
 
 
 def compute_theme_codebook_cooccurrence(

@@ -26,7 +26,7 @@ from .codebook_schema import CodeDefinition, Codebook
 
 
 # ---------------------------------------------------------------------------
-# Shared text helpers (mirrors theme_framework/markdown_loader.py)
+# Shared text helpers (mirrors constructs/markdown_loader.py)
 # ---------------------------------------------------------------------------
 
 def _strip_html_comments(text: str) -> str:

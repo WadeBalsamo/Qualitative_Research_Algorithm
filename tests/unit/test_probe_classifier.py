@@ -24,8 +24,8 @@ sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
 if _QRA_ROOT not in sys.path:
     sys.path.insert(1, _QRA_ROOT)
 
-from classification_tools import probe_classifier as pc  # noqa: E402
-from classification_tools.probe_classifier import ProbeConfig, ProbeModel  # noqa: E402
+from classification_tools.probe import probe_classifier as pc  # noqa: E402
+from classification_tools.probe.probe_classifier import ProbeConfig, ProbeModel  # noqa: E402
 
 RATERS = ['google/gemma-4-31b', 'nvidia/nemotron-3-nano-30b', 'qwen/qwen3-next-80b']
 

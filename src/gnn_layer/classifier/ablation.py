@@ -71,7 +71,7 @@ def vce_vaamr_contribution(graph, df_all, config) -> dict:
     from .. import soft_labels as _sl
 
     try:
-        from codebook.phenomenology_codebook import get_phenomenology_codebook
+        from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
         vce_codes = [c.code_id for c in get_phenomenology_codebook().codes]
     except Exception as e:  # pragma: no cover - defensive
         return {'status': f'skipped: VCE codebook unavailable ({e})'}
@@ -157,7 +157,7 @@ def anchor_contribution(df_all, segment_embeddings: Dict[str, "object"], config,
     vce_codes = []
     if getattr(config, 'include_vce_nodes', False):
         try:
-            from codebook.phenomenology_codebook import get_phenomenology_codebook
+            from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
             vce_codes = [c.code_id for c in get_phenomenology_codebook().codes]
         except Exception:
             vce_codes = []
@@ -254,7 +254,7 @@ def precipitates_contribution(df_all, segment_embeddings: Dict[str, "object"], c
     vce_codes = []
     if getattr(config, 'include_vce_nodes', False):
         try:
-            from codebook.phenomenology_codebook import get_phenomenology_codebook
+            from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
             vce_codes = [c.code_id for c in get_phenomenology_codebook().codes]
         except Exception:
             vce_codes = []

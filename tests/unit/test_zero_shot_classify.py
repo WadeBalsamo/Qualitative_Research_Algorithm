@@ -25,7 +25,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, 'src'))
 if ROOT not in sys.path: sys.path.insert(1, ROOT)
 
-from theme_framework.vaamr import get_vaamr_framework  # noqa: E402
+from constructs.vaamr import get_vaamr_framework  # noqa: E402
 from process.config import PipelineConfig  # noqa: E402
 
 

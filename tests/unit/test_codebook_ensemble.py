@@ -23,9 +23,9 @@ _QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
 if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
-from codebook.codebook_schema import CodeAssignment
-from codebook.config import EnsembleConfig
-from codebook.ensemble import CodebookEnsemble, EnsembleResult
+from constructs.codebook.codebook_schema import CodeAssignment
+from classification_tools.codebook_multilabel.config import EnsembleConfig
+from classification_tools.codebook_multilabel.ensemble import CodebookEnsemble, EnsembleResult
 
 
 # ---------------------------------------------------------------------------

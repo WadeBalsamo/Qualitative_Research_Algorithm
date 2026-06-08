@@ -15,10 +15,10 @@ import json
 import os
 from typing import Optional, List
 
-from theme_framework.theme_schema import ThemeFramework
-from theme_framework.registry import load as _registry_load_fw
-from theme_framework.config import ThemeClassificationConfig
-from codebook.config import EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
+from constructs.theme_schema import ThemeFramework
+from constructs.registry import load as _registry_load_fw
+from constructs.config import ThemeClassificationConfig
+from classification_tools.codebook_multilabel.config import EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
 from .config import (
     PipelineConfig,
     SegmentationConfig,
@@ -925,7 +925,7 @@ class SetupWizard:
             try:
                 with open(path) as f:
                     fw_data = json.load(f)
-                from theme_framework.theme_schema import ThemeDefinition
+                from constructs.theme_schema import ThemeDefinition
                 themes = []
                 for t in fw_data.get('themes', []):
                     themes.append(ThemeDefinition(

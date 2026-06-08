@@ -19,7 +19,7 @@ _QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
 if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
-from codebook.config import EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
+from classification_tools.codebook_multilabel.config import EmbeddingClassifierConfig, LLMCodebookConfig, EnsembleConfig
 
 
 class TestEmbeddingClassifierConfigDefaults(unittest.TestCase):

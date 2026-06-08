@@ -263,7 +263,7 @@ class TestModuleImports(unittest.TestCase):
 
     def test_theme_classification_config_has_no_replicate(self):
         """ThemeClassificationConfig must have removed replicate_api_token."""
-        from theme_framework.config import ThemeClassificationConfig
+        from constructs.config import ThemeClassificationConfig
         cfg = ThemeClassificationConfig()
         self.assertFalse(hasattr(cfg, 'replicate_api_token'),
                          "replicate_api_token must be removed")
@@ -480,7 +480,7 @@ class TestStageExecutionOrder(unittest.TestCase):
         Mock all stage functions and verify run_full_pipeline calls them in order.
         """
         from process.config import PipelineConfig
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         config = PipelineConfig.from_dict({
             **REFERENCE_CONFIG_DICT,
@@ -941,7 +941,7 @@ class TestCreateMissingFlag(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
         self.framework = get_vaamr_framework()
 
     def tearDown(self):
@@ -1369,7 +1369,7 @@ class TestLLMClientInterface(unittest.TestCase):
 
     def test_theme_classification_config_default_backend_is_lmstudio(self):
         """ThemeClassificationConfig default backend should be lmstudio."""
-        from theme_framework.config import ThemeClassificationConfig
+        from constructs.config import ThemeClassificationConfig
 
         cfg = ThemeClassificationConfig()
         self.assertEqual(cfg.backend, 'lmstudio')
@@ -1588,7 +1588,7 @@ class TestThemeFrameworkIntegrity(unittest.TestCase):
 
     def test_vaamr_framework_loads(self):
         """VAAMR framework must be loadable with correct metadata."""
-        from theme_framework.vaamr import get_vaamr_framework, VAAMR_FRAMEWORK_VERSION
+        from constructs.vaamr import get_vaamr_framework, VAAMR_FRAMEWORK_VERSION
 
         framework = get_vaamr_framework()
         self.assertEqual(framework.name, 'VAAMR')
@@ -1605,7 +1605,7 @@ class TestThemeFrameworkIntegrity(unittest.TestCase):
 
     def test_vaamr_build_name_to_id_map(self):
         """VAAMR must produce correct name→id mapping."""
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         framework = get_vaamr_framework()
         name_to_id = framework.build_name_to_id_map()
@@ -1618,7 +1618,7 @@ class TestThemeFrameworkIntegrity(unittest.TestCase):
 
     def test_purer_framework_loads(self):
         """PURER framework must be loadable."""
-        from theme_framework.purer import get_purer_framework, PURER_FRAMEWORK_VERSION
+        from constructs.purer import get_purer_framework, PURER_FRAMEWORK_VERSION
 
         framework = get_purer_framework()
         self.assertEqual(framework.name, 'PURER')

@@ -289,7 +289,7 @@ def _load_config(config_path: str):
 
 
 def _load_framework_default():
-    from theme_framework.registry import load as _registry_load_fw
+    from constructs.registry import load as _registry_load_fw
     return _registry_load_fw('vaamr')
 
 
@@ -415,7 +415,7 @@ def _probe_status(output_dir: str) -> str:
     Reads the machine-readable verdict at 03_analysis_data/probe/probe_gate.json.
     """
     try:
-        from classification_tools.probe_classifier import read_probe_gate
+        from classification_tools.probe.probe_classifier import read_probe_gate
         verdict = read_probe_gate(output_dir)
         if verdict is not None:
             return 'ready' if verdict.get('ready_for_scaling') else 'not_ready'
@@ -944,7 +944,7 @@ def _action_cv_create(config, output_dir: str, framework, fw_name: str) -> None:
         **{fw_name: ContentValiditySpec(enabled=True, name=name)}
     )
     if fw_name == 'purer':
-        from theme_framework.registry import load as _registry_load_fw
+        from constructs.registry import load as _registry_load_fw
         fw = _registry_load_fw('purer')
     else:
         fw = framework
@@ -1240,7 +1240,7 @@ def _action_add_data(output_dir: str, config_path) -> None:
 def _action_classify_codebook(config, output_dir: str) -> None:
     """Run the VCE phenomenology codebook classifier on participant segments."""
     from .orchestrator import stage_classify_codebook
-    from codebook.phenomenology_codebook import get_phenomenology_codebook
+    from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
     _section('Classify — VCE Codebook (participant segments)')
     _info(
         'Runs the VCE phenomenology codebook (embedding similarity + LLM ensemble)\n'
@@ -1367,7 +1367,7 @@ def _print_probe_verdict(v) -> None:
 
 def _action_probe_train(config, output_dir: str) -> None:
     """Fit the LLM-free probe scaler + run the participant-grouped reliability gate."""
-    from classification_tools import probe_classifier as _pc
+    from classification_tools.probe import probe_classifier as _pc
     _section('Probe — train + reliability gate (LLM-free scaler)')
     _info(
         'Fits the per-rater ensemble probe on the existing LLM/human labels and runs the\n'
@@ -1396,7 +1396,7 @@ def _action_probe_train(config, output_dir: str) -> None:
 
 def _action_probe_status(output_dir: str) -> None:
     """Print the probe reliability-gate verdict (probe↔human/LLM κ; ready to scale?)."""
-    from classification_tools import probe_classifier as _pc
+    from classification_tools.probe import probe_classifier as _pc
     _section('Probe Reliability Gate')
     _print_probe_verdict(_pc.read_probe_gate(output_dir))
     print()
@@ -1407,7 +1407,7 @@ def _action_probe_status(output_dir: str) -> None:
 
 def _action_probe_classify(config, output_dir: str, state: dict) -> None:
     """LLM-free fill of UNLABELED participant segments with the gated probe."""
-    from classification_tools import probe_classifier as _pc
+    from classification_tools.probe import probe_classifier as _pc
     _section('Probe — classify unlabeled (LLM-free)')
     status = state.get('probe_status', 'absent')
     if status == 'absent':

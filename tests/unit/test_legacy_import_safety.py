@@ -1317,28 +1317,28 @@ class TestTestsetRefreshLegacyNotSkipped(unittest.TestCase):
 
 class TestFrameworkIntegrityForLegacy(unittest.TestCase):
     def test_vaamr_loads(self):
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
         fw = get_vaamr_framework()
         self.assertTrue(fw.name.upper().startswith("VAAMR"))
 
     def test_vaamr_five_stages(self):
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
         fw = get_vaamr_framework()
         self.assertEqual(len(fw.themes), 5)
         self.assertEqual(sorted(t.theme_id for t in fw.themes), [0, 1, 2, 3, 4])
 
     def test_purer_loads(self):
-        from theme_framework.purer import get_purer_framework
+        from constructs.purer import get_purer_framework
         fw = get_purer_framework()
         self.assertTrue(fw.name.upper().startswith("PURER"))
 
     def test_purer_five_stages(self):
-        from theme_framework.purer import get_purer_framework
+        from constructs.purer import get_purer_framework
         fw = get_purer_framework()
         self.assertEqual(len(fw.themes), 5)
 
     def test_vaamr_theme_ids_stable(self):
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
         by_id = {t.theme_id: t.short_name for t in get_vaamr_framework().themes}
         self.assertEqual(by_id[0], "Vigilance")
         self.assertEqual(by_id[1], "Avoidance")

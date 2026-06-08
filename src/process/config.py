@@ -3,21 +3,22 @@ config.py
 ---------
 Top-level pipeline configuration.
 
-Aggregates sub-configs from classification_tools, constructs, and codebook.
+Aggregates sub-configs from constructs (definitions) and classification_tools
+(theme_llm, codebook_multilabel, probe classifiers + shared infra).
 """
 
 import os
 from dataclasses import dataclass, field, asdict, fields
 from typing import Dict, List, Optional
 
-from theme_framework.config import ThemeClassificationConfig
-from codebook.config import (
+from constructs.config import ThemeClassificationConfig
+from classification_tools.codebook_multilabel.config import (
     EmbeddingClassifierConfig,
     LLMCodebookConfig,
     EnsembleConfig,
 )
 from gnn_layer.config import GnnLayerConfig
-from classification_tools.probe_classifier import ProbeConfig
+from classification_tools.probe.probe_classifier import ProbeConfig
 
 # Keys that hold secrets and must never be written to config JSON
 _SECRET_KEYS = frozenset({'api_key'})

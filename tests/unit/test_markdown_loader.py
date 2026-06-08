@@ -4,7 +4,7 @@ tests/test_markdown_loader.py
 TDD parity tests for the markdown framework loaders (Phase 1 of the
 frameworks refactor).
 
-These tests FAIL until theme_framework/markdown_loader.py is implemented.
+These tests FAIL until constructs/markdown_loader.py is implemented.
 Parity gate: each loader must produce output deep-equal to the existing
 Python factory, except for the `color` field (dropped in Phase 2).
 
@@ -42,8 +42,8 @@ class TestVAAMRMarkdownLoader(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from theme_framework.markdown_loader import load_framework_md
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.markdown_loader import load_framework_md
+        from constructs.vaamr import get_vaamr_framework
         cls.md_fw = load_framework_md(VAAMR_MD)
         cls.py_fw = get_vaamr_framework()
 
@@ -178,7 +178,7 @@ class TestVAAMRMarkdownLoader(unittest.TestCase):
 
     def test_color_field_absent(self):
         import dataclasses
-        from theme_framework.theme_schema import ThemeDefinition
+        from constructs.theme_schema import ThemeDefinition
         field_names = {f.name for f in dataclasses.fields(ThemeDefinition)}
         self.assertNotIn('color', field_names)
 
@@ -192,8 +192,8 @@ class TestPURERMarkdownLoader(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from theme_framework.markdown_loader import load_framework_md
-        from theme_framework.purer import get_purer_framework
+        from constructs.markdown_loader import load_framework_md
+        from constructs.purer import get_purer_framework
         cls.md_fw = load_framework_md(PURER_MD)
         cls.py_fw = get_purer_framework()
 
@@ -302,7 +302,7 @@ class TestPURERMarkdownLoader(unittest.TestCase):
 
     def test_color_field_absent(self):
         import dataclasses
-        from theme_framework.theme_schema import ThemeDefinition
+        from constructs.theme_schema import ThemeDefinition
         field_names = {f.name for f in dataclasses.fields(ThemeDefinition)}
         self.assertNotIn('color', field_names)
 
@@ -319,8 +319,8 @@ class TestCodebookMarkdownLoader(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from codebook.markdown_loader import load_codebook_md
-        from codebook.phenomenology_codebook import get_phenomenology_codebook
+        from constructs.codebook.markdown_loader import load_codebook_md
+        from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
         cls.md_cb = load_codebook_md(CODEBOOK_MD)
         cls.py_cb = get_phenomenology_codebook()
 
@@ -395,7 +395,7 @@ class TestPhase2DroppedFields(unittest.TestCase):
 
     def test_theme_definition_has_no_color_field(self):
         import dataclasses
-        from theme_framework.theme_schema import ThemeDefinition
+        from constructs.theme_schema import ThemeDefinition
         field_names = {f.name for f in dataclasses.fields(ThemeDefinition)}
         self.assertNotIn(
             'color', field_names,
@@ -404,7 +404,7 @@ class TestPhase2DroppedFields(unittest.TestCase):
 
     def test_code_definition_has_no_subcodes_field(self):
         import dataclasses
-        from codebook.codebook_schema import CodeDefinition
+        from constructs.codebook.codebook_schema import CodeDefinition
         field_names = {f.name for f in dataclasses.fields(CodeDefinition)}
         self.assertNotIn(
             'subcodes', field_names,
@@ -412,14 +412,14 @@ class TestPhase2DroppedFields(unittest.TestCase):
         )
 
     def test_codebook_prompt_string_has_no_subcodes(self):
-        from codebook.phenomenology_codebook import get_phenomenology_codebook
+        from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
         cb = get_phenomenology_codebook()
         prompt = cb.to_prompt_string()
         self.assertNotIn('Subcodes:', prompt)
         self.assertNotIn('subcodes', prompt.lower())
 
     def test_codebook_embedding_targets_have_no_subcodes(self):
-        from codebook.phenomenology_codebook import get_phenomenology_codebook
+        from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
         cb = get_phenomenology_codebook()
         targets = cb.to_embedding_targets()
         for t in targets:
@@ -433,7 +433,7 @@ class TestPhase2DroppedFields(unittest.TestCase):
 class TestPhase4FrameworkRegistry(unittest.TestCase):
     """
     Phase 4 gate: PipelineConfig must have participant_framework /
-    therapist_framework fields; theme_framework/registry.py must exist and
+    therapist_framework fields; constructs/registry.py must exist and
     resolve framework names to ThemeFramework objects.
     """
 
@@ -460,26 +460,26 @@ class TestPhase4FrameworkRegistry(unittest.TestCase):
         self.assertEqual(cfg.therapist_framework, 'purer')
 
     def test_registry_module_exists(self):
-        from theme_framework import registry  # noqa: F401
+        from constructs import registry  # noqa: F401
 
     def test_registry_load_vaamr(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         fw = load('vaamr')
         self.assertEqual(fw.name, 'VAAMR')
         self.assertEqual(len(fw.themes), 5)
 
     def test_registry_load_purer(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         fw = load('purer')
         self.assertEqual(fw.name, 'PURER')
         self.assertEqual(len(fw.themes), 5)
 
     def test_registry_load_none_returns_none(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         self.assertIsNone(load(None))
 
     def test_registry_unknown_name_raises(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         with self.assertRaises(KeyError):
             load('unknown_framework')
 
@@ -499,7 +499,7 @@ class TestPhase3FactoriesBackedByMarkdown(unittest.TestCase):
     def test_vaamr_factory_uses_markdown(self):
         """get_vaamr_framework must load from VAAMR.md (not inline Python data)."""
         import inspect
-        import theme_framework.vaamr as mod
+        import constructs.vaamr as mod
         src = inspect.getsource(mod.get_vaamr_framework)
         self.assertIn('load_framework_md', src,
                       "get_vaamr_framework() must delegate to load_framework_md")
@@ -509,7 +509,7 @@ class TestPhase3FactoriesBackedByMarkdown(unittest.TestCase):
     def test_purer_factory_uses_markdown(self):
         """get_purer_framework must load from PURER.md (not inline Python data)."""
         import inspect
-        import theme_framework.purer as mod
+        import constructs.purer as mod
         src = inspect.getsource(mod.get_purer_framework)
         self.assertIn('load_framework_md', src,
                       "get_purer_framework() must delegate to load_framework_md")
@@ -519,7 +519,7 @@ class TestPhase3FactoriesBackedByMarkdown(unittest.TestCase):
     def test_codebook_factory_uses_markdown(self):
         """get_phenomenology_codebook must load from CODEBOOK.md."""
         import inspect
-        import codebook.phenomenology_codebook as mod
+        import constructs.codebook.phenomenology_codebook as mod
         src = inspect.getsource(mod.get_phenomenology_codebook)
         self.assertIn('load_codebook_md', src,
                       "get_phenomenology_codebook() must delegate to load_codebook_md")

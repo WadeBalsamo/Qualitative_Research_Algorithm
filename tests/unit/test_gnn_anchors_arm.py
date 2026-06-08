@@ -179,7 +179,7 @@ class TestRunAnchoredGnnArm(unittest.TestCase):
 
     def test_runs_6_class_with_nocode_and_framework(self):
         # pass the real VAAMR framework object (forwarded to build_graph for parity)
-        from theme_framework.registry import load as _load
+        from constructs.registry import load as _load
         df, oof = self._run(6, framework=_load('vaamr'))
         self._assert_contract(df, oof, 6)
         # 6-class arm can emit the No-code class (5) for the unlabeled participant turns

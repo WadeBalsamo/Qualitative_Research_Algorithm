@@ -43,8 +43,8 @@ class TestRealOllamaClassify(unittest.TestCase):
         os.makedirs(self.out, exist_ok=True)
 
     def test_vaamr_classifies_participants(self):
-        from theme_framework.registry import load
-        from classification_tools.llm_classifier import classify_segments_zero_shot
+        from constructs.registry import load
+        from classification_tools.theme_llm.llm_classifier import classify_segments_zero_shot
         fw = load('vaamr')
         segs = [
             make_segment('p1', 'participant', text="I can't stop thinking about the pain, it's all I focus on."),
@@ -64,8 +64,8 @@ class TestRealOllamaClassify(unittest.TestCase):
             self.assertTrue(stage is None or stage in (0, 1, 2, 3, 4), f"{sid}: {stage}")
 
     def test_purer_classifies_therapist_cue(self):
-        from theme_framework.registry import load
-        from classification_tools.llm_classifier import classify_purer_cue_units
+        from constructs.registry import load
+        from classification_tools.theme_llm.llm_classifier import classify_purer_cue_units
         fw = load('purer')
         # A single cue block: a therapist turn between two participant turns.
         therapist = make_segment('t1', 'therapist',

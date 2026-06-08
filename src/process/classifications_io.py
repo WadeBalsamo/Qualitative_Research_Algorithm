@@ -73,7 +73,7 @@ GNN_OVERLAY_FIELDS: Tuple[str, ...] = (
 )
 
 # Probe scaler overlay: per-segment LLM-free predictions (per-rater ensemble,
-# methodology §8.6). Written by classification_tools.probe_classifier.classify_with_probe;
+# methodology §8.6). Written by classification_tools.probe.probe_classifier.classify_with_probe;
 # fills UNLABELED participant segments only and becomes the provenance tier
 # 'probe_consensus' ranked BELOW the LLM (see process/assembly/master_dataset.py).
 PROBE_OVERLAY_FIELDS: Tuple[str, ...] = (

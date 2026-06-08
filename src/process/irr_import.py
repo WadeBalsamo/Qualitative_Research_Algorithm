@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from theme_framework.registry import load as load_framework
+from constructs.registry import load as load_framework
 from classification_tools.majority_vote import vote_single_label
 from . import db
 

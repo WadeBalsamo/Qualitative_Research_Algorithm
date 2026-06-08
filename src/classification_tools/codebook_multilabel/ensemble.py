@@ -8,7 +8,7 @@ and LLM-based codebook classification results.
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-from .codebook_schema import CodeAssignment
+from constructs.codebook.codebook_schema import CodeAssignment
 from .config import EnsembleConfig
 
 

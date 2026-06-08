@@ -43,7 +43,7 @@ class TestFullPipeline(unittest.TestCase):
 
     def test_pipeline_produces_master_and_reports(self):
         from process.orchestrator import run_full_pipeline
-        from theme_framework.registry import load
+        from constructs.registry import load
         fw = load('vaamr')
         df = run_full_pipeline(self.cfg, fw, codebook=None)
         self.assertIsNotNone(df)

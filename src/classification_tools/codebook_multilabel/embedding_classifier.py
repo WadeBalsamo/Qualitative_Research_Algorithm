@@ -39,7 +39,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from typing import Dict, List, Optional, Tuple
 
 from classification_tools.data_structures import Segment
-from .codebook_schema import Codebook, CodeAssignment
+from constructs.codebook.codebook_schema import Codebook, CodeAssignment
 from .config import EmbeddingClassifierConfig
 
 

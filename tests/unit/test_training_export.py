@@ -22,7 +22,7 @@ if _QRA_ROOT not in sys.path:
 from classification_tools.data_structures import Segment
 from process.assembly import export_training_data
 from process import output_paths as _paths
-from theme_framework.registry import load as load_framework
+from constructs.registry import load as load_framework
 
 
 def _read_jsonl(path):
