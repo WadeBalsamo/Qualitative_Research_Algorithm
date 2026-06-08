@@ -189,12 +189,14 @@ def _raters_present(df_all, configured: Tuple[str, ...]) -> List[str]:
         if not isinstance(rv_raw, str) or not rv_raw.strip() or rv_raw.strip().lower() == 'nan':
             continue
         try:
-            for rv in json.loads(rv_raw):
-                rid = rv.get('rater')
-                if rid:
-                    present.add(rid)
+            ballots = json.loads(rv_raw)
         except (ValueError, TypeError):
             continue
+        if not isinstance(ballots, list):
+            continue
+        for rv in ballots:
+            if isinstance(rv, dict) and rv.get('rater'):
+                present.add(rv['rater'])
     if configured:
         ordered = [r for r in configured if r in present]
         return ordered or sorted(present)
@@ -215,8 +217,16 @@ def participant_rater_labels(df_all, raters: List[str], n_classes: int = 6
         rv_raw = r.get('rater_votes')
         if not isinstance(rv_raw, str) or not rv_raw.strip() or rv_raw.strip().lower() == 'nan':
             continue
+        try:
+            ballots = json.loads(rv_raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(ballots, list):
+            continue
         seg_ids.append(sid)
-        for rv in json.loads(rv_raw):
+        for rv in ballots:
+            if not isinstance(rv, dict):
+                continue
             rid = rv.get('rater')
             if rid not in rater_set:
                 continue
@@ -323,15 +333,12 @@ class ProbeModel:
         the ensemble-averaged 5-stage posterior (the No-code mass dropped, renormalized).
         """
         from sklearn.preprocessing import normalize
-        from gnn_layer.classifier import calibration as _cal
         X = normalize(np.asarray(embeddings_matrix, dtype=np.float64), norm='l2', axis=1)
         soft = self._ensemble_proba(X)                      # [N, C]
         pred = soft.argmax(axis=1).astype(int)
-        # calibrated confidence: temperature on log-proba pseudo-logits.
-        logits = np.log(np.clip(soft, 1e-9, 1.0))
-        cal = _cal.apply_temperature(logits, self.temperature)
-        e = np.exp(cal - cal.max(axis=1, keepdims=True))
-        conf = (e / e.sum(axis=1, keepdims=True)).max(axis=1)
+        # calibrated confidence — the SAME transform that derived the abstention floors
+        # (_calibrate_abstain_floors), so a floor and the conf it gates share one scale.
+        conf = _calibrated_conf(soft, self.temperature)
         # 5-stage mixture (drop No-code mass, renormalize)
         mix5 = soft[:, :5]
         denom = mix5.sum(axis=1, keepdims=True)
@@ -378,6 +385,22 @@ def _load_embeddings(df_all, output_dir, config) -> Dict[str, "np.ndarray"]:
 # ===========================================================================
 # Calibration + abstention-floor fitting (held-out)
 # ===========================================================================
+def _calibrated_conf(soft: np.ndarray, temperature: float) -> np.ndarray:
+    """Max calibrated-softmax confidence for ensemble proba rows ``soft`` ([N, C] or [C]).
+
+    Temperature scaling on log-proba pseudo-logits — the SINGLE definition of the probe's
+    confidence, shared by training-time abstention-floor calibration
+    (``_calibrate_abstain_floors``) and inference (``ProbeModel.predict``) so a floor and the
+    conf it gates always live on the same scale.
+    """
+    from gnn_layer.classifier import calibration as _cal
+    arr = np.atleast_2d(np.asarray(soft, dtype=np.float64))
+    logits = np.log(np.clip(arr, 1e-9, 1.0))
+    cal = _cal.apply_temperature(logits, float(temperature))
+    e = np.exp(cal - cal.max(axis=1, keepdims=True))
+    return (e / e.sum(axis=1, keepdims=True)).max(axis=1)
+
+
 def _fit_temperature_oof(ens_proba: Dict[str, np.ndarray], final_of: Dict[str, int]) -> float:
     from gnn_layer.classifier import calibration as _cal
     L, y = [], []
@@ -390,26 +413,44 @@ def _fit_temperature_oof(ens_proba: Dict[str, np.ndarray], final_of: Dict[str, i
     return _cal.fit_temperature(np.stack(L), np.asarray(y, dtype=np.int64))
 
 
-def _calibrate_abstain_floors(ens_proba, final_of, n_classes, target_precision) -> Dict[int, float]:
-    """Per-stage confidence floor: smallest floor whose KEPT held-out precision ≥ target.
+def _calibrate_abstain_floors(ens_proba, final_of, n_classes, target_precision,
+                              temperature: float = 1.0) -> Dict[int, float]:
+    """Per-stage confidence floor: the SMALLEST floor whose KEPT held-out precision ≥ target.
 
-    Mirrors the GNN ``calibrate_abstain_floors`` logic, model-agnostic. Only the real
-    stages (0..4) get floors; No-code (n-1) is an explicit abstain class already.
+    Keep as many confident-correct predictions as possible — a higher floor only abstains
+    more. Mirrors the GNN ``calibrate_abstain_floors`` (classifier/train.py): walk candidate
+    floors ASCENDING and take the first that meets the target; if the target is unreachable
+    for a stage, fall back to the floor with the best achievable precision. Confidence is the
+    calibrated max-softmax (``_calibrated_conf`` with the SAME temperature ``predict`` uses),
+    so the floors gate exactly the conf seen at inference. Only the real stages (0..4) get
+    floors; No-code (n-1) is an explicit abstain class already.
     """
+    items = [(p, int(final_of[s])) for s, p in ens_proba.items() if s in final_of]
+    if not items:
+        return {}
+    soft = np.stack([p for p, _ in items], axis=0)
+    conf = _calibrated_conf(soft, temperature)
+    preds = soft.argmax(axis=1).astype(int)
+    refs = np.asarray([ref for _, ref in items], dtype=int)
+    rows = list(zip(preds.tolist(), conf.tolist(), refs.tolist()))
+
     floors: Dict[int, float] = {}
-    rows = [(int(p.argmax()), float(p.max()), int(final_of[s]))
-            for s, p in ens_proba.items() if s in final_of]
     for stage in range(min(5, n_classes)):
-        cand = sorted({c for pr, c, _ in rows if pr == stage}, reverse=True)
+        cand = sorted({c for pr, c, _ in rows if pr == stage})
         chosen = None
+        best = None  # (floor, precision) — highest precision seen; used iff target unreachable
         for floor in cand:
-            kept = [(pr, ref) for pr, c, ref in rows if pr == stage and c >= floor]
+            kept = [ref == stage for pr, c, ref in rows if pr == stage and c >= floor]
             if not kept:
                 continue
-            prec = sum(1 for pr, ref in kept if pr == ref) / len(kept)
+            prec = sum(kept) / len(kept)
+            if best is None or prec > best[1]:
+                best = (floor, prec)
             if prec >= target_precision:
                 chosen = floor
                 break
+        if chosen is None and best is not None:
+            chosen = best[0]
         if chosen is not None:
             floors[stage] = float(chosen)
     return floors
@@ -524,7 +565,7 @@ def train_probe(df_all, output_dir: str, config: ProbeConfig, embeddings=None) -
             temperature = _fit_temperature_oof(ens, final_of)
         if config.abstain_calibrate:
             floors = _calibrate_abstain_floors(ens, final_of, n_classes,
-                                               config.abstain_target_precision)
+                                               config.abstain_target_precision, temperature)
 
     model = ProbeModel(rater_probes=rater_probes, raters=rater_ids, n_classes=n_classes,
                        temperature=float(temperature),
