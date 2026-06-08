@@ -1331,8 +1331,12 @@ def _build_config_from_file(file_data: dict):
     return PipelineConfig.from_json(_flatten_wizard_config(file_data))
 
 
-def cmd_assemble(args):
-    """qra assemble — join frozen segments + overlays into master_segments."""
+def cmd_assemble(args, *, force_probe_ready: bool = False, force_gnn_ready: bool = False):
+    """qra assemble — join frozen segments + overlays into master_segments.
+
+    ``force_probe_ready`` / ``force_gnn_ready`` let an upstream command that already
+    authorized a cheap-tier fill (e.g. ``qra probe classify`` after passing its gate or
+    ``--force``) promote those fills on the re-assemble regardless of the standing gate."""
     from process import segments_io as _segments_io, output_paths as _paths
     from process.orchestrator import stage_assemble
     from process import classifications_io as _cio
@@ -1366,7 +1370,11 @@ def cmd_assemble(args):
     print(f"\nQRA ASSEMBLE")
     print(f"  Output: {output_dir}")
 
-    master_df = stage_assemble(config, output_dir=output_dir)
+    master_df = stage_assemble(
+        config, output_dir=output_dir,
+        probe_ready=(True if force_probe_ready else None),
+        gnn_ready=(True if force_gnn_ready else None),
+    )
 
     ms_dir = _paths.master_segments_dir(output_dir)
     print(f"  master_segments.csv: {len(master_df)} segments")
@@ -2072,7 +2080,10 @@ def cmd_probe_classify(args):
     print(f"  Probe labeled {n} previously-unlabeled participant segment(s) → probe_labels overlay.")
     if not getattr(args, 'no_downstream', False):
         print("\nRe-assembling master dataset (probe_consensus tier, below the LLM)...")
-        cmd_assemble(args)
+        # The operator explicitly ran `probe classify` (gate passed, or --force), which
+        # authorizes promoting THIS batch's probe fills even if the standing gate hasn't
+        # passed — the probe still fills only BELOW the LLM and never overrides it.
+        cmd_assemble(args, force_probe_ready=True)
 
 
 def cmd_migrate(args):

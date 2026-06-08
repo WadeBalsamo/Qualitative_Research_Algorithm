@@ -98,6 +98,44 @@ class TestStageAssembleForwardsGateFlags(unittest.TestCase):
         self.assertTrue(captured['gnn_ready'])
         self.assertFalse(captured['probe_ready'])
 
+    def test_explicit_probe_ready_override_bypasses_gate(self):
+        # An upstream caller (e.g. `qra probe classify` / --force) may force promotion of
+        # the batch's fills even when the standing gate resolver says no.
+        from process.orchestrator import stage_assemble
+        captured = {}
+        with patch('process.orchestrator.assemble_master_dataset',
+                   side_effect=_fake_assemble_factory(captured)), \
+             patch('process.orchestrator._probe_promotion_flag', return_value=False):
+            stage_assemble(_config(self.run_dir), segments=[_make_segment()],
+                           output_dir=self.run_dir, probe_ready=True)
+        self.assertTrue(captured['probe_ready'])
+
+
+class TestProbePromotionFlag(unittest.TestCase):
+    """_probe_promotion_flag is gate-based (symmetric with _gnn_promotion_flag): the persisted
+    reliability gate authorizes promotion, NOT config.probe.enabled (which only governs the
+    full-pipeline auto-run)."""
+
+    def setUp(self):
+        self.run_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.run_dir, ignore_errors=True)
+
+    def test_promotes_when_gate_ready_even_if_disabled(self):
+        from process import orchestrator as orch
+        cfg = _config(self.run_dir)
+        cfg.probe.enabled = False
+        with patch('classification_tools.probe_classifier.probe_gate_ready', return_value=True):
+            self.assertTrue(orch._probe_promotion_flag(cfg, self.run_dir))
+
+    def test_no_promotion_without_gate_even_if_enabled(self):
+        from process import orchestrator as orch
+        cfg = _config(self.run_dir)
+        cfg.probe.enabled = True
+        with patch('classification_tools.probe_classifier.probe_gate_ready', return_value=False):
+            self.assertFalse(orch._probe_promotion_flag(cfg, self.run_dir))
+
 
 class TestStageAssembleApplyIncludesCheapTiers(unittest.TestCase):
     """The disk-load apply tuple must include the standard overlays + 'gnn' + 'probe'."""

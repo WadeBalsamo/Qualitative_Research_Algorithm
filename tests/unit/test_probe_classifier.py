@@ -195,6 +195,53 @@ class TestPredict(unittest.TestCase):
         self.assertFalse(bool(abstain2[0]))
 
 
+def _proba(conf, cls=0, n=6):
+    """A 6-class proba vector with argmax=cls and max=conf (rest spread evenly)."""
+    v = np.full(n, (1.0 - conf) / (n - 1), dtype=np.float64)
+    v[cls] = conf
+    return v
+
+
+class TestAbstainFloors(unittest.TestCase):
+    """_calibrate_abstain_floors picks the SMALLEST floor meeting target precision (keep as
+    many confident-correct fills as possible) — guards the reverse-ordering over-abstention
+    regression (parity with gnn_layer.classifier.train.calibrate_abstain_floors)."""
+
+    def test_smallest_qualifying_floor(self):
+        # stage 0: 4 low-conf (0.55; 3 correct) + 2 high-conf (0.95; both correct).
+        # At floor 0.55 keeping all 6 → precision 5/6 ≈ 0.83 ≥ 0.80, so 0.55 already qualifies.
+        specs = [(0.55, 0), (0.55, 0), (0.55, 0), (0.55, 1), (0.95, 0), (0.95, 0)]
+        ens, final_of = {}, {}
+        for i, (c, ref) in enumerate(specs):
+            ens[f's{i}'] = _proba(c, 0)
+            final_of[f's{i}'] = ref
+        floors = pc._calibrate_abstain_floors(ens, final_of, 6, 0.80, temperature=1.0)
+        self.assertAlmostEqual(floors[0], 0.55, places=6)      # smallest qualifying floor
+        self.assertNotAlmostEqual(floors[0], 0.95, places=6)   # NOT the over-abstaining max
+
+    def test_unreachable_target_falls_back_to_best_precision(self):
+        # stage 1 can never reach 0.80 (50% correct at every floor) → fall back to a floor,
+        # not leave the stage unguarded.
+        specs = [(0.5, 1), (0.5, 2), (0.7, 1), (0.7, 2)]
+        ens, final_of = {}, {}
+        for i, (c, ref) in enumerate(specs):
+            ens[f's{i}'] = _proba(c, 1)
+            final_of[f's{i}'] = ref
+        floors = pc._calibrate_abstain_floors(ens, final_of, 6, 0.80, temperature=1.0)
+        self.assertIn(1, floors)
+
+    def test_floor_derived_on_calibrated_scale_not_raw_proba(self):
+        # Floors must be computed from the calibrated conf predict() uses — NOT the raw
+        # max-proba. With T=2 the calibrated conf is below the raw 0.9, so the floor must be
+        # too (guards the floors-vs-conf scale-mismatch regression).
+        ens = {f's{i}': _proba(0.9, 0) for i in range(3)}
+        final_of = {f's{i}': 0 for i in range(3)}
+        floors = pc._calibrate_abstain_floors(ens, final_of, 6, 0.80, temperature=2.0)
+        conf = pc._calibrated_conf(_proba(0.9, 0), 2.0)[0]
+        self.assertLess(floors[0], 0.9)              # calibrated scale, not the raw 0.9 max
+        self.assertAlmostEqual(floors[0], conf, places=6)  # exactly the conf predict() reports
+
+
 class TestGate(unittest.TestCase):
     def test_ready_when_separable(self):
         df, emb = _synth()

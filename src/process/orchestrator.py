@@ -413,6 +413,8 @@ def stage_assemble(
     segments: Optional[List[Segment]] = None,
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
+    probe_ready: Optional[bool] = None,
+    gnn_ready: Optional[bool] = None,
 ):
     """
     Dataset assembly stage.
@@ -420,6 +422,11 @@ def stage_assemble(
     Joins frozen segments + all present overlays and writes
     master_segments.csv.  Returns the master pd.DataFrame.
     When segments=None, loads from disk.
+
+    ``probe_ready`` / ``gnn_ready`` default to None → resolved from the persisted reliability
+    gates (``_probe_promotion_flag`` / ``_gnn_promotion_flag``). A caller that has already
+    authorized a cheap-tier fill for this assembly (e.g. ``qra probe classify`` / ``--force``)
+    may pass True/False explicitly to override the gate lookup for this call only.
     """
     import pandas as pd
     from dataclasses import asdict
@@ -438,8 +445,8 @@ def stage_assemble(
 
     _ms_dir = _paths.master_segments_dir(_od)
     os.makedirs(_ms_dir, exist_ok=True)
-    _probe_ready = _probe_promotion_flag(config, _od)
-    _gnn_ready = _gnn_promotion_flag(config, _od)
+    _probe_ready = _probe_promotion_flag(config, _od) if probe_ready is None else probe_ready
+    _gnn_ready = _gnn_promotion_flag(config, _od) if gnn_ready is None else gnn_ready
     master_df = assemble_master_dataset(
         segments,
         os.path.join(_ms_dir, 'master_segments.csv'),
@@ -457,11 +464,15 @@ def stage_assemble(
 # ---------------------------------------------------------------------------
 
 def _probe_promotion_flag(config, output_dir: str) -> bool:
-    """probe_ready: the probe may FILL unlabeled segments (below the LLM) only when the
-    operator enabled it (config.probe.enabled) AND the persisted participant-grouped gate
-    (03_analysis_data/probe/probe_gate.json) reports ready_for_scaling. Disabled by default."""
-    if not bool(getattr(getattr(config, 'probe', None), 'enabled', False)):
-        return False
+    """probe_ready: the probe may FILL unlabeled segments (below the LLM) only when its
+    persisted participant-grouped gate (03_analysis_data/probe/probe_gate.json) reports
+    ready_for_scaling — symmetric with ``_gnn_promotion_flag``. The gate file exists only
+    after the operator ran ``qra probe train``, so default projects (no probe) never promote
+    and the label tiers stay byte-identical to the LLM pipeline.
+
+    Note: ``config.probe.enabled`` separately controls whether the FULL pipeline AUTO-RUNS
+    the probe stage (run_full_pipeline Stage-6b); it does NOT gate promotion of an overlay an
+    operator already produced via ``qra probe classify`` / the TUI."""
     try:
         from classification_tools import probe_classifier as _pc
         return bool(_pc.probe_gate_ready(output_dir))
