@@ -95,7 +95,7 @@ The Vigilance–Avoidance–Attention Regulation–Metacognition–Reappraisal m
 | 3 | Metacognition | Reflexive observation of one's own mental processes | *"I noticed I was getting anxious about the pain, and I could just watch that anxiety."* |
 | 4 | Reappraisal | Noematic transformation — pain decomposed into constituent sensations | *"It's interesting, when I really look at it, the 'pain' is actually many different feelings."* |
 
-Full operational definitions (prototypical features, distinguishing criteria, exemplar / subtle / adversarial utterances, word prototypes) are in [`VAAMR_FRAMEWORK.md`](frameworks/VAAMR_FRAMEWORK.md), parsed at runtime into `ThemeDefinition` objects by `theme_framework/markdown_loader.py`.
+Full operational definitions (prototypical features, distinguishing criteria, exemplar / subtle / adversarial utterances, word prototypes) are in [`VAAMR_FRAMEWORK.md`](frameworks/VAAMR_FRAMEWORK.md), parsed at runtime into `ThemeDefinition` objects by `constructs/markdown_loader.py`.
 
 ### PURER — Five-Move Therapist Guided-Inquiry Framework
 
@@ -295,7 +295,7 @@ Boundaries are calculated with embeddings, and ambiguous-case LLM-assisted bound
 
 ### Stage 3 — VAAMR Classification
 
-`classification_tools/classification_loop.py`, `classification_tools/llm_classifier.py`
+`classification_tools/classification_loop.py`, `classification_tools/theme_llm/llm_classifier.py`
 
 Each participant segment gets a structured JSON prompt: segment text + preceding context (capped at 300 words) + full VAAMR `ThemeFramework` definitions. Required response fields: `primary_stage`, `primary_confidence`, `secondary_stage`, `secondary_confidence`, `justification` (must cite specific segment language). `null` primary_stage = valid ABSTAIN ballot.
 
@@ -307,7 +307,7 @@ Stage definition order is randomized per run (temperature > 0) to reduce positio
 
 ### Stage 3b — Codebook Ensemble
 
-`codebook/embedding_classifier.py`, `codebook/ensemble.py`
+`classification_tools/codebook_multilabel/embedding_classifier.py`, `classification_tools/codebook_multilabel/ensemble.py`
 
 Two independent classifiers:
 - **Embedding**: query/passage cosine similarity against code definitions + inclusive criteria + exemplars; two-pass procedure for recall on subtle phenomenology
@@ -419,14 +419,18 @@ output_dir/
 | `process/assembly/coded_transcripts.py` | Per-session coded transcript writer |
 | `process/assembly/stats_reports.py` | Per-transcript stats, cumulative report |
 | `process/assembly/training_export.py` | Training data and theme definition export |
-| `theme_framework/vaamr.py` | `get_vaamr_framework()` — loads from `VAAMR_FRAMEWORK.md` |
-| `theme_framework/purer.py` | `get_purer_framework()` — loads from `PURER_FRAMEWORK.md` |
-| `theme_framework/markdown_loader.py` | Parser: `.md` → `ThemeFramework` / `ThemeDefinition` objects |
-| `theme_framework/theme_schema.py` | `ThemeDefinition`, `ThemeFramework` dataclasses |
-| `codebook/phenomenology_codebook.py` | 54 `CodeDefinition` objects (VCE), loaded from `PHENOMENOLOGY_CODEBOOK.md` |
-| `codebook/embedding_classifier.py` | Sentence-transformer embedding-based codebook classification |
-| `codebook/ensemble.py` | Embedding + LLM ensemble reconciliation |
-| `classification_tools/llm_classifier.py` | Zero-shot prompt construction and response parsing |
+| `constructs/vaamr.py` | `get_vaamr_framework()` — thin wrapper over `frameworks/VAAMR_FRAMEWORK.md` |
+| `constructs/purer.py` | `get_purer_framework()` — thin wrapper over `frameworks/PURER_FRAMEWORK.md` |
+| `constructs/markdown_loader.py` | Parser: `frameworks/*_FRAMEWORK.md` → `ThemeFramework` / `ThemeDefinition` objects |
+| `constructs/theme_schema.py` | `ThemeDefinition`, `ThemeFramework` dataclasses |
+| `constructs/registry.py` | `load(name)` → `ThemeFramework`; name-to-path dispatch (cached) |
+| `constructs/codebook/phenomenology_codebook.py` | 54 VCE codes, loaded from `frameworks/PHENOMENOLOGY_CODEBOOK.md` |
+| `constructs/codebook/codebook_schema.py` | `CodeDefinition`, `Codebook` dataclasses |
+| `constructs/codebook/markdown_loader.py` | Parses `frameworks/PHENOMENOLOGY_CODEBOOK.md` → `Codebook` |
+| `classification_tools/theme_llm/llm_classifier.py` | Zero-shot VAAMR/PURER prompt construction and response parsing |
+| `classification_tools/codebook_multilabel/embedding_classifier.py` | Sentence-transformer embedding-based codebook classification |
+| `classification_tools/codebook_multilabel/ensemble.py` | Embedding + LLM ensemble reconciliation |
+| `classification_tools/probe/probe_classifier.py` | **LLM-free VAAMR scaler** — per-rater ensemble (one class-weighted L2-LogReg probe per LLM rater, mean proba; single-probe fallback) + calibration/abstention; `train_probe`/`evaluate_probe`(gate)/`classify_with_probe` |
 | `classification_tools/zeroshot_reporting.py` | `write_zeroshot_report` — graded `--test-zeroshot` content-validity report |
 | `classification_tools/llm_client.py` | Backend abstraction (OpenRouter, Ollama, LM Studio, HuggingFace, Replicate) |
 | `classification_tools/classification_loop.py` | Multi-run consensus voting with checkpointing |
@@ -496,6 +500,7 @@ python qra.py run --config ./qra_config.json --auto-analyze
 
 # Incrementally add new transcripts to an existing project (frozen segments/testsets untouched)
 python qra.py add-data --config ./qra_config.json
+python qra.py add-data --config ./qra_config.json --classify-mode probe  # label new segments LLM-free (llm|probe|gnn)
 
 # Post-hoc analysis on completed output
 python qra.py analyze --output-dir ./data/output/          # full analysis suite
@@ -513,6 +518,11 @@ python qra.py classify -o ./data/output/ --what all        # every configured cl
 python qra.py classify -o ./data/output/ --what vaamr --fresh    # re-classify FROM SCRATCH
 python qra.py assemble -o ./data/output/                   # join frozen + overlays
 python qra.py validate -o ./data/output/                   # refresh human/AI validation artifacts
+
+# Probe — RECOMMENDED LLM-free, gated, abstention-aware VAAMR scaler (per-rater ensemble; §8.6)
+python qra.py probe train -o ./data/output/                # fit on LLM/human label of record + participant-grouped gate
+python qra.py probe status -o ./data/output/               # gate verdict: probe↔human / probe↔LLM κ
+python qra.py probe classify -o ./data/output/             # LLM-free FILL of unlabeled participant segments (gated; abstains; probe_consensus tier)
 
 # GNN consensus layer (modular — add the GNN to an LLM-only project, then scale)
 python qra.py gnn train -o ./data/output/                  # train graph + run the reliability gate
