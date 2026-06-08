@@ -72,6 +72,12 @@ class ValidationConfig:
     n_per_class: int = 50
     min_kappa: float = 0.70
     min_agreement: float = 0.75
+    # OPT-IN: segmentation-sensitivity check (analysis-time). When True, the
+    # analysis re-segments the raw transcripts under a perturbation grid, reuses
+    # the frozen VAAMR labels (no re-classification), and recomputes the H1 slope
+    # to report whether the headline result is stable across the grid. Default
+    # OFF — also toggled by `qra analyze --segmentation-sensitivity`.
+    run_segmentation_sensitivity: bool = False
 
 
 @dataclass

@@ -852,7 +852,10 @@ def cmd_analyze(args):
     elif getattr(args, 'no_gnn', False):
         force_gnn = False
 
-    result = run_analysis(output_dir, verbose=True, force_gnn=force_gnn)
+    force_seg_sens = True if getattr(args, 'segmentation_sensitivity', False) else None
+
+    result = run_analysis(output_dir, verbose=True, force_gnn=force_gnn,
+                          force_segmentation_sensitivity=force_seg_sens)
 
     print(f"\nAnalysis complete.")
     print(f"  {result['n_segments']} segments | "
@@ -2329,6 +2332,13 @@ Examples:
     _gnn_grp.add_argument(
         '--no-gnn', action='store_true',
         help='Force-disable the GNN layer for this run.',
+    )
+    analyze_parser.add_argument(
+        '--segmentation-sensitivity', action='store_true',
+        help='OPT-IN: re-segment the raw transcripts under a perturbation grid '
+             '(LLM refinement off), reuse the frozen VAAMR labels, and report '
+             'whether the headline H1 progression slope is stable across the grid. '
+             'Writes 06_reports/01_outcomes/segmentation_sensitivity.txt.',
     )
 
     # ---- validate ----

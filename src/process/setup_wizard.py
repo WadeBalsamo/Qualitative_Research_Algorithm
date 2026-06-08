@@ -1676,7 +1676,11 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             embedding_model=cb_emb.get('embedding_model', 'Qwen/Qwen3-Embedding-8B'),
             exemplar_import_path=cb_emb.get('exemplar_import_path'),
         ),
-        validation=ValidationConfig(),
+        validation=ValidationConfig(
+            **{k: v for k, v in data.get('validation', {}).items()
+               if k in ('n_per_class', 'min_kappa', 'min_agreement',
+                        'run_segmentation_sensitivity')}
+        ),
         test_sets=_build_test_sets_config(data.get('test_sets', {})),
         content_validity=_build_content_validity_config(data.get('content_validity', {})),
         confidence_tiers=ConfidenceTierConfig(

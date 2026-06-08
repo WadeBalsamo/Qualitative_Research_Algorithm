@@ -5,7 +5,7 @@
  
 > **Where we are (2026-06-07).** The central mechanism estimator is **re-centered, built, wired, and verified**; the discovery/construct-validation layer (H6) is the strongest contribution; the manuscript has had a **truthing pass** (§0). The pilot is **honestly under-identified at n≈32**; the binding constraints are *data scale* and *one unstarted human-validation pass* (PURER), not instrument design.
 >
-> **Companions:** `methodology_assessment.md` (the design review — *did we build the right thing*), `CODE_REVIEW_REQUEST.md` (what changed + the review gates), `experiments/mechanism/RESULTS.md` (the E1–E9 evidence), `docs/methodology.md` (the manuscript), `scalable_classification_master_plan.md` (the LLM-free *labeling* tier), `docs/OUTCOME_INTEGRATION_ROADMAP.md` (the H4 bridge).
+> **Companions:** `methodology_assessment.md` (the design review — *did we build the right thing*), `experiments/mechanism/RESULTS.md` (the E1–E9 evidence), `methodology.md` (the manuscript), `docs/OUTCOME_INTEGRATION_ROADMAP.md` (the H4 bridge).
 
 ---
 
@@ -79,7 +79,7 @@
 ## 3. The forward roadmap
 
 ### Phase A — Sign off the statistics and promote to production *(now; gates the curriculum report)*
-The estimator is wired and green; what stands between it and being the **default** mechanism analysis is a statistical-correctness review (the P0/P1 gates in `CODE_REVIEW_REQUEST.md`). Close these, in order:
+The estimator is wired and green; what stands between it and being the **default** mechanism analysis is a statistical-correctness review (the P0/P1 gates, recorded in the mechanism experiments log). Close these, in order:
 1. **E-value derivation** (`mechanism_model.sensitivity_bounds` / `stats.smd_to_risk_ratio`): confirm the continuous-effect → SMD → `RR≈exp(0.91·SMD)` → E-value chain and the comparison-group choice; **add the CI-limit E-value** (not just the point estimate).
 2. **Ordinal-LR inference** (`stats.ordered_logit`): the in-sample LR p-value is **not participant-cluster-robust** (statsmodels `OrderedModel` limitation); decide whether the participant-grouped CV is sufficient leakage-free inference, or add a **cluster-bootstrap LR / GEE / Bayesian** path. *This is the most likely reviewer pushback.*
 3. **Singular-fit handling** in `stats.mixedlm_interaction` (the count of CI-excluding-0 interaction terms must not mislead on a rank-deficient design), plus `rosenbaum_bounds` + `within_between_split` correctness.
@@ -117,8 +117,8 @@ Tier-tagged. **None block the v1 submission** (the manuscript already discloses 
 |---|---|---|---|
 | **Wire E9's H1 test into `efficacy.py` production** (group-slope CI + barrier-rate-limiting contrast) — today it's experiment-only | Strengthens | Low | H1 becomes a first-class report behind the Cohort-3 numbers, not a one-off |
 | **Confirm the avoidance-barrier dossier renders on `./data/Meta`** (`01_outcomes/avoidance_barrier.txt`, `mechanism_avoidance_barrier.csv`) | Verify | Trivial | The §6.3/§8.2 "✓ implemented" claim is demonstrably true |
-| **Justification-grounding audit** — automated check that each LLM label's quoted text actually appears in the segment; report the rate | Architecture upgrade #2 | Low, now-runnable | Turns "is the LLM hallucinating?" into a measured number — the non-technical team's deepest fear, answered |
-| **Segmentation-sensitivity analysis** — confirm H1 slope + H6 contrast survive reasonable perturbations of the segmentation thresholds (window, 25th-pct, silence, min/max words) | Architecture upgrade #3 | Low–med, now-runnable | Closes a hidden researcher degree of freedom that propagates into every result |
+| ✅ **Justification-grounding audit** — DONE (default-on, `analysis/reports/justification_grounding.py`; built→code-reviewed→fixed→24 tests green). **78.5% of quoted spans grounded** on Cohorts 1–2 (560/713), per-stage 72.8–80.5%, per-model gemma-4-31b 88.2% > nemotron-3-nano 75.6%; PURER 81.7%. Documented §5.6. Honest caveat: bounds confabulation, *not* correctness; lower bound (lexical) | Upgrade #2 — DONE | "Is the LLM hallucinating?" → a measured number |
+| ✅ **Segmentation-sensitivity check** — DONE (opt-in, `analysis/segmentation_sensitivity.py`). H1 direction **STABLE** across the OFAT grid (slope +0.081…+0.093). *Honestly scoped* (code review forced the fix): measures the real mixture coord (not a hard-label proxy), labels **projected not re-classified**, **MiniLM space** (Qwen won't load under the pin), mixedlm **non-converged at n≈32** — all surfaced. Documented §4.1/§9. Stronger re-classifying + Qwen-space arms = future work | Upgrade #3 — DONE (limited claim) | Closes a hidden degree of freedom — directionally |
 | **PURER-label-noise robustness** (E5) — perturb at the measured single-rater rate, re-fit, re-rank | Strengthens | Low | Bounds how much un-validated cue labels move the mechanism ranking, pending Phase B |
 | **Multi-model consensus for the label of record** (promote the probe campaign's 3 independent checker LLMs to production VAAMR) | Architecture upgrade #1 | Med | Converts the label-of-record reliability from single-model *stability* to cross-model *independence* (§4.3) — the biggest spine upgrade |
 | **Two-encoder H6** (Phase B-2) + a working Qwen embedding endpoint | Strengthens | Med (infra) | Makes H6 encoder-general rather than Qwen-only |
@@ -166,7 +166,7 @@ The rejected application's Aim 1 promised a GNN/CFiCS classifier reaching **κ �
 
 ## 8. Reference — what exists now (the baseline this plan builds on)
 
-Implemented + green (details + review gates in `CODE_REVIEW_REQUEST.md`):
+Implemented + green:
 - `src/analysis/mechanism_model.py` — `MechanismModelConfig`, `fit_adjacency_interaction` (ordinal LR + Gaussian-mixed interaction + earns-its-place CV + opt-in isolated Bayesian), `sensitivity_bounds`, `purer_noise_robustness`, `fit_trajectory`, `run_mechanism_models`.
 - `src/analysis/stats.py` — `ordered_logit`, `likelihood_ratio_test`, `mixedlm_interaction`, `e_value`, `smd_to_risk_ratio`, `rosenbaum_bounds`, `within_between_split`.
 - `src/analysis/mechanism.py` — report **leads** with the interaction estimate + sensitivity + identifying assumption; additive table demoted; GNN counterfactual = sensitivity lens; **avoidance-barrier dossier** (`_avoidance_barrier` → `01_outcomes/avoidance_barrier.txt`, `mechanism_avoidance_barrier.csv`).
