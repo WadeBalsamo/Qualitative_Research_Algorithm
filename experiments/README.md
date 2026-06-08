@@ -243,7 +243,7 @@ context-augmented vectors; every other arm runs on the cached Qwen embeddings wi
 
 Recorded, not auto-applied — see `scalable_classification_master_plan.md`:
 
-- **The winner** → `src/classification_tools/probe_classifier.py` as a `qra probe train/status/classify`
+- **The winner** → `src/classification_tools/probe/probe_classifier.py` as a `qra probe train/status/classify`
   tier: per-rater ensemble, gated on a per-project human-band check, abstention-aware, written to a
   `probe_consensus` provenance tier **below** the LLM consensus. Ships **assistive, not autonomous**.
 - **The GNN** → keep as **mechanism/discovery only** (`docs/GNN_MASTER_PLAN.md`); remove its unused

@@ -460,7 +460,7 @@ and `gnn_authoritative` promotes from the config flag alone without checking the
 
 ### Phase 2 — Anchors + human-axis ablation (G2) ✅
 - New `gnn_layer/anchors.py`: build construct-anchor features from VAAMR/PURER/VCE definitions
-  (via `theme_framework.registry.load`, avoiding the known `get_purer_framework` path bug);
+  (via `constructs.registry.load`, avoiding the known `get_purer_framework` path bug);
   **label-free** anchor↔segment similarity edges; LLM-derived cross-framework anchor↔anchor
   lift edges (VCE only).
 - New `ablation.anchor_contribution`: trains with/without anchors on identical folds and scores
@@ -476,7 +476,7 @@ WIP branch. Triaged via **7 read-only diagnosis subagents** (one per cluster) an
 ripple-risky items. Outcome:
 
 **Real code bugs fixed:**
-- `theme_framework/purer.py` — `parents[2]`→`parents[1]` path bug.
+- `constructs/purer.py` — `parents[2]`→`parents[1]` path bug.
 - `analysis/exemplars.py` — unguarded `llm_run_consistency` (the dominant cause of the
   ~40-test session/participant/theme cluster; these bypass the loader).
 - `analysis/loader.py`, `analysis/stage_progression.py`, `analysis/figures.py`,
@@ -484,7 +484,7 @@ ripple-risky items. Outcome:
   `analysis/stats.py` (Wilson-CI clamp).
 - `process/config.py` — content-validity `vaamr` default aligned to `True` (verified intent
   against the parse path; updated the contradicting stale test).
-- `codebook/embedding_classifier.py` — empty-codebook guard.
+- `classification_tools/codebook_multilabel/embedding_classifier.py` — empty-codebook guard.
 - `process/orchestrator.py` — `stage_ingest` now discovers files first and **short-circuits on
   an empty dir before constructing the embedding model** (a real efficiency improvement;
   fixes the empty-dir CLI test in any environment).
