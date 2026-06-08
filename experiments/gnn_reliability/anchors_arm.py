@@ -37,7 +37,7 @@ Arm-runner contract (matches ``harness.run_gnn_arm`` + ``baselines.run_*``):
                      ``train_model``.
   - ``framework``  : forwarded to ``build_graph`` for parity with ``run_gnn_arm``
                      (``build_graph`` does not consume it); the VAAMR anchor texts come
-                     from ``theme_framework.registry.load('vaamr')`` inside ``gnn_layer.anchors``.
+                     from ``constructs.registry.load('vaamr')`` inside ``gnn_layer.anchors``.
   - RETURNS        : ``{segment_id: predicted_class_int}`` — out-of-fold predictions for
                      every participant segment carrying a VAAMR soft target (a superset of
                      the labeled 205); anchors are never included.
@@ -77,7 +77,7 @@ def build_vaamr_anchors(df_all, embeddings: Dict[str, "object"], config
 
     Reuses ``gnn_layer.anchors.build_anchors`` with a VAAMR-only view of ``config``:
       * the 5 VAAMR stage definitions are loaded from
-        ``theme_framework.registry.load('vaamr')`` and embedded via
+        ``constructs.registry.load('vaamr')`` and embedded via
         ``gnn_layer.embeddings.embed_anchor_texts`` using ``config``'s embedding
         settings — so anchors live in the SAME space as ``embeddings``;
       * each anchor connects to its ``config.anchor_knn_m`` most-similar segments by

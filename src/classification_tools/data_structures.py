@@ -109,7 +109,7 @@ class Segment:
     gnn_vaamr_abstain: Optional[bool] = None
     gnn_purer_abstain: Optional[bool] = None
 
-    # Probe scaler fields (populated by classification_tools.probe_classifier.classify_with_probe
+    # Probe scaler fields (populated by classification_tools.probe.probe_classifier.classify_with_probe
     # when probe.enabled). The probe is an LLM-free, gated, abstention-aware VAAMR student
     # that FILLS unlabeled participant segments only; it ranks BELOW the LLM (provenance tier
     # 'probe_consensus') and never overrides an LLM/human label. probe_abstain=True means the

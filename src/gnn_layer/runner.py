@@ -604,7 +604,7 @@ def _vocabs(config):
     vce_codes: List[str] = []
     if 'vce_multilabel' in config.objectives:
         try:
-            from codebook.phenomenology_codebook import get_phenomenology_codebook
+            from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
             vce_codes = [c.code_id for c in get_phenomenology_codebook().codes]
         except Exception:
             vce_codes = []

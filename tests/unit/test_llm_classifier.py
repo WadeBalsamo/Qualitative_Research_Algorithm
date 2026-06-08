@@ -30,14 +30,14 @@ _QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
 if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
-from classification_tools.llm_classifier import (
+from classification_tools.theme_llm.llm_classifier import (
     _parse_single_run,
     _build_context_block,
     classify_segments_zero_shot,
     classify_purer_cue_units,
 )
 from tests.testhelpers import FakeLLMClient, make_segment, tiny_vaamr_framework, tiny_purer_framework
-from theme_framework.config import ThemeClassificationConfig
+from constructs.config import ThemeClassificationConfig
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ class TestClassifySegmentsZeroShot(unittest.TestCase):
         import unittest.mock as mock
         # Inject FakeLLMClient at the seam where classify_segments_zero_shot builds it
         fake = FakeLLMClient(default_name='Avoidance')
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             results, metadata = classify_segments_zero_shot(segs, fw, config)
 
         self.assertEqual(len(results), 3)
@@ -334,7 +334,7 @@ class TestClassifySegmentsZeroShot(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient(default_name='Metacognition')
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             results, _ = classify_segments_zero_shot(segs, fw, config)
 
         result = results['seg_range']
@@ -351,7 +351,7 @@ class TestClassifySegmentsZeroShot(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient()
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             _, metadata = classify_segments_zero_shot(segs, fw, config)
 
         self.assertIn('seg_meta', metadata)
@@ -365,7 +365,7 @@ class TestClassifySegmentsZeroShot(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient()
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             classify_segments_zero_shot(segs, fw, config)
 
         # Each stage definition should appear in the prompt
@@ -384,7 +384,7 @@ class TestClassifySegmentsZeroShot(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient()
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             classify_segments_zero_shot(segs, fw, config)
 
         # All 5 theme names should appear somewhere in the prompt
@@ -404,7 +404,7 @@ class TestClassifySegmentsZeroShot(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient()
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             try:
                 results, _ = classify_segments_zero_shot(segs, fw, config)
             except ValueError as e:
@@ -423,7 +423,7 @@ class TestClassifySegmentsZeroShot(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient()
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             with self.assertRaises(ValueError):
                 classify_segments_zero_shot(segs, fw, config)
 
@@ -433,7 +433,7 @@ class TestClassifySegmentsZeroShot(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient()
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             results, metadata = classify_segments_zero_shot([], fw, config)
 
         self.assertEqual(results, {})
@@ -485,7 +485,7 @@ class TestClassifyPurerCueUnits(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient(default_name='Phenomenological')
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             results, metadata = classify_purer_cue_units(cue_units, fw, config)
 
         self.assertEqual(len(results), 3)
@@ -500,7 +500,7 @@ class TestClassifyPurerCueUnits(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient(default_name='Reframing')
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             results, _ = classify_purer_cue_units(cue_units, fw, config)
 
         result = results['cue_range']
@@ -514,7 +514,7 @@ class TestClassifyPurerCueUnits(unittest.TestCase):
         config = self._minimal_config()
         import unittest.mock as mock
         fake = FakeLLMClient()
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             results, metadata = classify_purer_cue_units([], fw, config)
         self.assertEqual(results, {})
         self.assertEqual(metadata, {})
@@ -527,7 +527,7 @@ class TestClassifyPurerCueUnits(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient(default_name='Utilization')
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             classify_purer_cue_units(cue_units, fw, config)
 
         self.assertTrue(len(fake.calls) >= 1)
@@ -540,7 +540,7 @@ class TestClassifyPurerCueUnits(unittest.TestCase):
 
         import unittest.mock as mock
         fake = FakeLLMClient()
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             _, metadata = classify_purer_cue_units(cue_units, fw, config)
 
         self.assertIn('cue_meta', metadata)
@@ -566,7 +566,7 @@ class TestClassifyPurerCueUnits(unittest.TestCase):
             }
 
         fake = FakeLLMClient(responder=reinforcement_responder)
-        with mock.patch('classification_tools.llm_classifier.LLMClient', return_value=fake):
+        with mock.patch('classification_tools.theme_llm.llm_classifier.LLMClient', return_value=fake):
             results, _ = classify_purer_cue_units(cue_units, fw, config)
 
         result = results['cue_reinf']

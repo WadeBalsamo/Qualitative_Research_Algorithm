@@ -12,7 +12,7 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
 from process._freeze import FrozenArtifactError
 from process import output_paths as _paths
-from theme_framework.theme_schema import ThemeDefinition, ThemeFramework
+from constructs.theme_schema import ThemeDefinition, ThemeFramework
 
 
 def _make_mini_framework(name='TESTFW', version='1.0', n_themes=2):

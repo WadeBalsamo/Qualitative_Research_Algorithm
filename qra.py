@@ -283,7 +283,7 @@ def _add_common_args(parser: argparse.ArgumentParser):
 def _load_framework(framework_arg):
     """Load a ThemeFramework from preset name or JSON path."""
     if framework_arg is None or framework_arg == 'vaamr':
-        from theme_framework.registry import load as _registry_load_fw
+        from constructs.registry import load as _registry_load_fw
         return _registry_load_fw('vaamr')
     if framework_arg == 'vammr':
         raise ValueError(
@@ -292,7 +292,7 @@ def _load_framework(framework_arg):
     # Custom JSON path
     with open(framework_arg) as f:
         fw_data = json.load(f)
-    from theme_framework.theme_schema import ThemeFramework, ThemeDefinition
+    from constructs.theme_schema import ThemeFramework, ThemeDefinition
     themes = []
     for t in fw_data.get('themes', []):
         themes.append(ThemeDefinition(
@@ -317,12 +317,12 @@ def _load_framework(framework_arg):
 def _load_codebook(codebook_arg):
     """Load a Codebook from preset name or JSON path. Returns None if disabled."""
     if codebook_arg is None or codebook_arg == 'phenomenology':
-        from codebook.phenomenology_codebook import get_phenomenology_codebook
+        from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
         return get_phenomenology_codebook()
 
     with open(codebook_arg) as f:
         cb_data = json.load(f)
-    from codebook.codebook_schema import Codebook, CodeDefinition
+    from constructs.codebook.codebook_schema import Codebook, CodeDefinition
     codes = []
     for c in cb_data.get('codes', []):
         codes.append(CodeDefinition(
@@ -716,11 +716,11 @@ def _cv_items_to_segments(test_items: list):
 
 def cmd_test_zeroshot(args):
     """Run zero-shot LLM classification against the content validity test set."""
-    from classification_tools.llm_classifier import (
+    from classification_tools.theme_llm.llm_classifier import (
         create_content_validity_test_set,
         classify_segments_zero_shot,
     )
-    from theme_framework.config import ThemeClassificationConfig
+    from constructs.config import ThemeClassificationConfig
 
     framework_arg = getattr(args, 'framework', None)
     framework = _load_framework(framework_arg)
@@ -1688,7 +1688,7 @@ def cmd_cv_create(args):
         sys.exit(2)
 
     if kind == 'purer':
-        from theme_framework.registry import load as _registry_load_fw
+        from constructs.registry import load as _registry_load_fw
         framework = _registry_load_fw('purer')
     else:
         framework = _load_framework(None)  # vaamr
@@ -1737,7 +1737,7 @@ def cmd_cv_refresh(args):
     _model = getattr(args, 'model', None)
     _lmurl = getattr(args, 'lmstudio_url', None)
     if _backend or _model or _lmurl:
-        from theme_framework.config import ThemeClassificationConfig as _TCC
+        from constructs.config import ThemeClassificationConfig as _TCC
         tc = _TCC(
             backend=_backend or (tc.backend if tc else 'lmstudio'),
             model=_model or (tc.model if tc else None),
@@ -1747,7 +1747,7 @@ def cmd_cv_refresh(args):
     for name in names:
         kind = kind_by_name.get(name, 'vaamr')
         if kind == 'purer':
-            from theme_framework.registry import load as _registry_load_fw
+            from constructs.registry import load as _registry_load_fw
             framework = _registry_load_fw('purer')
         else:
             framework = _load_framework(None)
@@ -2027,7 +2027,7 @@ def _print_probe_verdict(v):
 
 def cmd_probe_train(args):
     """qra probe train — fit the per-rater ensemble scaler + run the participant-grouped gate."""
-    from classification_tools import probe_classifier as _pc
+    from classification_tools.probe import probe_classifier as _pc
     output_dir = args.output_dir
     if not os.path.isdir(output_dir):
         print(f"Error: output directory not found: {output_dir}")
@@ -2045,7 +2045,7 @@ def cmd_probe_train(args):
 
 def cmd_probe_status(args):
     """qra probe status — print the probe reliability-gate verdict (probe↔human/LLM κ)."""
-    from classification_tools import probe_classifier as _pc
+    from classification_tools.probe import probe_classifier as _pc
     verdict = _pc.read_probe_gate(args.output_dir)
     if getattr(args, 'json', False):
         print(json.dumps(verdict, indent=2))
@@ -2055,7 +2055,7 @@ def cmd_probe_status(args):
 
 def cmd_probe_classify(args):
     """qra probe classify — LLM-free label UNLABELED participant segments (gated + abstaining)."""
-    from classification_tools import probe_classifier as _pc
+    from classification_tools.probe import probe_classifier as _pc
     output_dir = args.output_dir
     if not os.path.isdir(output_dir):
         print(f"Error: output directory not found: {output_dir}")

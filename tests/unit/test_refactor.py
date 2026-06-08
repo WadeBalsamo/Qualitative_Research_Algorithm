@@ -47,7 +47,7 @@ class TestMarkdownLoaderHelpers(unittest.TestCase):
     """Unit tests for the low-level parser helpers."""
 
     def setUp(self):
-        from theme_framework.markdown_loader import (
+        from constructs.markdown_loader import (
             _strip_html_comments,
             _parse_bullets,
             _parse_blockquotes,
@@ -132,7 +132,7 @@ class TestMarkdownLoaderHelpers(unittest.TestCase):
 
     def test_blockquotes_after_comment_stripped(self):
         """After HTML comment stripping, blockquotes should parse cleanly."""
-        from theme_framework.markdown_loader import _strip_html_comments
+        from constructs.markdown_loader import _strip_html_comments
         text = "<!-- note -->\n> actual utterance"
         clean = _strip_html_comments(text)
         result = self.blockquotes(clean)
@@ -183,7 +183,7 @@ class TestFrameworkMarkdownParserIntegration(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from theme_framework.markdown_loader import load_framework_md
+        from constructs.markdown_loader import load_framework_md
         cls.vaamr = load_framework_md(VAAMR_MD)
         cls.purer = load_framework_md(PURER_MD)
 
@@ -277,7 +277,7 @@ class TestCodebookMarkdownParserIntegration(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from codebook.markdown_loader import load_codebook_md
+        from constructs.codebook.markdown_loader import load_codebook_md
         cls.cb = load_codebook_md(CODEBOOK_MD)
 
     def test_code_count(self):
@@ -333,17 +333,17 @@ class TestCodebookMarkdownParserIntegration(unittest.TestCase):
 class TestSchemaInvariants(unittest.TestCase):
 
     def test_theme_definition_has_no_color(self):
-        from theme_framework.theme_schema import ThemeDefinition
+        from constructs.theme_schema import ThemeDefinition
         names = {f.name for f in dataclasses.fields(ThemeDefinition)}
         self.assertNotIn('color', names)
 
     def test_code_definition_has_no_subcodes(self):
-        from codebook.codebook_schema import CodeDefinition
+        from constructs.codebook.codebook_schema import CodeDefinition
         names = {f.name for f in dataclasses.fields(CodeDefinition)}
         self.assertNotIn('subcodes', names)
 
     def test_theme_definition_required_fields_present(self):
-        from theme_framework.theme_schema import ThemeDefinition
+        from constructs.theme_schema import ThemeDefinition
         required = {
             'theme_id', 'key', 'name', 'short_name', 'prompt_name',
             'definition', 'prototypical_features', 'distinguishing_criteria',
@@ -354,7 +354,7 @@ class TestSchemaInvariants(unittest.TestCase):
         self.assertTrue(required.issubset(actual), f"Missing: {required - actual}")
 
     def test_code_definition_required_fields_present(self):
-        from codebook.codebook_schema import CodeDefinition
+        from constructs.codebook.codebook_schema import CodeDefinition
         required = {'code_id', 'category', 'domain', 'description',
                     'inclusive_criteria', 'exclusive_criteria', 'exemplar_utterances'}
         actual = {f.name for f in dataclasses.fields(CodeDefinition)}
@@ -369,7 +369,7 @@ class TestThemeFrameworkMethods(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from theme_framework.registry import load
+        from constructs.registry import load
         cls.vaamr = load('vaamr')
         cls.purer = load('purer')
 
@@ -464,7 +464,7 @@ class TestCodebookMethods(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from codebook.phenomenology_codebook import get_phenomenology_codebook
+        from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
         cls.cb = get_phenomenology_codebook()
 
     def test_get_codes_by_domain(self):
@@ -519,38 +519,38 @@ class TestCodebookMethods(unittest.TestCase):
 class TestFrameworkRegistry(unittest.TestCase):
 
     def test_load_vaamr_returns_framework(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         fw = load('vaamr')
         self.assertEqual(fw.name, 'VAAMR')
 
     def test_load_purer_returns_framework(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         fw = load('purer')
         self.assertEqual(fw.name, 'PURER')
 
     def test_load_none_returns_none(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         self.assertIsNone(load(None))
 
     def test_load_unknown_raises_key_error(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         with self.assertRaises(KeyError):
             load('not_a_framework')
 
     def test_repeated_load_returns_same_object(self):
         """lru_cache must ensure the same ThemeFramework object is returned."""
-        from theme_framework.registry import load
+        from constructs.registry import load
         fw1 = load('vaamr')
         fw2 = load('vaamr')
         self.assertIs(fw1, fw2)
 
     def test_frameworks_dict_contains_expected_keys(self):
-        from theme_framework.registry import FRAMEWORKS
+        from constructs.registry import FRAMEWORKS
         self.assertIn('vaamr', FRAMEWORKS)
         self.assertIn('purer', FRAMEWORKS)
 
     def test_framework_paths_exist(self):
-        from theme_framework.registry import FRAMEWORKS
+        from constructs.registry import FRAMEWORKS
         for name, path in FRAMEWORKS.items():
             with self.subTest(name=name):
                 self.assertTrue(path.exists(), f"{name}: {path} does not exist")
@@ -603,7 +603,7 @@ class TestPipelineConfigFrameworkFields(unittest.TestCase):
     def test_registry_resolves_participant_framework(self):
         """Registry must be able to load whatever participant_framework is set to."""
         from process.config import PipelineConfig
-        from theme_framework.registry import load
+        from constructs.registry import load
         cfg = PipelineConfig()
         fw = load(cfg.participant_framework)
         self.assertIsNotNone(fw)
@@ -611,7 +611,7 @@ class TestPipelineConfigFrameworkFields(unittest.TestCase):
 
     def test_registry_resolves_therapist_framework(self):
         from process.config import PipelineConfig
-        from theme_framework.registry import load
+        from constructs.registry import load
         cfg = PipelineConfig()
         fw = load(cfg.therapist_framework)
         self.assertIsNotNone(fw)
@@ -619,7 +619,7 @@ class TestPipelineConfigFrameworkFields(unittest.TestCase):
 
     def test_registry_handles_none_therapist_framework(self):
         from process.config import PipelineConfig
-        from theme_framework.registry import load
+        from constructs.registry import load
         cfg = PipelineConfig(therapist_framework=None)
         self.assertIsNone(load(cfg.therapist_framework))
 
@@ -633,7 +633,7 @@ class TestVAAMRContentInvariants(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from theme_framework.registry import load
+        from constructs.registry import load
         cls.fw = load('vaamr')
         cls.by_key = {t.key: t for t in cls.fw.themes}
 
@@ -684,7 +684,7 @@ class TestPURERContentInvariants(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from theme_framework.registry import load
+        from constructs.registry import load
         cls.fw = load('purer')
         cls.by_key = {t.key: t for t in cls.fw.themes}
 
@@ -789,7 +789,7 @@ class TestParserSyntheticMarkdown(unittest.TestCase):
 
     def _parse(self, text: str, path_suffix: str = 'test.md'):
         import tempfile
-        from theme_framework.markdown_loader import load_framework_md
+        from constructs.markdown_loader import load_framework_md
         with tempfile.NamedTemporaryFile(mode='w', suffix=path_suffix,
                                          delete=False, encoding='utf-8') as f:
             f.write(text)
@@ -843,7 +843,7 @@ class TestParserSyntheticMarkdown(unittest.TestCase):
         self.assertFalse(hasattr(fw.themes[0], 'color'))
 
     def test_framework_with_no_frontmatter_raises(self):
-        from theme_framework.markdown_loader import load_framework_md
+        from constructs.markdown_loader import load_framework_md
         import tempfile
         text = "# Just a heading\nNo frontmatter here."
         with tempfile.NamedTemporaryFile(mode='w', suffix='.md',

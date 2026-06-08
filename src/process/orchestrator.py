@@ -32,17 +32,17 @@ import pandas as pd
 from classification_tools.data_structures import Segment
 from classification_tools.llm_client import LLMClient, LLMClientConfig
 from classification_tools.validation import create_balanced_evaluation_set
-from classification_tools.llm_classifier import (
+from classification_tools.theme_llm.llm_classifier import (
     classify_segments_zero_shot,
     create_content_validity_test_set,
     LLMCodebookClassifier,
 )
 from classification_tools.response_parser import parse_all_results, parse_purer_results
-from classification_tools.llm_classifier import (
+from classification_tools.theme_llm.llm_classifier import (
     classify_purer_cue_units as _classify_purer_cue_units,
     _build_context_block as _build_context_block_for_purer,
 )
-from theme_framework.theme_schema import ThemeFramework
+from constructs.theme_schema import ThemeFramework
 
 from .config import PipelineConfig
 from .transcript_ingestion import (
@@ -137,8 +137,8 @@ class SilentObserver(PipelineObserver):
         print(f"{'=' * 60}")
         print(f"All outputs in: {output_dir}")
 
-from codebook.embedding_classifier import EmbeddingCodebookClassifier, ensure_embedding_model_ready
-from codebook.ensemble import CodebookEnsemble
+from classification_tools.codebook_multilabel.embedding_classifier import EmbeddingCodebookClassifier, ensure_embedding_model_ready
+from classification_tools.codebook_multilabel.ensemble import CodebookEnsemble
 from . import classifications_io as _cio
 
 
@@ -474,7 +474,7 @@ def _probe_promotion_flag(config, output_dir: str) -> bool:
     the probe stage (run_full_pipeline Stage-6b); it does NOT gate promotion of an overlay an
     operator already produced via ``qra probe classify`` / the TUI."""
     try:
-        from classification_tools import probe_classifier as _pc
+        from classification_tools.probe import probe_classifier as _pc
         return bool(_pc.probe_gate_ready(output_dir))
     except Exception:
         return False
@@ -503,7 +503,7 @@ def _run_probe_stage(config, output_dir: str, df_all, segments, verbose: bool = 
     filled. Graceful: any failure (e.g. the embedding backend is unreachable) is logged and
     skipped — the LLM-consensus labels of record are unaffected.
     """
-    from classification_tools import probe_classifier as _pc
+    from classification_tools.probe import probe_classifier as _pc
     cfg = getattr(config, 'probe', None)
     if cfg is None:
         return 0
@@ -565,7 +565,7 @@ def _classify_new_with_scaler(mode, config, framework, segments, new_sids, outpu
     try:
         df = _segments_to_scaler_df(segments)
         if mode == 'probe':
-            from classification_tools import probe_classifier as _pc
+            from classification_tools.probe import probe_classifier as _pc
             cfg = getattr(config, 'probe', None) or _pc.ProbeConfig()
             existing = df[~df['session_id'].astype(str).isin(new_set)]
             _pc.train_probe(existing, output_dir, cfg)
@@ -768,7 +768,7 @@ def _purer_llm_classify(config, segments, output_dir, observer):
     if not getattr(config, 'run_purer_labeler', False) or not _has_therapists:
         return
 
-    from theme_framework.registry import load as _registry_load
+    from constructs.registry import load as _registry_load
     _therapist_fw_name = getattr(config, 'therapist_framework', 'purer')
     purer_framework = _registry_load(_therapist_fw_name or 'purer')
     purer_cfg = config.purer_classification
@@ -1294,7 +1294,7 @@ def stage_validation_artifacts(
         )
 
     if framework is None:
-        from theme_framework.registry import load as _registry_load
+        from constructs.registry import load as _registry_load
         _fw_name = getattr(config, 'participant_framework', 'vaamr') if config else 'vaamr'
         framework = _registry_load(_fw_name or 'vaamr')
 
@@ -1324,7 +1324,7 @@ def stage_validation_artifacts(
             framework_purer = None
             if getattr(getattr(cv_cfg, 'purer', None), 'enabled', False):
                 try:
-                    from theme_framework.registry import load as _registry_load
+                    from constructs.registry import load as _registry_load
                     _fw_name = getattr(config, 'therapist_framework', 'purer') or 'purer'
                     framework_purer = _registry_load(_fw_name)
                 except Exception:
@@ -1899,7 +1899,7 @@ def run_incremental_pipeline(
         if 'codebook' in manifest and config.run_codebook_classifier:
             cb = codebook
             if cb is None:
-                from codebook.phenomenology_codebook import get_phenomenology_codebook
+                from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
                 cb = get_phenomenology_codebook()
             pinned = resolve_pinned_classifier_config(output_dir, 'codebook', config, codebook=cb)
             all_segments = stage_classify_codebook(
@@ -2137,7 +2137,7 @@ def run_full_pipeline(
     # ------------------------------------------------------------------
     if config.run_codebook_classifier:
         if codebook is None:
-            from codebook.phenomenology_codebook import get_phenomenology_codebook
+            from constructs.codebook.phenomenology_codebook import get_phenomenology_codebook
             codebook = get_phenomenology_codebook()
         # Persist codebook definitions for downstream `qra analyze` (no equivalent in _codebook_classify).
         _cb_def_path = os.path.join(_paths.meta_dir(output_dir), 'codebook_definitions.json')

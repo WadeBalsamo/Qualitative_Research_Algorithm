@@ -532,10 +532,10 @@ def _write_cv_answer_key_pending(ai_path, items, framework, error=None) -> None:
 
 def _write_cv_answer_key_graded(ai_path, items, framework, theme_classification_cfg) -> None:
     """Run zero-shot grading and write the graded report."""
-    from classification_tools.llm_classifier import create_content_validity_test_set
+    from classification_tools.theme_llm.llm_classifier import create_content_validity_test_set
     from classification_tools.classification_loop import classify_segments_with_multi_run_consensus
     from classification_tools.llm_client import LLMClient, LLMClientConfig
-    from theme_framework.config import ThemeClassificationConfig
+    from constructs.config import ThemeClassificationConfig
 
     # Convert items to Segment-shaped objects for the classifier
     from classification_tools.data_structures import Segment

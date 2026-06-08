@@ -29,9 +29,9 @@ _QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
 if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
-from codebook.codebook_schema import CodeDefinition, CodeAssignment, Codebook
-from codebook.config import EmbeddingClassifierConfig
-from codebook.embedding_classifier import EmbeddingCodebookClassifier
+from constructs.codebook.codebook_schema import CodeDefinition, CodeAssignment, Codebook
+from classification_tools.codebook_multilabel.config import EmbeddingClassifierConfig
+from classification_tools.codebook_multilabel.embedding_classifier import EmbeddingCodebookClassifier
 from classification_tools.data_structures import Segment
 from tests.testhelpers import slow_test
 

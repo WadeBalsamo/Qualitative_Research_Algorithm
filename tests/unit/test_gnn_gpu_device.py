@@ -37,7 +37,7 @@ def _seg_emb(df, dim=16, seed=0):
 class TestEmbeddingDeviceConfig(unittest.TestCase):
 
     def test_embedding_config_has_device_field(self):
-        from codebook.config import EmbeddingClassifierConfig
+        from classification_tools.codebook_multilabel.config import EmbeddingClassifierConfig
         self.assertIsNone(EmbeddingClassifierConfig().device)
         self.assertEqual(EmbeddingClassifierConfig(device='cuda:1').device, 'cuda:1')
 

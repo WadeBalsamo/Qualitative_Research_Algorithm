@@ -33,8 +33,8 @@ def _make_embedder(config):
     knob governs the dominant compute, not just SentenceTransformer's auto-detection.
     """
     global _EMBEDDER, _EMBEDDER_KEY
-    from codebook.config import EmbeddingClassifierConfig
-    from codebook.embedding_classifier import EmbeddingCodebookClassifier
+    from classification_tools.codebook_multilabel.config import EmbeddingClassifierConfig
+    from classification_tools.codebook_multilabel.embedding_classifier import EmbeddingCodebookClassifier
     key = (config.embedding_model, bool(config.use_query_prefix),
            int(config.embedding_batch_size), getattr(config, 'device', None))
     if _EMBEDDER is not None and _EMBEDDER_KEY == key:

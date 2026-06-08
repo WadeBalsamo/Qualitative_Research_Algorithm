@@ -1,7 +1,7 @@
 """
 tests/unit/test_registry.py
 ----------------------------
-Unit tests for theme_framework/registry.py.
+Unit tests for constructs/registry.py.
 
 Covers:
   load(None)          → None
@@ -22,7 +22,7 @@ _QRA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, os.path.join(_QRA_ROOT, 'src'))
 if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 
-from theme_framework.registry import load
+from constructs.registry import load
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ class TestLoadVaamr(unittest.TestCase):
         self.fw = load('vaamr')
 
     def test_returns_a_theme_framework(self):
-        from theme_framework.theme_schema import ThemeFramework
+        from constructs.theme_schema import ThemeFramework
         self.assertIsInstance(self.fw, ThemeFramework)
 
     def test_framework_name_is_vaamr(self):
@@ -106,7 +106,7 @@ class TestLoadPurer(unittest.TestCase):
         self.fw = load('purer')
 
     def test_returns_a_theme_framework(self):
-        from theme_framework.theme_schema import ThemeFramework
+        from constructs.theme_schema import ThemeFramework
         self.assertIsInstance(self.fw, ThemeFramework)
 
     def test_framework_name_is_purer(self):
@@ -180,12 +180,12 @@ class TestLruCache(unittest.TestCase):
 
 class TestFrameworkModulePaths(unittest.TestCase):
     """
-    Guards the markdown paths in src/theme_framework/purer.py and vaamr.py.
+    Guards the markdown paths in src/constructs/purer.py and vaamr.py.
 
     After the src/ layout move, path computations use parents[2]:
         Path(__file__).resolve().parents[2] / "frameworks" / "PURER_FRAMEWORK.md"
 
-    parents[2] of .../src/theme_framework/purer.py resolves to the repo root
+    parents[2] of .../src/constructs/purer.py resolves to the repo root
     where the frameworks/ directory lives.  This test pins that behavior so
     accidental parents-index drift raises a failure rather than a silent
     FileNotFoundError at runtime.
@@ -193,13 +193,13 @@ class TestFrameworkModulePaths(unittest.TestCase):
 
     def test_get_purer_framework_loads_correctly(self):
         """get_purer_framework() uses parents[2] + frameworks/ (correct) and succeeds."""
-        from theme_framework.purer import get_purer_framework
+        from constructs.purer import get_purer_framework
         fw = get_purer_framework()
         self.assertEqual(fw.num_themes, 5)
 
     def test_get_vaamr_framework_works_correctly(self):
         """get_vaamr_framework() uses parents[2] + frameworks/ (correct) and succeeds."""
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
         fw = get_vaamr_framework()
         self.assertEqual(fw.num_themes, 5)
         self.assertEqual(fw.name, "VAAMR")

@@ -71,7 +71,7 @@ def build_tiny_config(output_dir: str, transcript_dir: str = "", *,
 # Programmatic frameworks (no markdown dependency)
 # ---------------------------------------------------------------------------
 def _theme(theme_id, key, name, short, alias_extra=None):
-    from theme_framework.theme_schema import ThemeDefinition
+    from constructs.theme_schema import ThemeDefinition
     return ThemeDefinition(
         theme_id=theme_id,
         key=key,
@@ -91,7 +91,7 @@ def _theme(theme_id, key, name, short, alias_extra=None):
 
 def tiny_vaamr_framework():
     """A 5-stage VAAMR ThemeFramework built in code (matches canonical ids)."""
-    from theme_framework.theme_schema import ThemeFramework
+    from constructs.theme_schema import ThemeFramework
     themes = [
         _theme(0, "vigilance", "Vigilance", "VIG"),
         _theme(1, "avoidance", "Avoidance", "AVD"),
@@ -105,7 +105,7 @@ def tiny_vaamr_framework():
 
 def tiny_purer_framework():
     """A 5-move PURER ThemeFramework built in code (matches canonical ids)."""
-    from theme_framework.theme_schema import ThemeFramework
+    from constructs.theme_schema import ThemeFramework
     themes = [
         _theme(0, "phenomenological", "Phenomenological", "P"),
         _theme(1, "utilization", "Utilization", "U"),
@@ -128,7 +128,7 @@ def load_real_framework_or_skip(name: str):
     """
     import unittest
     try:
-        from theme_framework.registry import load
+        from constructs.registry import load
         fw = load(name)
     except FileNotFoundError as e:
         raise unittest.SkipTest(f"{name} framework markdown not present: {e}")

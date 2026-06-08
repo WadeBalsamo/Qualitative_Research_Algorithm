@@ -3,7 +3,7 @@ conftest.py — test path configuration.
 
 Puts ``src/`` on sys.path (so first-party packages — ``process``,
 ``gnn_layer``, ``analysis``, ``classification_tools``, ``codebook``,
-``theme_framework`` — import without ``pip install -e .``) and, after it,
+``constructs`` — import without ``pip install -e .``) and, after it,
 the repository root (so ``import qra``, the root-level CLI module that lives
 outside ``src/``, resolves during tests). Works for both ``pytest`` and
 ``python -m unittest discover``.
