@@ -38,7 +38,7 @@ tqdm==4.67.3
 
 # NLP & embeddings
 sentence-transformers==2.7.0
-transformers==4.42.4
+transformers==5.0.0rc3
 tokenizers==0.19.1
 safetensors==0.7.0
 spacy>=3.0.0
@@ -80,7 +80,7 @@ krippendorff==0.8.2
 
 # Optional: Bayesian mechanism estimator (analysis/mechanism_model.py, estimator='bayesian'|'both').
 # NOT a live dependency — installing it here would BREAK `pip install -r requirements.txt`,
-# because bambi/pymc/pytensor require numpy>=2.0 while the pinned transformers==4.42.4 above
+# because bambi/pymc/pytensor require numpy>=2.0 while the pinned transformers==5.0.0rc3 above
 # requires numpy<2.0 (the two cannot coexist in this venv). The in-process default estimator is
 # the frequentist ordinal + Gaussian-mixed interaction model (statsmodels + sklearn, numpy-agnostic),
 # which needs nothing beyond the packages already pinned above. To run the opt-in Bayesian arm,
