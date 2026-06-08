@@ -3,8 +3,7 @@
 This document charts the forward trajectory for the Qualitative Research Algorithm (QRA). The pipeline has moved well beyond its original three-phase plan: the heterogeneous Graph Neural Network is now implemented and integrated (`gnn_layer/`), not a future phase. The roadmap is accordingly organized around the work that remains, in the order it is needed:
 
 1. **Methodology paper** — completion and submission of the computational phenomenology methodology paper (Phase 1).
-2. **Human-coded testset import and multi-substrate IRR triangulation** — importing human-coded `.csv` testsets and measuring inter-rater reliability across humans, human-consensus vs. LLM consensus, and human-consensus vs. graph consensus, for any framework or codebook (Phase 1.12).
-3. **Domain-adapted fine-tuning** — supervised fine-tuning of classifiers from the validated corpus, including the GNN's already-implemented distillation path (Phase 2).
+2. **Domain-adapted fine-tuning** — supervised fine-tuning of classifiers from the validated corpus, including the GNN's already-implemented distillation path (Phase 2).
 4. **Quantitative outcome integration via REDCap** — importing daily pain, movement, and practice metrics plus baseline/follow-up TSK scores, building an adaptive validation of VAAMR against quantitative measures, and exporting per-participant qualitative progressions back into REDCap (Phase 4).
 5. **The Qualitative Results paper** — the trial's primary qualitative findings manuscript, planned past Cohort 4 (Phase 5).
 6. **MindfulBERT** — the long-term big-picture vision: distilling the validated corpus into a fine-tuned `mindfulbert-for-classification` model, using the graph to scale classification across larger datasets, and ultimately fine-tuning a generative `MindfulBERT` that produces therapeutic instructional language predicted to advance VAAMR stage progression (Phase 6).
@@ -33,7 +32,7 @@ What remains is the research-facing work: completing human validation, importing
 
 **Reference:** Low et al. (2024), Text Psychometrics — content validity sensitivity metric
 
-For each VAAMR stage, compile an expert-curated list of canonical tokens/phrases from the framework definitions in `theme_framework/vaamr.py`. Compute **content validity sensitivity** = proportion of expert list items that the LLM flags above a decision threshold across the corpus. Report per-stage sensitivity. Similarly compute for PURER components using therapist utterances.
+For each VAAMR stage, compile an expert-curated list of canonical tokens/phrases from the framework definitions in `constructs/vaamr.py`. Compute **content validity sensitivity** = proportion of expert list items that the LLM flags above a decision threshold across the corpus. Report per-stage sensitivity. Similarly compute for PURER components using therapist utterances.
 
 **Deliverables for the paper:**
 - Table: Per-stage content validity sensitivity (VAAMR: Vigilance, Avoidance, Metacognition, Reappraisal; plus PURER: P, U, R, E, R)
