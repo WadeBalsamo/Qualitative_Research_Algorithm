@@ -194,10 +194,11 @@ class GnnLayerConfig:
     gnn_classifier_enabled: bool = False
     produce_consensus_labels: bool = True  # write per-segment graph labels to the gnn_labels overlay
                                            # (only takes effect when gnn_classifier_enabled=True)
-    # Promotion switch. When False (default), graph labels are computed and stored alongside
-    # the LLM runs but the label OF RECORD stays the LLM consensus. When True, graph labels
-    # become authoritative (provenance tier 'gnn_consensus', above llm_zero_shot, below human).
-    # Flip this only after a human reviews the per-stage reliability gate.
+    # DEPRECATED + NO LONGER CONSULTED (methodology §8.6). The GNN was repositioned to a
+    # non-authoritative FILL tier: it can label only segments the LLM left unlabeled (gated by
+    # its reliability gate) and can NEVER override an LLM/human label. The probe is the
+    # recommended cheap scaler. Retained for back-compat with existing qra_config.json files;
+    # assemble_master_dataset ignores it.
     gnn_authoritative: bool = False
 
     # ---- Abstention / deferral (A2: don't poison the training set) ----
