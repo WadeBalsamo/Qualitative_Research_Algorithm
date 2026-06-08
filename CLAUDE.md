@@ -10,7 +10,7 @@ QRA (Qualitative Research Algorithm) is a computational phenomenology pipeline t
 - **PURER** (Phenomenological-Utilization-Reframing-Educate/Expectancy-Reinforcement) — classifies **therapist** segments across five guided-inquiry moves at the cue-block level (between consecutive participant turns)
 - **VCE phenomenology codebook** — optional multi-label construct enrichment (54 codes, 6 domains) applied to participant segments
 
-**Framework definitions are markdown-driven.** VAAMR/PURER are parsed from `frameworks/VAAMR_FRAMEWORK.md` / `frameworks/PURER_FRAMEWORK.md` via `src/theme_framework/registry.py` → `load('vaamr'|'purer')`; the VCE codebook is parsed from `frameworks/PHENOMENOLOGY_CODEBOOK.md` via `src/codebook/markdown_loader.py`. The `src/theme_framework/vaamr.py` / `purer.py` modules are thin wrappers over the markdown loader — **edit the `.md` files to change definitions, not the Python.** Each `.md` follows a parser contract (YAML frontmatter + structured headings); register a new framework by dropping a `.md` in `frameworks/` and adding it to `FRAMEWORKS` in `src/theme_framework/registry.py`.
+**Framework definitions are markdown-driven.** VAAMR/PURER are parsed from `frameworks/VAAMR_FRAMEWORK.md` / `frameworks/PURER_FRAMEWORK.md` via `src/constructs/registry.py` → `load('vaamr'|'purer')`; the VCE codebook is parsed from `frameworks/PHENOMENOLOGY_CODEBOOK.md` via `src/constructs/codebook/markdown_loader.py` (which sits beside the framework markdown loader under `constructs/`). The `src/constructs/vaamr.py` / `purer.py` modules are thin wrappers over the markdown loader — **edit the `.md` files to change definitions, not the Python.** Each `.md` follows a parser contract (YAML frontmatter + structured headings); register a new framework by dropping a `.md` in `frameworks/` and adding it to `FRAMEWORKS` in `src/constructs/registry.py`.
 
 See `docs/methodology.md` for the full neurophenomenological methodology and `README.md` for research context.
 
@@ -112,7 +112,7 @@ Unit tests live in `tests/unit/` (hermetic, always run), integration tests in `t
 - Therapist segments extracted and interleaved with participant segments in chronological order
 
 ### Stage 2 — Construct Operationalization
-- Builds framework definitions from `src/theme_framework/vaamr.py` / `purer.py`
+- Builds framework definitions from `src/constructs/vaamr.py` / `purer.py`
 - Exports theme definitions (JSON + txt)
 - Creates and exports content validity test set from exemplar/subtle/adversarial utterances
 - Writes content validity human worksheet, definition key, and AI answer key to `04_validation/`
@@ -132,7 +132,7 @@ Unit tests live in `tests/unit/` (hermetic, always run), integration tests in `t
 - Single-run classification by default (no multi-model IRR needed for PURER)
 
 ### Stage 3b — Codebook Classification (optional)
-(`src/codebook/embedding_classifier.py`, `src/codebook/ensemble.py`)
+(`src/classification_tools/codebook_multilabel/embedding_classifier.py`, `src/classification_tools/codebook_multilabel/ensemble.py`)
 - VCE embedding similarity + LLM zero-shot multi-label coding on participant segments
 - Ensemble reconciliation of embedding and LLM results
 - GPU memory hand-off: reuses segmentation embedding model when model IDs match
@@ -172,7 +172,7 @@ Unit tests live in `tests/unit/` (hermetic, always run), integration tests in `t
 
 **VAAMR applies exclusively to participant segments. PURER applies exclusively to therapist segments.** These labels never cross. Therapist segments appear as read-only preceding context in classification prompts for participant segments, but are never themselves classified with VAAMR. This boundary is enforced by the speaker filter in each stage.
 
-PURER moves frequently co-occur within a single therapist turn/cue-block. When a single label is required, an empirical precedence order is defined in `src/theme_framework/purer.py`:
+PURER moves frequently co-occur within a single therapist turn/cue-block. When a single label is required, an empirical precedence order is defined in `src/constructs/purer.py`:
 - Reinforcement is often a wrapper (code the substantive inner move)
 - Utilization > Reframing for forward-application prompts
 - Reframing > Education when anchored to participant's specific story
@@ -255,21 +255,23 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 | `src/process/cross_validation.py` | VAAMR × VCE code co-occurrence lift statistics |
 | `src/process/cue_blocks.py` | Canonical cue-block builder (run of therapist turns between two participant turns); unifies orchestrator/analysis/gnn implementations |
 | `src/process/setup_wizard.py` | Interactive configuration wizard (14 steps) |
-| `src/theme_framework/registry.py` | `load(name)` → `ThemeFramework`; `FRAMEWORKS` name→`frameworks/*.md` dispatch (cached) |
-| `src/theme_framework/markdown_loader.py` | Parses `frameworks/*_FRAMEWORK.md` → `ThemeFramework`/`ThemeDefinition` (parser contract) |
-| `src/theme_framework/vaamr.py` | `get_vaamr_framework()` — thin wrapper parsing `frameworks/VAAMR_FRAMEWORK.md` |
-| `src/theme_framework/purer.py` | `get_purer_framework()` — thin wrapper parsing `frameworks/PURER_FRAMEWORK.md` |
-| `src/theme_framework/theme_schema.py` | `ThemeDefinition`, `ThemeFramework` dataclasses |
-| `src/codebook/markdown_loader.py` | Parses `frameworks/PHENOMENOLOGY_CODEBOOK.md` → `Codebook` |
-| `src/codebook/phenomenology_codebook.py` | `get_phenomenology_codebook()` — 54 VCE codes / 6 domains, parsed from markdown |
-| `src/codebook/codebook_schema.py` | `CodeDefinition`, `Codebook` dataclasses |
-| `src/codebook/embedding_classifier.py` | Sentence-transformer embedding-based classification |
-| `src/codebook/ensemble.py` | Ensemble reconciliation of embedding + LLM results |
-| `src/classification_tools/llm_classifier.py` | Zero-shot prompt construction and response parsing |
+| `src/constructs/registry.py` | `load(name)` → `ThemeFramework`; `FRAMEWORKS` name→`frameworks/*.md` dispatch (cached) |
+| `src/constructs/markdown_loader.py` | Parses `frameworks/*_FRAMEWORK.md` → `ThemeFramework`/`ThemeDefinition` (parser contract) |
+| `src/constructs/vaamr.py` | `get_vaamr_framework()` — thin wrapper parsing `frameworks/VAAMR_FRAMEWORK.md` |
+| `src/constructs/purer.py` | `get_purer_framework()` — thin wrapper parsing `frameworks/PURER_FRAMEWORK.md` |
+| `src/constructs/theme_schema.py` | `ThemeDefinition`, `ThemeFramework` dataclasses |
+| `src/constructs/config.py` | `ThemeClassificationConfig` — framework-level classification settings |
+| `src/constructs/codebook/markdown_loader.py` | Parses `frameworks/PHENOMENOLOGY_CODEBOOK.md` → `Codebook` (sits beside framework markdown_loader under `constructs/`) |
+| `src/constructs/codebook/phenomenology_codebook.py` | `get_phenomenology_codebook()` — 54 VCE codes / 6 domains, parsed from markdown |
+| `src/constructs/codebook/codebook_schema.py` | `CodeDefinition`, `Codebook` dataclasses |
+| `src/classification_tools/theme_llm/llm_classifier.py` | Zero-shot prompt construction and response parsing (PRIMARY, single-label theme path; also hosts LLMCodebookClassifier) |
+| `src/classification_tools/codebook_multilabel/embedding_classifier.py` | Sentence-transformer embedding-based multi-label codebook classification |
+| `src/classification_tools/codebook_multilabel/ensemble.py` | Ensemble reconciliation of embedding + LLM codebook results |
+| `src/classification_tools/codebook_multilabel/config.py` | `EmbeddingClassifierConfig`, `LLMCodebookConfig`, `EnsembleConfig` — multi-label codebook classifier settings |
 | `src/classification_tools/zeroshot_reporting.py` | `write_zeroshot_report` — graded `--test-zeroshot` content-validity report (extracted from `qra.py`) |
 | `src/classification_tools/llm_client.py` | Backend abstraction (OpenRouter, Ollama, LM Studio, HuggingFace, Replicate) |
 | `src/classification_tools/classification_loop.py` | Multi-run consensus voting with checkpointing |
-| `src/classification_tools/probe_classifier.py` | **LLM-free VAAMR scaler** — `ProbeConfig` + per-rater ensemble (one class-weighted L2-LogReg probe per LLM rater, mean proba; single-probe A1n fallback) + calibration/abstention; `train_probe`/`evaluate_probe`(gate)/`classify_with_probe`; fills `probe_consensus` BELOW the LLM (methodology §8.6) |
+| `src/classification_tools/probe/probe_classifier.py` | **LLM-free VAAMR scaler** (single-label) — `ProbeConfig` + per-rater ensemble (one class-weighted L2-LogReg probe per LLM rater, mean proba; single-probe A1n fallback) + calibration/abstention; `train_probe`/`evaluate_probe`(gate)/`classify_with_probe`; fills `probe_consensus` BELOW the LLM (methodology §8.6) |
 | `src/analysis/grouped_cv.py` | Leak-free participant-grouped `StratifiedGroupKFold` + clustered-bootstrap κ-CI + per-class recall (the gate's measurement apparatus; shared) |
 | `src/classification_tools/data_structures.py` | `Segment` dataclass |
 | `src/analysis/runner.py` | Post-hoc analysis entry point (auto-regenerates IRR when human codes present + models changed) |
