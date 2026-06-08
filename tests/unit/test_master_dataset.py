@@ -52,7 +52,11 @@ def _make_therapist(segment_id='t1', purer_primary=1, **kwargs):
 
 
 class TestProvenanceTierOrder(unittest.TestCase):
-    """Priority: adjudicated > human_consensus > gnn_consensus > llm_zero_shot."""
+    """Priority: adjudicated > human_consensus > llm_zero_shot > probe_consensus > gnn_consensus.
+
+    The probe and the demoted GNN are FILL tiers below the LLM: they label only segments the
+    LLM/human left unlabeled, and never override an existing LLM/human label.
+    """
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -62,13 +66,13 @@ class TestProvenanceTierOrder(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_adjudicated_wins_over_everything(self):
-        """adjudicated_label beats human_label, GNN, and LLM."""
+        """adjudicated_label beats human_label, probe, GNN, and LLM."""
         seg = _make_participant('p1', primary_stage=1)
         seg.human_label = 1   # matches primary_stage so human_consensus would fire
         seg.adjudicated_label = 4
         seg.gnn_vaamr_pred = 3
-        df = assemble_master_dataset([seg], self.out,
-                                     gnn_authoritative=True, gate_passed=True)
+        seg.probe_pred = 2
+        df = assemble_master_dataset([seg], self.out, probe_ready=True, gnn_ready=True)
         r = df.set_index('segment_id')
         self.assertEqual(r.loc['p1', 'final_label'], 4)
         self.assertEqual(r.loc['p1', 'final_label_source'], 'adjudicated')
@@ -79,8 +83,7 @@ class TestProvenanceTierOrder(unittest.TestCase):
         seg.human_label = 2   # equals primary_stage
         seg.adjudicated_label = None
         seg.gnn_vaamr_pred = 4
-        df = assemble_master_dataset([seg], self.out,
-                                     gnn_authoritative=True, gate_passed=True)
+        df = assemble_master_dataset([seg], self.out, probe_ready=True, gnn_ready=True)
         r = df.set_index('segment_id')
         self.assertEqual(r.loc['p1', 'final_label'], 2)
         self.assertEqual(r.loc['p1', 'final_label_source'], 'human_consensus')
@@ -90,43 +93,80 @@ class TestProvenanceTierOrder(unittest.TestCase):
         seg = _make_participant('p1', primary_stage=2)
         seg.human_label = 3   # disagrees with LLM
         seg.adjudicated_label = None
-        seg.gnn_vaamr_pred = None
-        df = assemble_master_dataset([seg], self.out, gnn_authoritative=False)
+        df = assemble_master_dataset([seg], self.out)
         r = df.set_index('segment_id')
-        # No adjudicated, no matching human, no GNN — falls to llm_zero_shot
+        # No adjudicated, no matching human — falls to llm_zero_shot
         self.assertEqual(r.loc['p1', 'final_label'], 2)
         self.assertEqual(r.loc['p1', 'final_label_source'], 'llm_zero_shot')
 
-    def test_gnn_consensus_only_when_authoritative_true(self):
-        """gnn_consensus fires only when gnn_authoritative=True."""
+    def test_cheap_tiers_never_override_llm(self):
+        """With an LLM label present, neither probe nor GNN can override it."""
         seg = _make_participant('p1', primary_stage=1)
         seg.gnn_vaamr_pred = 3
+        seg.probe_pred = 4
+        df = assemble_master_dataset([seg], self.out, probe_ready=True, gnn_ready=True)
+        r = df.set_index('segment_id')
+        self.assertEqual(r.loc['p1', 'final_label'], 1)
+        self.assertEqual(r.loc['p1', 'final_label_source'], 'llm_zero_shot')
+
+    def test_probe_fills_unlabeled_when_ready(self):
+        """An UNLABELED participant segment is filled by the probe when probe_ready."""
+        seg = _make_participant('p1', primary_stage=None)
+        seg.probe_pred = 3
+        seg.probe_conf = 0.7
+        seg.probe_abstain = False
+        # off by default → stays unlabeled
+        r_off = assemble_master_dataset([seg], self.out).set_index('segment_id')
+        self.assertIsNone(r_off.loc['p1', 'final_label'])
+        # ready → probe_consensus fill, tagged 'probe'
+        r_on = assemble_master_dataset([seg], self.out, probe_ready=True).set_index('segment_id')
+        self.assertEqual(r_on.loc['p1', 'final_label'], 3)
+        self.assertEqual(r_on.loc['p1', 'final_label_source'], 'probe_consensus')
+        self.assertEqual(r_on.loc['p1', 'label_confidence_tier'], 'probe')
+
+    def test_probe_abstain_keeps_segment_unlabeled(self):
+        """A probe that abstained does not fill (no confident-wrong label)."""
+        seg = _make_participant('p1', primary_stage=None)
+        seg.probe_pred = 2
+        seg.probe_abstain = True
+        r = assemble_master_dataset([seg], self.out, probe_ready=True).set_index('segment_id')
+        self.assertIsNone(r.loc['p1', 'final_label'])
+
+    def test_probe_outranks_gnn_fill(self):
+        """When both cheap tiers could fill, the probe (recommended) wins over the GNN."""
+        seg = _make_participant('p1', primary_stage=None)
+        seg.probe_pred = 3
+        seg.probe_abstain = False
+        seg.gnn_vaamr_pred = 1
+        r = assemble_master_dataset([seg], self.out, probe_ready=True,
+                                    gnn_ready=True).set_index('segment_id')
+        self.assertEqual(r.loc['p1', 'final_label'], 3)
+        self.assertEqual(r.loc['p1', 'final_label_source'], 'probe_consensus')
+
+    def test_gnn_fills_unlabeled_when_ready(self):
+        """An UNLABELED participant segment is filled by the demoted GNN when gnn_ready."""
+        seg = _make_participant('p1', primary_stage=None)
+        seg.gnn_vaamr_pred = 3
         seg.gnn_vaamr_conf = 0.9
-
-        df_off = assemble_master_dataset([seg], self.out, gnn_authoritative=False)
-        r_off = df_off.set_index('segment_id')
-        self.assertEqual(r_off.loc['p1', 'final_label'], 1)
-        self.assertEqual(r_off.loc['p1', 'final_label_source'], 'llm_zero_shot')
-
-        df_on = assemble_master_dataset([seg], self.out,
-                                        gnn_authoritative=True, gate_passed=True)
-        r_on = df_on.set_index('segment_id')
+        r_off = assemble_master_dataset([seg], self.out).set_index('segment_id')
+        self.assertIsNone(r_off.loc['p1', 'final_label'])
+        r_on = assemble_master_dataset([seg], self.out, gnn_ready=True).set_index('segment_id')
         self.assertEqual(r_on.loc['p1', 'final_label'], 3)
         self.assertEqual(r_on.loc['p1', 'final_label_source'], 'gnn_consensus')
+        self.assertEqual(r_on.loc['p1', 'label_confidence_tier'], 'gnn')
 
     def test_gnn_consensus_not_applied_to_therapist_vaamr(self):
-        """GNN VAAMR prediction must not become VAAMR label for therapist segments."""
+        """GNN VAAMR prediction must not become a VAAMR label for therapist segments."""
         seg = _make_therapist('t1', purer_primary=0)
-        seg.gnn_vaamr_pred = 2  # should be ignored — therapist gets no VAAMR label
-        df = assemble_master_dataset([seg], self.out, gnn_authoritative=True)
+        seg.gnn_vaamr_pred = 2  # ignored — therapist gets no VAAMR label
+        df = assemble_master_dataset([seg], self.out, gnn_ready=True)
         r = df.set_index('segment_id')
-        # Therapist has no primary_stage, so final_label stays None
         self.assertIsNone(r.loc['t1', 'final_label'])
 
     def test_llm_zero_shot_fallback(self):
-        """Pure LLM path: no adjudicated, no matching human, no GNN."""
+        """Pure LLM path: no adjudicated, no matching human, cheap tiers off."""
         seg = _make_participant('p1', primary_stage=0)
-        df = assemble_master_dataset([seg], self.out, gnn_authoritative=False)
+        df = assemble_master_dataset([seg], self.out)
         r = df.set_index('segment_id')
         self.assertEqual(r.loc['p1', 'final_label'], 0)
         self.assertEqual(r.loc['p1', 'final_label_source'], 'llm_zero_shot')
@@ -134,7 +174,7 @@ class TestProvenanceTierOrder(unittest.TestCase):
     def test_no_label_produces_none(self):
         """Segment with no classification → final_label and source are None."""
         seg = Segment(segment_id='p_bare', speaker='participant', text='no label')
-        df = assemble_master_dataset([seg], self.out, gnn_authoritative=False)
+        df = assemble_master_dataset([seg], self.out)
         r = df.set_index('segment_id')
         self.assertIsNone(r.loc['p_bare', 'final_label'])
         self.assertIsNone(r.loc['p_bare', 'final_label_source'])
@@ -150,27 +190,38 @@ class TestRawLabelAuditability(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def test_primary_stage_preserved_when_gnn_wins(self):
+    def test_primary_stage_preserved_and_gnn_does_not_override(self):
         seg = _make_participant('p1', primary_stage=1)
         seg.gnn_vaamr_pred = 4
         seg.gnn_vaamr_conf = 0.88
-        df = assemble_master_dataset([seg], self.out,
-                                     gnn_authoritative=True, gate_passed=True)
+        df = assemble_master_dataset([seg], self.out, gnn_ready=True)
         r = df.set_index('segment_id')
-        # final_label is GNN
-        self.assertEqual(r.loc['p1', 'final_label'], 4)
-        # raw LLM label still present
+        # LLM wins (no override); raw LLM + GNN fields both preserved/auditable
+        self.assertEqual(r.loc['p1', 'final_label'], 1)
+        self.assertEqual(r.loc['p1', 'final_label_source'], 'llm_zero_shot')
         self.assertEqual(r.loc['p1', 'primary_stage'], 1)
+        self.assertEqual(r.loc['p1', 'gnn_vaamr_pred'], 4)
 
-    def test_purer_primary_preserved_when_gnn_wins_purer(self):
+    def test_purer_primary_preserved_and_gnn_does_not_override(self):
         seg = _make_therapist('t1', purer_primary=0)
         seg.gnn_purer_pred = 3
         seg.gnn_purer_conf = 0.75
-        df = assemble_master_dataset([seg], self.out,
-                                     gnn_authoritative=True, gate_passed=True)
+        df = assemble_master_dataset([seg], self.out, gnn_ready=True)
         r = df.set_index('segment_id')
-        self.assertEqual(r.loc['t1', 'purer_final'], 3)
-        self.assertEqual(r.loc['t1', 'purer_primary'], 0)
+        self.assertEqual(r.loc['t1', 'purer_final'], 0)  # LLM wins
+        self.assertEqual(r.loc['t1', 'purer_final_source'], 'llm_zero_shot')
+        self.assertEqual(r.loc['t1', 'gnn_purer_pred'], 3)  # raw GNN preserved
+
+    def test_probe_fields_present_in_output(self):
+        seg = _make_participant('p1', primary_stage=None)
+        seg.probe_pred = 2
+        seg.probe_conf = 0.66
+        seg.probe_abstain = False
+        df = assemble_master_dataset([seg], self.out, probe_ready=True)
+        for col in ('probe_pred', 'probe_conf', 'probe_abstain'):
+            self.assertIn(col, df.columns, f'column {col!r} missing from DataFrame')
+        r = df.set_index('segment_id')
+        self.assertEqual(r.loc['p1', 'probe_pred'], 2)
 
     def test_rater_votes_preserved(self):
         seg = _make_participant('p1', primary_stage=2)
@@ -213,17 +264,17 @@ class TestPurerFinalColumn(unittest.TestCase):
 
     def test_purer_final_llm_zero_shot_default(self):
         seg = _make_therapist('t1', purer_primary=2)
-        df = assemble_master_dataset([seg], self.out, gnn_authoritative=False)
+        df = assemble_master_dataset([seg], self.out)
         r = df.set_index('segment_id')
         self.assertEqual(r.loc['t1', 'purer_final'], 2)
         self.assertEqual(r.loc['t1', 'purer_final_source'], 'llm_zero_shot')
 
-    def test_purer_final_gnn_consensus_when_authoritative(self):
-        seg = _make_therapist('t1', purer_primary=0)
+    def test_purer_final_gnn_fills_when_no_llm(self):
+        """GNN fills a therapist segment's PURER move only when there is no LLM label."""
+        seg = _make_therapist('t1', purer_primary=None)  # no LLM PURER label
         seg.gnn_purer_pred = 4
         seg.gnn_purer_conf = 0.78
-        df = assemble_master_dataset([seg], self.out,
-                                     gnn_authoritative=True, gate_passed=True)
+        df = assemble_master_dataset([seg], self.out, gnn_ready=True)
         r = df.set_index('segment_id')
         self.assertEqual(r.loc['t1', 'purer_final'], 4)
         self.assertEqual(r.loc['t1', 'purer_final_source'], 'gnn_consensus')
@@ -231,7 +282,7 @@ class TestPurerFinalColumn(unittest.TestCase):
     def test_purer_final_none_for_participant(self):
         """Participant segments have no PURER label."""
         seg = _make_participant('p1', primary_stage=2)
-        df = assemble_master_dataset([seg], self.out, gnn_authoritative=False)
+        df = assemble_master_dataset([seg], self.out)
         r = df.set_index('segment_id')
         self.assertIsNone(r.loc['p1', 'purer_final'])
         self.assertIsNone(r.loc['p1', 'purer_final_source'])
@@ -240,7 +291,7 @@ class TestPurerFinalColumn(unittest.TestCase):
         """gnn_purer_pred on a participant segment must not set purer_final."""
         seg = _make_participant('p1', primary_stage=2)
         seg.gnn_purer_pred = 3   # spurious GNN field on a participant
-        df = assemble_master_dataset([seg], self.out, gnn_authoritative=True)
+        df = assemble_master_dataset([seg], self.out, gnn_ready=True)
         r = df.set_index('segment_id')
         self.assertIsNone(r.loc['p1', 'purer_final'])
 

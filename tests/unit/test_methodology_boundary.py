@@ -170,15 +170,14 @@ class TestAssemblyBoundary(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def _run_assembly(self, segments, gnn_authoritative=False, gate_passed=True):
-        # gate_passed defaults True so the speaker-boundary tests exercise the real
-        # boundary gate with the GNN tier eligible (Track 0.2 gate is tested elsewhere).
-        import pandas as pd
+    def _run_assembly(self, segments, gnn_ready=False, probe_ready=False):
+        # gnn_ready/probe_ready True so the speaker-boundary tests exercise the real
+        # boundary gate with the cheap fill tiers eligible.
         df = assemble_master_dataset(
             segments=segments,
             output_path=self.outpath,
-            gnn_authoritative=gnn_authoritative,
-            gate_passed=gate_passed,
+            gnn_ready=gnn_ready,
+            probe_ready=probe_ready,
         )
         return df
 
@@ -252,7 +251,7 @@ class TestAssemblyBoundary(unittest.TestCase):
         t.gnn_vaamr_pred = 3  # spurious — should be ignored for therapists
         t.primary_stage = None
 
-        df = self._run_assembly([t], gnn_authoritative=True)
+        df = self._run_assembly([t], gnn_ready=True)
         row = df[df['segment_id'] == 't1'].iloc[0]
         self.assertIsNone(row['final_label'],
                           "gnn_vaamr_pred must not produce a VAAMR final_label for therapists "
@@ -266,7 +265,7 @@ class TestAssemblyBoundary(unittest.TestCase):
         p = _participant_seg('p1', primary_stage=2)
         p.gnn_purer_pred = 4  # spurious — should be ignored for participants
 
-        df = self._run_assembly([p], gnn_authoritative=True)
+        df = self._run_assembly([p], gnn_ready=True)
         row = df[df['segment_id'] == 'p1'].iloc[0]
         self.assertIsNone(row['purer_final'],
                           "gnn_purer_pred must not produce a purer_final for participants "

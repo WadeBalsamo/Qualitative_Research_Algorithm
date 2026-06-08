@@ -66,17 +66,17 @@ def _seg(sid, primary_stage=2, human_label=None, adjudicated_label=None,
     return seg
 
 
-def _run(segments, gnn_authoritative=False, gate_passed=True):
-    # gate_passed defaults to True here so the provenance-hierarchy tests treat the
-    # GNN as gate-eligible; the gate safeguard itself is exercised separately.
+def _run(segments, gnn_ready=False, probe_ready=False):
+    # The demoted GNN / probe are FILL tiers below the LLM; gnn_ready/probe_ready mean their
+    # per-project gate passed. They never override an LLM/human label.
     tmpdir = tempfile.mkdtemp()
     try:
         outpath = os.path.join(tmpdir, 'master.jsonl')
         df = assemble_master_dataset(
             segments=segments,
             output_path=outpath,
-            gnn_authoritative=gnn_authoritative,
-            gate_passed=gate_passed,
+            gnn_ready=gnn_ready,
+            probe_ready=probe_ready,
         )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -89,14 +89,15 @@ def _run(segments, gnn_authoritative=False, gate_passed=True):
 
 class TestProvenanceHierarchy(unittest.TestCase):
     """
-    §4.7: adjudicated > human_consensus > gnn_consensus > llm_zero_shot
+    §8.6: adjudicated > human_consensus > llm_zero_shot > probe_consensus > gnn_consensus.
+    The probe and the demoted GNN FILL below the LLM and never override it.
     """
 
     def test_adjudicated_label_is_top_priority(self):
         """adjudicated_label wins over human_label, gnn_vaamr_pred, and primary_stage."""
         seg = _seg('s1', primary_stage=0, human_label=1,
                    adjudicated_label=4, gnn_vaamr_pred=3)
-        df = _run([seg], gnn_authoritative=True)
+        df = _run([seg], gnn_ready=True)
         row = df[df['segment_id'] == 's1'].iloc[0]
         self.assertEqual(row['final_label'], 4)
         self.assertEqual(row['final_label_source'], 'adjudicated')
@@ -107,7 +108,7 @@ class TestProvenanceHierarchy(unittest.TestCase):
         (adjudicated_label=None, so human_consensus tier applies)
         """
         seg = _seg('s1', primary_stage=2, human_label=2, gnn_vaamr_pred=4)
-        df = _run([seg], gnn_authoritative=True)
+        df = _run([seg], gnn_ready=True)
         row = df[df['segment_id'] == 's1'].iloc[0]
         self.assertEqual(row['final_label'], 2)
         self.assertEqual(row['final_label_source'], 'human_consensus')
@@ -115,51 +116,41 @@ class TestProvenanceHierarchy(unittest.TestCase):
     def test_human_label_disagreeing_with_llm_is_not_human_consensus(self):
         """
         When human_label != primary_stage, the human_consensus condition is false.
-        Tier falls to gnn_consensus (if authoritative) or llm_zero_shot.
+        With an LLM label present, the tier falls to llm_zero_shot (GNN never overrides).
         """
         seg = _seg('s1', primary_stage=2, human_label=3, gnn_vaamr_pred=4)
-        df = _run([seg], gnn_authoritative=True)
+        df = _run([seg], gnn_ready=True)
         row = df[df['segment_id'] == 's1'].iloc[0]
-        # human_label != primary_stage → not human_consensus
         self.assertNotEqual(row['final_label_source'], 'human_consensus')
+        self.assertEqual(row['final_label_source'], 'llm_zero_shot')
 
-    def test_gnn_consensus_engaged_when_gnn_authoritative_true(self):
-        """
-        §4.7 / §8.5: gnn_consensus tier requires gnn_authoritative=True.
-        When set, gnn_vaamr_pred becomes the final_label for participants.
-        """
-        seg = _seg('s1', primary_stage=1, gnn_vaamr_pred=3)
-        df = _run([seg], gnn_authoritative=True)
+    def test_gnn_fills_unlabeled_when_ready(self):
+        """gnn_consensus FILLS an UNLABELED participant segment when its gate is ready."""
+        seg = _seg('s1', primary_stage=None, gnn_vaamr_pred=3)
+        df = _run([seg], gnn_ready=True)
         row = df[df['segment_id'] == 's1'].iloc[0]
         self.assertEqual(row['final_label'], 3)
         self.assertEqual(row['final_label_source'], 'gnn_consensus')
 
-    def test_gnn_consensus_NOT_engaged_when_gate_not_passed(self):
-        """
-        Track 0.2: even with gnn_authoritative=True, the gnn_consensus tier requires
-        a passing reliability gate. With gate_passed=False the GNN must NOT become the
-        label of record — a config flag alone can never promote an un-gated graph.
-        """
-        seg = _seg('s1', primary_stage=1, gnn_vaamr_pred=3)
-        df = _run([seg], gnn_authoritative=True, gate_passed=False)
+    def test_gnn_does_not_fill_when_not_ready(self):
+        """An unlabeled segment stays unlabeled when the GNN gate has not passed."""
+        seg = _seg('s1', primary_stage=None, gnn_vaamr_pred=3)
+        df = _run([seg], gnn_ready=False)
         row = df[df['segment_id'] == 's1'].iloc[0]
-        self.assertNotEqual(row['final_label_source'], 'gnn_consensus')
-        self.assertEqual(row['final_label_source'], 'llm_zero_shot')
-        self.assertEqual(row['final_label'], 1)
+        self.assertIsNone(row['final_label_source'])
+        self.assertIsNone(row['final_label'])
 
-    def test_gnn_consensus_NOT_engaged_when_gnn_authoritative_false(self):
+    def test_gnn_never_overrides_llm(self):
         """
-        §4.7 / §8.5: when gnn_authoritative=False (default), the GNN label is
-        stored but does NOT become final_label_source='gnn_consensus'.
-        final_label stays as the LLM label.
+        §8.6: the demoted GNN can NEVER overwrite an existing LLM label, even gate-ready.
+        final_label stays the LLM label; the raw GNN prediction is preserved for audit.
         """
         seg = _seg('s1', primary_stage=1, gnn_vaamr_pred=3)
-        df = _run([seg], gnn_authoritative=False)
+        df = _run([seg], gnn_ready=True)
         row = df[df['segment_id'] == 's1'].iloc[0]
-        # GNN should not override when not authoritative
-        self.assertNotEqual(row['final_label_source'], 'gnn_consensus')
         self.assertEqual(row['final_label_source'], 'llm_zero_shot')
         self.assertEqual(row['final_label'], 1)  # stays as primary_stage
+        self.assertEqual(int(row['gnn_vaamr_pred']), 3)
 
     def test_llm_zero_shot_is_default_source(self):
         """Default tier when no human or GNN override is present."""
@@ -192,12 +183,12 @@ class TestAuditabilityInvariants(unittest.TestCase):
     def test_primary_stage_preserved_in_output(self):
         """primary_stage (raw LLM classification) always present in the row."""
         seg = _seg('s1', primary_stage=3, gnn_vaamr_pred=4)
-        df = _run([seg], gnn_authoritative=True)
+        df = _run([seg], gnn_ready=True)
         row = df[df['segment_id'] == 's1'].iloc[0]
-        # primary_stage must survive even when gnn_consensus overrides final_label
+        # primary_stage must survive; the LLM wins (GNN never overrides)
         self.assertEqual(int(row['primary_stage']), 3,
                          "primary_stage (raw LLM ballot) must be preserved in output")
-        self.assertEqual(row['final_label_source'], 'gnn_consensus')
+        self.assertEqual(row['final_label_source'], 'llm_zero_shot')
 
     def test_rater_votes_length_unchanged_by_gnn_fields(self):
         """
@@ -218,7 +209,7 @@ class TestAuditabilityInvariants(unittest.TestCase):
         seg_with_gnn = _seg('with_gnn', primary_stage=2, rater_votes=votes,
                             gnn_vaamr_pred=3)
 
-        df = _run([seg_no_gnn, seg_with_gnn], gnn_authoritative=True)
+        df = _run([seg_no_gnn, seg_with_gnn], gnn_ready=True)
 
         def _votes_list(row):
             rv = row['rater_votes']
@@ -242,18 +233,19 @@ class TestAuditabilityInvariants(unittest.TestCase):
         # Both should be 3 (the three LLM runs)
         self.assertEqual(len(votes_with_gnn), 3)
 
-    def test_gnn_fields_stored_alongside_llm_when_authoritative(self):
+    def test_gnn_fields_stored_alongside_llm(self):
         """
-        Even when gnn_authoritative=True, the raw LLM fields are NOT wiped.
-        Both gnn_vaamr_pred and primary_stage appear in the row.
+        The raw LLM fields and the GNN prediction coexist for auditability; the LLM label
+        of record is untouched (the GNN is a non-authoritative fill tier).
         """
         seg = _seg('s1', primary_stage=1, gnn_vaamr_pred=3)
-        df = _run([seg], gnn_authoritative=True)
+        df = _run([seg], gnn_ready=True)
         row = df[df['segment_id'] == 's1'].iloc[0]
         self.assertEqual(int(row['primary_stage']), 1,
-                         "primary_stage (LLM ballot) must survive alongside gnn override")
+                         "primary_stage (LLM ballot) must survive")
         self.assertEqual(int(row['gnn_vaamr_pred']), 3,
                          "gnn_vaamr_pred should be stored for auditability")
+        self.assertEqual(row['final_label_source'], 'llm_zero_shot')
 
 
 if __name__ == '__main__':

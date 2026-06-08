@@ -624,7 +624,15 @@ def cmd_add_data(args):
             getattr(config.theme_classification, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')
         )
 
-    run_incremental_pipeline(config, framework, codebook=codebook, walkthrough=True)
+    classify_mode = (getattr(args, 'classify_mode', None) or 'llm').lower()
+    if classify_mode not in ('llm', 'probe', 'gnn'):
+        print(f"Error: --classify-mode must be llm|probe|gnn (got {classify_mode!r}).")
+        sys.exit(1)
+    if classify_mode != 'llm':
+        print(f"  Classifying NEW participant segments with the '{classify_mode}' scaler "
+              "(LLM-free); existing labels untouched.")
+    run_incremental_pipeline(config, framework, codebook=codebook, walkthrough=True,
+                             classify_mode=classify_mode)
 
 
 def _resolve_test_rater_config(args) -> dict:
@@ -1323,8 +1331,12 @@ def _build_config_from_file(file_data: dict):
     return PipelineConfig.from_json(_flatten_wizard_config(file_data))
 
 
-def cmd_assemble(args):
-    """qra assemble — join frozen segments + overlays into master_segments."""
+def cmd_assemble(args, *, force_probe_ready: bool = False, force_gnn_ready: bool = False):
+    """qra assemble — join frozen segments + overlays into master_segments.
+
+    ``force_probe_ready`` / ``force_gnn_ready`` let an upstream command that already
+    authorized a cheap-tier fill (e.g. ``qra probe classify`` after passing its gate or
+    ``--force``) promote those fills on the re-assemble regardless of the standing gate."""
     from process import segments_io as _segments_io, output_paths as _paths
     from process.orchestrator import stage_assemble
     from process import classifications_io as _cio
@@ -1358,7 +1370,11 @@ def cmd_assemble(args):
     print(f"\nQRA ASSEMBLE")
     print(f"  Output: {output_dir}")
 
-    master_df = stage_assemble(config, output_dir=output_dir)
+    master_df = stage_assemble(
+        config, output_dir=output_dir,
+        probe_ready=(True if force_probe_ready else None),
+        gnn_ready=(True if force_gnn_ready else None),
+    )
 
     ms_dir = _paths.master_segments_dir(output_dir)
     print(f"  master_segments.csv: {len(master_df)} segments")
@@ -1974,6 +1990,102 @@ def cmd_gnn_status(args):
     print(_val.format_gate_verdict(verdict, output_dir))
 
 
+def _load_master_df(output_dir):
+    """Read the assembled master_segments.csv (where rater_votes is a JSON string)."""
+    import pandas as _pd
+    from process import output_paths as _paths
+    csv_path = os.path.join(_paths.master_segments_dir(output_dir), 'master_segments.csv')
+    if not os.path.isfile(csv_path):
+        print(f"Error: {csv_path} not found. Run `qra assemble` first.")
+        sys.exit(1)
+    return _pd.read_csv(csv_path)
+
+
+def _print_probe_verdict(v):
+    """Human-readable probe gate summary (shared by `probe train` and `probe status`)."""
+    if not v:
+        print("No probe gate found. Run `qra probe train` first.")
+        return
+    def _f(x):
+        return f"{x:.3f}" if isinstance(x, (int, float)) else 'n/a'
+    hk, lk = v.get('probe_human_kappa'), v.get('probe_llm_kappa')
+    hci, lci = v.get('probe_human_ci', [None, None]), v.get('probe_llm_ci', [None, None])
+    print("PROBE SCALER — RELIABILITY GATE")
+    print(f"  mode: {v.get('mode')}   raters: {', '.join(v.get('raters') or []) or '(A1n single probe)'}")
+    print(f"  probe ↔ human : κ {_f(hk)} [{_f(hci[0])}, {_f(hci[1])}]  n={v.get('probe_human_n')}"
+          f"   (floor {v.get('irr_human_band_floor')})")
+    print(f"  probe ↔ LLM   : κ {_f(lk)} [{_f(lci[0])}, {_f(lci[1])}]  n={v.get('probe_llm_n')}")
+    pcr = v.get('per_class_recall') or {}
+    if pcr:
+        print("  per-stage recall: " + ", ".join(f"{k} {_f(rv)}" for k, rv in pcr.items()))
+    if v.get('rare_stage_notes'):
+        print("  rare-stage: " + "; ".join(v['rare_stage_notes']))
+    print(f"  → ready for LLM-free scaling: {'YES' if v.get('ready_for_scaling') else 'NO'}")
+    print("    (the LLM consensus stays the label of record; the probe only FILLS unlabeled "
+          "segments, tagged probe_consensus, never overriding the LLM.)")
+
+
+def cmd_probe_train(args):
+    """qra probe train — fit the per-rater ensemble scaler + run the participant-grouped gate."""
+    from classification_tools import probe_classifier as _pc
+    output_dir = args.output_dir
+    if not os.path.isdir(output_dir):
+        print(f"Error: output directory not found: {output_dir}")
+        sys.exit(1)
+    config = _build_config(args)
+    probe_cfg = getattr(config, 'probe', None) or _pc.ProbeConfig()
+    df = _load_master_df(output_dir)
+    print("\nQRA PROBE TRAIN  (LLM-free per-rater ensemble scaler + reliability gate)")
+    print(f"  Output: {output_dir}")
+    _pc.train_probe(df, output_dir, probe_cfg)
+    verdict = _pc.evaluate_probe(df, output_dir, probe_cfg)
+    print()
+    _print_probe_verdict(verdict)
+
+
+def cmd_probe_status(args):
+    """qra probe status — print the probe reliability-gate verdict (probe↔human/LLM κ)."""
+    from classification_tools import probe_classifier as _pc
+    verdict = _pc.read_probe_gate(args.output_dir)
+    if getattr(args, 'json', False):
+        print(json.dumps(verdict, indent=2))
+        return
+    _print_probe_verdict(verdict)
+
+
+def cmd_probe_classify(args):
+    """qra probe classify — LLM-free label UNLABELED participant segments (gated + abstaining)."""
+    from classification_tools import probe_classifier as _pc
+    output_dir = args.output_dir
+    if not os.path.isdir(output_dir):
+        print(f"Error: output directory not found: {output_dir}")
+        sys.exit(1)
+    config = _build_config(args)
+    probe_cfg = getattr(config, 'probe', None) or _pc.ProbeConfig()
+    df = _load_master_df(output_dir)
+    if getattr(args, 'fresh', False):
+        print("  --fresh: re-fitting the probe from scratch...")
+        _pc.train_probe(df, output_dir, probe_cfg)
+        _pc.evaluate_probe(df, output_dir, probe_cfg)
+    if not _pc.probe_gate_ready(output_dir) and not getattr(args, 'force', False):
+        print("\nProbe gate is NOT ready (probe↔human κ below the human band, or rare-stage "
+              "collapse).\nRefusing to scale — the probe would add labels noisier than the LLM.")
+        print("Re-run with --force to scale anyway (rows tagged probe_consensus, lower-confidence).")
+        sys.exit(1)
+    if _pc.load_probe_model(output_dir) is None:
+        print("No persisted probe model. Run `qra probe train` (or pass --fresh) first.")
+        sys.exit(1)
+    print("\nQRA PROBE CLASSIFY  (LLM-free; fills unlabeled participant segments only)")
+    n = _pc.classify_with_probe(df, output_dir, probe_cfg)
+    print(f"  Probe labeled {n} previously-unlabeled participant segment(s) → probe_labels overlay.")
+    if not getattr(args, 'no_downstream', False):
+        print("\nRe-assembling master dataset (probe_consensus tier, below the LLM)...")
+        # The operator explicitly ran `probe classify` (gate passed, or --force), which
+        # authorizes promoting THIS batch's probe fills even if the standing gate hasn't
+        # passed — the probe still fills only BELOW the LLM and never overrides it.
+        cmd_assemble(args, force_probe_ready=True)
+
+
 def cmd_migrate(args):
     """qra migrate — import a legacy JSONL project into qra.db (preview by default)."""
     from process import db as _db
@@ -2182,6 +2294,13 @@ Examples:
         ),
     )
     _add_common_args(add_data_parser)
+    add_data_parser.add_argument(
+        '--classify-mode', choices=['llm', 'probe', 'gnn'], default='llm',
+        help="How to label the NEW participant segments: 'llm' (default, multi-run "
+             "consensus — human-level) | 'probe' (LLM-free per-rater ensemble, gated) | "
+             "'gnn' (LLM-free graph, non-authoritative). probe/gnn fill BELOW the LLM and "
+             "are tagged lower-confidence; use them at scale when the LLM budget can't reach "
+             "the new data (the TUI add-data picker shows the IRR comparison + a recommendation).")
 
     # ---- analyze ----
     analyze_parser = subparsers.add_parser(
@@ -2449,6 +2568,46 @@ Examples:
     _gnn_status.add_argument('--output-dir', '-o', required=True)
     _gnn_status.add_argument('--json', action='store_true', help='Emit the raw verdict JSON')
 
+    # ---- probe (subcommand group) — the LLM-free, gated, abstention-aware scaler ----
+    probe_parser = subparsers.add_parser(
+        'probe',
+        help='LLM-free VAAMR scaler: train / status / classify (per-rater ensemble probe)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Run the calibrated per-rater ensemble probe — QRA\'s LLM-free, gated,\n'
+            'abstention-aware VAAMR scaler (methodology §8.6). The multi-run LLM consensus\n'
+            'stays the label of record; the probe FILLS unlabeled participant segments only,\n'
+            'tagged probe_consensus (ranked BELOW the LLM), and never overrides it.\n\n'
+            '  probe train     Fit the probe on the LLM/human label of record + run the\n'
+            '                  participant-grouped reliability gate (probe↔human / probe↔LLM κ).\n'
+            '  probe status    Print the gate verdict ("ready for LLM-free scaling?").\n'
+            '  probe classify  LLM-free label UNLABELED participant segments (abstaining where\n'
+            '                  unsure). Refuses unless the gate is ready (or --force).\n'
+        ),
+    )
+    probe_sub = probe_parser.add_subparsers(dest='probe_command')
+
+    _probe_train = probe_sub.add_parser(
+        'train', help='Fit the probe + run the reliability gate')
+    _probe_train.add_argument('--output-dir', '-o', required=True)
+    _probe_train.add_argument('--config', '-c', default=None)
+
+    _probe_status = probe_sub.add_parser(
+        'status', help='Print the probe reliability-gate verdict (probe↔human/LLM κ)')
+    _probe_status.add_argument('--output-dir', '-o', required=True)
+    _probe_status.add_argument('--json', action='store_true', help='Emit the raw verdict JSON')
+
+    _probe_classify = probe_sub.add_parser(
+        'classify', help='LLM-free label UNLABELED participant segments (gated + abstaining)')
+    _probe_classify.add_argument('--output-dir', '-o', required=True)
+    _probe_classify.add_argument('--config', '-c', default=None)
+    _probe_classify.add_argument('--fresh', action='store_true',
+                                 help='Re-fit the probe from scratch before classifying')
+    _probe_classify.add_argument('--force', action='store_true',
+                                 help='Scale even if the gate is not ready (rows tagged lower-confidence)')
+    _probe_classify.add_argument('--no-downstream', action='store_true',
+                                 help='Skip the automatic re-assemble afterward')
+
     # ---- migrate ----
     migrate_parser = subparsers.add_parser(
         'migrate',
@@ -2534,6 +2693,15 @@ def main():
                 cmd_gnn_status(args)
             else:
                 gnn_parser.print_help()
+        elif args.command == 'probe':
+            if getattr(args, 'probe_command', None) == 'train':
+                cmd_probe_train(args)
+            elif args.probe_command == 'status':
+                cmd_probe_status(args)
+            elif args.probe_command == 'classify':
+                cmd_probe_classify(args)
+            else:
+                probe_parser.print_help()
         elif args.command == 'migrate':
             cmd_migrate(args)
         elif args.command == 'reclassify-run':

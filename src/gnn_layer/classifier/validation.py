@@ -316,8 +316,10 @@ def write_validation_report(metrics: dict, output_dir: str, config=None) -> str:
             L.append(f"  ⚠ {note}")
     if ready:
         L.append("  The graph reproduces the LLM consensus to target reliability out-of-sample.")
-        L.append("  You may classify new data with the graph alone (TUI: 'Classify — Graph")
-        L.append("  consensus', or qra classify --backend gnn) and set gnn_authoritative=True.")
+        L.append("  You may FILL unlabeled data with the graph alone (TUI: 'Classify — Graph")
+        L.append("  consensus', or `qra gnn classify`). NOTE: the graph is non-authoritative —")
+        L.append("  it fills BELOW the LLM (tier gnn_consensus) and never overrides it. The probe")
+        L.append("  is the recommended scaler (`qra probe`); see methodology §8.6.")
     else:
         L.append("  Keep classifying with the LLM consensus. Add more LLM/human-labeled segments")
         L.append("  and re-run the GNN layer until this gate reports YES.")

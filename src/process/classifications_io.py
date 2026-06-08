@@ -63,16 +63,24 @@ CROSS_VALIDATION_OVERLAY_FIELDS: Tuple[str, ...] = (
     'cv_disagreement_score', 'cv_adjudication_method',
 )
 
-# GNN consensus-distillation overlay: per-segment graph predictions. Written by the
-# GNN layer when produce_consensus_labels=True; become the label of record only when
-# gnn_layer.gnn_authoritative=True (see process/assembly/master_dataset.py).
+# GNN consensus-distillation overlay: per-segment graph predictions. Written by the GNN
+# layer when produce_consensus_labels=True. DEMOTED (methodology §8.6): they FILL only
+# unlabeled segments (tier 'gnn_consensus', BELOW the LLM), never override it.
 GNN_OVERLAY_FIELDS: Tuple[str, ...] = (
     'gnn_vaamr_pred', 'gnn_vaamr_conf', 'gnn_vaamr_abstain',
     'gnn_purer_pred', 'gnn_purer_conf', 'gnn_purer_abstain',
     'gnn_label_source',
 )
 
-OVERLAY_KEYS = ('theme', 'purer', 'codebook', 'cv', 'gnn')
+# Probe scaler overlay: per-segment LLM-free predictions (per-rater ensemble,
+# methodology §8.6). Written by classification_tools.probe_classifier.classify_with_probe;
+# fills UNLABELED participant segments only and becomes the provenance tier
+# 'probe_consensus' ranked BELOW the LLM (see process/assembly/master_dataset.py).
+PROBE_OVERLAY_FIELDS: Tuple[str, ...] = (
+    'probe_pred', 'probe_conf', 'probe_abstain', 'probe_label_source',
+)
+
+OVERLAY_KEYS = ('theme', 'purer', 'codebook', 'cv', 'gnn', 'probe')
 
 # Legacy on-disk filenames (data now lives in SQLite tables — retained so
 # overlay_path() and constant-checking tests keep their historical contract).
@@ -82,6 +90,7 @@ OVERLAY_FILENAMES = {
     'codebook': 'codebook_labels.jsonl',
     'cv': 'cross_validation_labels.jsonl',
     'gnn': 'gnn_labels.jsonl',
+    'probe': 'probe_labels.jsonl',
 }
 
 # Classifier key -> SQLite table.
@@ -91,6 +100,7 @@ _OVERLAY_TABLES = {
     'codebook': 'codebook_labels',
     'cv': 'cv_labels',
     'gnn': 'gnn_labels',
+    'probe': 'probe_labels',
 }
 
 _OVERLAY_FIELDS_MAP = {
@@ -99,6 +109,7 @@ _OVERLAY_FIELDS_MAP = {
     'codebook': CODEBOOK_OVERLAY_FIELDS,
     'cv': CROSS_VALIDATION_OVERLAY_FIELDS,
     'gnn': GNN_OVERLAY_FIELDS,
+    'probe': PROBE_OVERLAY_FIELDS,
 }
 
 # Fields stored as JSON TEXT (List/Dict, or the heterogeneous consensus_vote
@@ -112,16 +123,18 @@ _OVERLAY_JSON_FIELDS = {
     }),
     'cv': frozenset(),
     'gnn': frozenset(),
+    'probe': frozenset(),
 }
 
 # Fields stored as INTEGER 0/1 standing for a bool: coerce back to bool on read
-# (None preserved for the Optional[bool] gnn abstain flags).
+# (None preserved for the Optional[bool] gnn/probe abstain flags).
 _OVERLAY_BOOL_FIELDS = {
     'theme': frozenset({'needs_review', 'tie_broken_by_confidence'}),
     'purer': frozenset({'purer_needs_review'}),
     'codebook': frozenset(),
     'cv': frozenset(),
     'gnn': frozenset({'gnn_vaamr_abstain', 'gnn_purer_abstain'}),
+    'probe': frozenset({'probe_abstain'}),
 }
 
 
@@ -227,6 +240,11 @@ def write_gnn_overlay(run_dir: str, segments: List[Segment]) -> str:
     return _write_overlay(run_dir, 'gnn', segments)
 
 
+def write_probe_overlay(run_dir: str, segments: List[Segment]) -> str:
+    """Write (replace) the probe scaler overlay. Returns legacy path string."""
+    return _write_overlay(run_dir, 'probe', segments)
+
+
 def merge_overlay(run_dir: str, key: str, segments: List[Segment]) -> str:
     """Upsert ``segments`` into the overlay table, replacing rows by segment_id.
 
@@ -263,6 +281,11 @@ def merge_cross_validation_overlay(run_dir: str, segments: List[Segment]) -> str
 def merge_gnn_overlay(run_dir: str, segments: List[Segment]) -> str:
     """Merge segments into the GNN consensus overlay (upsert by segment_id). Returns path."""
     return merge_overlay(run_dir, 'gnn', segments)
+
+
+def merge_probe_overlay(run_dir: str, segments: List[Segment]) -> str:
+    """Merge segments into the probe scaler overlay (upsert by segment_id). Returns path."""
+    return merge_overlay(run_dir, 'probe', segments)
 
 
 # ---------------------------------------------------------------------------
@@ -391,12 +414,18 @@ def apply_gnn_overlay(run_dir: str, segments_by_id: Dict[str, Segment]) -> int:
     return _apply_overlay(run_dir, 'gnn', segments_by_id)
 
 
+def apply_probe_overlay(run_dir: str, segments_by_id: Dict[str, Segment]) -> int:
+    """Apply probe scaler overlay to in-memory segments. Returns update count."""
+    return _apply_overlay(run_dir, 'probe', segments_by_id)
+
+
 _APPLY_FUNCS = {
     'theme': apply_theme_overlay,
     'purer': apply_purer_overlay,
     'codebook': apply_codebook_overlay,
     'cv': apply_cross_validation_overlay,
     'gnn': apply_gnn_overlay,
+    'probe': apply_probe_overlay,
 }
 
 

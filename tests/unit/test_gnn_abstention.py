@@ -146,32 +146,30 @@ class TestMasterDatasetDeferral(unittest.TestCase):
             setattr(s, k, v)
         return s
 
-    def test_abstained_vaamr_keeps_llm_label(self):
+    def test_abstained_vaamr_does_not_fill(self):
+        # An UNLABELED segment the GNN abstained on stays unlabeled (no confident-wrong fill).
         from process.assembly.master_dataset import assemble_master_dataset
-        p = self._seg('p1', 'participant', primary_stage=1,
+        p = self._seg('p1', 'participant', primary_stage=None,
                       gnn_vaamr_pred=3, gnn_vaamr_conf=0.4, gnn_vaamr_abstain=True)
-        df = assemble_master_dataset([p], self.out,
-                                     gnn_authoritative=True, gate_passed=True).set_index('segment_id')
-        self.assertEqual(df.loc['p1', 'final_label'], 1)
-        self.assertEqual(df.loc['p1', 'final_label_source'], 'llm_zero_shot')
+        df = assemble_master_dataset([p], self.out, gnn_ready=True).set_index('segment_id')
+        self.assertIsNone(df.loc['p1', 'final_label'])
+        self.assertIsNone(df.loc['p1', 'final_label_source'])
 
-    def test_non_abstained_vaamr_promotes(self):
+    def test_non_abstained_vaamr_fills(self):
         from process.assembly.master_dataset import assemble_master_dataset
-        p = self._seg('p1', 'participant', primary_stage=1,
+        p = self._seg('p1', 'participant', primary_stage=None,
                       gnn_vaamr_pred=3, gnn_vaamr_conf=0.95, gnn_vaamr_abstain=False)
-        df = assemble_master_dataset([p], self.out,
-                                     gnn_authoritative=True, gate_passed=True).set_index('segment_id')
+        df = assemble_master_dataset([p], self.out, gnn_ready=True).set_index('segment_id')
         self.assertEqual(df.loc['p1', 'final_label'], 3)
         self.assertEqual(df.loc['p1', 'final_label_source'], 'gnn_consensus')
 
-    def test_abstained_purer_keeps_llm_label(self):
+    def test_abstained_purer_does_not_fill(self):
         from process.assembly.master_dataset import assemble_master_dataset
-        t = self._seg('t1', 'therapist', purer_primary=0,
+        t = self._seg('t1', 'therapist', purer_primary=None,
                       gnn_purer_pred=4, gnn_purer_conf=0.4, gnn_purer_abstain=True)
-        df = assemble_master_dataset([t], self.out,
-                                     gnn_authoritative=True, gate_passed=True).set_index('segment_id')
-        self.assertEqual(df.loc['t1', 'purer_final'], 0)
-        self.assertEqual(df.loc['t1', 'purer_final_source'], 'llm_zero_shot')
+        df = assemble_master_dataset([t], self.out, gnn_ready=True).set_index('segment_id')
+        self.assertIsNone(df.loc['t1', 'purer_final'])
+        self.assertIsNone(df.loc['t1', 'purer_final_source'])
 
     def test_abstain_columns_present_in_output(self):
         from process.assembly.master_dataset import assemble_master_dataset

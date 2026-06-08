@@ -95,8 +95,9 @@ class Segment:
 
     # GNN consensus-distillation fields (populated by the GNN layer when
     # gnn_layer.produce_consensus_labels=True). gnn_vaamr_* apply to participant
-    # segments, gnn_purer_* to therapist segments. These become the label of record
-    # only when gnn_layer.gnn_authoritative=True (provenance tier 'gnn_consensus').
+    # segments, gnn_purer_* to therapist segments. DEMOTED (methodology §8.6): they FILL
+    # only segments the LLM left unlabeled (provenance tier 'gnn_consensus', below the LLM)
+    # and can never override an LLM/human label.
     gnn_vaamr_pred: Optional[int] = None
     gnn_vaamr_conf: Optional[float] = None
     gnn_purer_pred: Optional[int] = None
@@ -107,6 +108,15 @@ class Segment:
     # gnn_authoritative + gate are satisfied, so a confident-wrong label cannot be promoted.
     gnn_vaamr_abstain: Optional[bool] = None
     gnn_purer_abstain: Optional[bool] = None
+
+    # Probe scaler fields (populated by classification_tools.probe_classifier.classify_with_probe
+    # when probe.enabled). The probe is an LLM-free, gated, abstention-aware VAAMR student
+    # that FILLS unlabeled participant segments only; it ranks BELOW the LLM (provenance tier
+    # 'probe_consensus') and never overrides an LLM/human label. probe_abstain=True means the
+    # probe deferred ("No code" or sub-floor confidence) and the segment stays unlabeled.
+    probe_pred: Optional[int] = None
+    probe_conf: Optional[float] = None
+    probe_abstain: Optional[bool] = None
 
     # Validation fields (populated after human coding comparison)
     human_label: Optional[int] = None
