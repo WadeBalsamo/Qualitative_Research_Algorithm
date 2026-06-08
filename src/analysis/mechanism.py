@@ -450,9 +450,121 @@ def _write_csv(rows: List[dict], path: str) -> Optional[str]:
     return path
 
 
+def _append_interaction_lead(L: List[str], mm: dict, framework: dict) -> None:
+    """Lead the report with the re-centered FROM×move interaction estimator (masterplan §3).
+
+    Emitted only when the re-centered estimator ran (``mechanism_models`` present). The
+    additive per-cell table (§1) is demoted to a descriptive companion below this block.
+    """
+    adj = mm.get('adjacency', {})
+    design = mm.get('design', {})
+    L.append("-" * 78)
+    L.append("PRIMARY ESTIMATOR — STAGE-MODERATED THERAPIST EFFECT (FROM_stage × move)")
+    L.append("-" * 78)
+    L.append("  The central question (H2 / §7.6) is an INTERACTION: does a PURER move's effect")
+    L.append("  on the next participant stage DEPEND on the FROM stage? The per-cell table (§1)")
+    L.append("  and the main-effects mixed model (§5) do not estimate that term; this is the")
+    L.append("  re-centered estimator. Observational, n≈32 — bounded associations, not causal.")
+    L.append(f"  Design: {design.get('n', '?')} FROM→CUE→TO triples, "
+             f"{design.get('n_participants', '?')} participants, "
+             f"{design.get('n_with_move', '?')} with a defined cue move.")
+    L.append("")
+
+    olr = adj.get('ordinal_lr', {})
+    if olr.get('status') == 'ok':
+        p = olr.get('p_value')
+        pv = f"{p:.4f}" if isinstance(p, (int, float)) and p == p else "n/a"
+        L.append(f"  (a) Ordinal additive-vs-interaction LR test (ordered logit): "
+                 f"LR={olr['LR']:.2f} (df={olr['df']}), p={pv}.")
+        L.append("      (Does the FROM×move interaction earn a better ORDINAL fit than additive?)")
+        L.append("      NOTE: in-sample LR, NOT cluster-robust — it ignores within-participant")
+        L.append("      correlation (anti-conservative); read it as descriptive. The leakage-free")
+        L.append("      inference is the participant-grouped CV in (c), not this p-value.")
+    else:
+        L.append(f"  (a) Ordinal LR test: not estimable ({olr.get('status', 'n/a')}).")
+
+    g = adj.get('gaussian_interaction', {})
+    if g.get('method') == 'mixedlm':
+        sing = " [SINGULAR/under-identified design]" if g.get('singular') else ""
+        L.append(f"  (b) Gaussian mixed interaction Δprog ~ C(from)×C(move)+(1|participant): "
+                 f"{g.get('n_ci_excludes_0', 0)}/{g.get('n_interaction_terms', 0)} interaction")
+        L.append(f"      contrasts have a 95% CI excluding 0{sing}. (The term the §5 model omits.)")
+    else:
+        L.append(f"  (b) Gaussian mixed interaction: not estimable ({g.get('status', 'n/a')}).")
+
+    eip = adj.get('earns_its_place', {})
+    if eip.get('status') == 'ok':
+        f0, fa, fi = eip['FROM_only']['logloss'], eip['additive']['logloss'], eip['interaction']['logloss']
+        L.append(f"  (c) Earns-its-place (participant-grouped CV held-out log-loss; lower=better, "
+                 f"n={eip['n']}/{eip['n_participants']}p):")
+        L.append(f"      FROM-only {f0:.3f}  →  additive {fa:.3f} (Δ{fa - f0:+.3f})  →  "
+                 f"interaction {fi:.3f} (Δ{fi - f0:+.3f}).")
+        verdict = "the cue EARNS its place" if eip.get('additive_earns_place') else "the cue does NOT earn its place"
+        L.append(f"      → {verdict} out of sample (negative Δ = better than a FROM-only baseline).")
+    else:
+        L.append(f"  (c) Earns-its-place CV: not estimable ({eip.get('status', 'n/a')}).")
+
+    bay = adj.get('bayesian', {})
+    if bay.get('ok'):
+        L.append(f"  (d) Bayesian hierarchical ordinal: {bay.get('n_hdi_excludes_0', 0)}/"
+                 f"{bay.get('n_interaction_terms', 0)} interaction 95% HDIs exclude 0 "
+                 f"(max R-hat={bay.get('max_rhat', '?')}, divergences={bay.get('divergences', '?')}).")
+    else:
+        L.append(f"  (d) Bayesian arm: {bay.get('note', bay.get('status', 'not run'))}.")
+    L.append("")
+
+    sens = mm.get('sensitivity', {})
+    cells = sens.get('cells', [])
+    if cells:
+        L.append("  CONFOUND SENSITIVITY (E-value / Rosenbaum Γ) — top cells by CI-limit E-value, then |SMD|:")
+        for c in cells[:6]:
+            fname = framework.get(c['from_stage'], {}).get('short_name', str(c['from_stage']))
+            ev = c.get('e_value')
+            evci = c.get('e_value_ci_limit')
+            gm = c.get('rosenbaum_gamma')
+            smd = c.get('smd')
+            smd_s = f"{smd:+.2f}" if isinstance(smd, (int, float)) else "n/a"
+            L.append(f"    {fname:<18} {str(c['move'])[:16]:<16} n={c['n']:<3} "
+                     f"SMD={smd_s}  E={ev if ev is not None else 'n/a'} "
+                     f"(CI-limit {evci if evci is not None else 'n/a'})  "
+                     f"Γ={gm if gm is not None else 'n/a'}")
+        L.append("    (E-value = min confounder strength (RR scale) needed with BOTH move-selection")
+        L.append("     AND Δprogression to explain the cell away. The CI-LIMIT E-value is the honest")
+        L.append("     robustness floor — =1.00 when the SMD 95% CI spans 0; the point E-value alone")
+        L.append("     overstates robustness under post-hoc cell selection (VanderWeele & Ding 2017).")
+        L.append("     Γ is on the cell-vs-same-stage-other-moves contrast — the same association.)")
+
+    nz = mm.get('noise_robustness', {})
+    if nz.get('status') == 'ok':
+        L.append(f"  PURER-LABEL-NOISE ROBUSTNESS (cue labels not yet human-validated): at "
+                 f"{nz['rate']:.0%} disagreement,")
+        L.append(f"    the per-move influence ranking holds at mean Spearman {nz['mean_spearman']:+.2f} "
+                 f"(sd {nz['sd_spearman']:.2f}, min {nz['min_spearman']:+.2f}) over {nz['k']} resamples.")
+
+    tj = mm.get('trajectory', {})
+    if tj.get('status') == 'ok':
+        def _fmt(t):
+            if not t:
+                return "n/a"
+            if t.get('ci_lo') is None or t.get('ci_hi') is None:
+                return f"β={t['estimate']:+.3f} [n/a]"
+            return f"β={t['estimate']:+.3f} [{t['ci_lo']:+.3f},{t['ci_hi']:+.3f}]"
+        L.append("  CONSOLIDATION (lagged cue exposure, within- vs between-session):")
+        L.append(f"    within-session {_fmt(tj.get('within'))}   "
+                 f"between-session {_fmt(tj.get('between'))}")
+        L.append("    (within = momentary; between = a participant's overall exposure ~ consolidation.)")
+
+    L.append("")
+    L.append("  IDENTIFYING ASSUMPTION: sequential ignorability given (FROM stage, context).")
+    L.append("  Therapists select moves IN RESPONSE TO participant state, so these are bounded")
+    L.append("  associations, not causal effects. Honest read at n≈32: right instrument,")
+    L.append("  under-identified, bounded by the sensitivity analysis above.")
+    L.append("")
+
+
 def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
                             trajectories, construct, framework, path,
-                            mixed_rows=None) -> str:
+                            mixed_rows=None, mechanism_models=None) -> str:
     L = []
     L.append("=" * 78)
     L.append("MECHANISTIC ANALYSIS — therapist language × continuous Δprogression")
@@ -467,8 +579,17 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
     L.append("Inference (CIs, permutation p, FDR) bounds sampling noise, not confounding.")
     L.append("")
 
+    # PRIMARY ESTIMATOR — the FROM×move interaction (masterplan §3). Emitted only when the
+    # re-centered estimator ran; otherwise the report is byte-identical to the legacy output.
+    if mechanism_models:
+        _append_interaction_lead(L, mechanism_models, framework)
+
     L.append("-" * 78)
-    L.append("1. ΔPROGRESSION BY THERAPIST BEHAVIOUR × FROM-STAGE (conditioned, inferential)")
+    if mechanism_models:
+        L.append("1. ΔPROGRESSION BY BEHAVIOUR × FROM-STAGE  (DESCRIPTIVE COMPANION — the")
+        L.append("   primary interaction estimator above leads; this per-cell table is underpowered)")
+    else:
+        L.append("1. ΔPROGRESSION BY THERAPIST BEHAVIOUR × FROM-STAGE (conditioned, inferential)")
     L.append("-" * 78)
     L.append("  Δ = mean change in progression coordinate; [lo, hi] = participant-cluster")
     L.append("  bootstrap 95% CI; p = within-from-stage permutation (this move vs other moves");
@@ -554,7 +675,10 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
 
     L.append("")
     L.append("-" * 78)
-    L.append("6. CONSTRUCT VALIDITY — GNN ↔ LLM convergence")
+    if mechanism_models:
+        L.append("6. CONSTRUCT VALIDITY — GNN ↔ LLM convergence  (sensitivity lens, not the estimator)")
+    else:
+        L.append("6. CONSTRUCT VALIDITY — GNN ↔ LLM convergence")
     L.append("-" * 78)
     if construct:
         nb = construct.get('n_both_elevated')
@@ -639,8 +763,13 @@ def _write_avoidance_report(avoidance, cusp_density, framework, path) -> str:
 # ---------------------------------------------------------------------------
 
 def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
-                           output_dir: str, framework: dict) -> dict:
-    """Run the full mechanistic analysis. Returns {files_written, n_blocks}."""
+                           output_dir: str, framework: dict, config=None) -> dict:
+    """Run the full mechanistic analysis. Returns {files_written, n_blocks}.
+
+    ``config`` is the ``MechanismModelConfig`` (``PipelineConfig.mechanism``); when None it
+    is default-constructed (estimator on). When the estimator is disabled or the modeling
+    libraries are unavailable, the report falls back to the legacy (estimator-off) output.
+    """
     from gnn_layer.cue_features import build_cue_blocks_with_segments
 
     files_written: List[str] = []
@@ -697,6 +826,29 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
         if p:
             files_written.append(p)
 
+    # 5b. Re-centered mechanism estimator — the FROM×move INTERACTION (the central H2/§7.6
+    # question), the additive mixed model above OMITS. Additive + ordinal LR + earns-its-
+    # place CV + E-value/Γ sensitivity + PURER-noise robustness + within/between trajectory.
+    # Degrades gracefully: when disabled or the modeling libs are unavailable, the report
+    # below is byte-identical to the legacy estimator-off output.
+    mechanism_models = None
+    try:
+        from . import mechanism_model as _mm
+        if isinstance(config, _mm.MechanismModelConfig):
+            mcfg = config
+        elif config is not None and hasattr(config, 'mechanism'):
+            mcfg = getattr(config, 'mechanism', None) or _mm.MechanismModelConfig()
+        else:
+            mcfg = _mm.MechanismModelConfig()
+        if getattr(mcfg, 'enabled', True):
+            mm_res = _mm.run_mechanism_models(enriched, df, output_dir, mcfg)
+            if mm_res.get('available'):
+                mechanism_models = mm_res
+                files_written.extend(mm_res.get('files_written', []))
+    except Exception as e:
+        print(f"  Warning: re-centered mechanism estimator failed: {e}")
+        mechanism_models = None
+
     # 6. Construct validity (GNN↔LLM convergence triangulation).
     construct = _construct_validity(output_dir)
 
@@ -709,7 +861,7 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
     files_written.append(_write_mechanism_report(
         delta_rows, liminality, avoidance, cusp_density, trajectories, construct,
         framework, os.path.join(mech_dir, 'mechanism.txt'),
-        mixed_rows=mixed_rows,
+        mixed_rows=mixed_rows, mechanism_models=mechanism_models,
     ))
     files_written.append(_write_avoidance_report(
         avoidance, cusp_density, framework,

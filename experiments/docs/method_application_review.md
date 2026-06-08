@@ -1,5 +1,7 @@
 # Method–Application Review: the GNN discovery & mechanism layer vs. QRA's primary research questions
 
+> **⚠️ SUPERSEDED IN PART (2026-06-07).** The Q4/Q5/Q30 register items and Part-VIII charges concerning the §8.2 `expected_codes` pre-registration and the shuffled-stage permutation control (hypotheses **H3/H3a**) are obsolete: that VAAMR×VCE construct-validity work was **deferred to future research and removed** from code and manuscript. The GNN discovery + H6 + mechanism content stands; the VCE classifier is retained as optional enrichment. Current framing: `docs/methodology.md` §3.3, §5.2, §8.2.
+
 **Status:** review draft for adjudication · **Branch:** `beta` · **Companion PR under review:** [#8](https://github.com/WadeBalsamo/Qualitative_Research_Algorithm/pull/8) (`gnn-exp/ws1-h6` → `beta`) · **Date:** 2026-06-07
 **Pilot corpus:** Move-MORE Cohorts 1–2 (`./data/Meta/`), n≈32 participants; 339 participant segments (205 VAAMR-labeled, 134 "No code"); 66–76 human IRR items.
 

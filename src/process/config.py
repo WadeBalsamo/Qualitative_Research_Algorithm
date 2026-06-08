@@ -264,6 +264,18 @@ class EfficacyConfig:
     barrier_to: int = 2         # Attention-Regulation
 
 
+def _default_mechanism_config():
+    """Lazily build the default MechanismModelConfig.
+
+    Imported lazily (only when a PipelineConfig is instantiated) to avoid pulling the
+    analysis package — and its heavy figure/report chain — at process.config import time,
+    and to sidestep any import cycle. The class lives in analysis/mechanism_model.py per
+    the masterplan §3.1.
+    """
+    from analysis.mechanism_model import MechanismModelConfig
+    return MechanismModelConfig()
+
+
 @dataclass
 class PipelineConfig:
     """Top-level pipeline configuration."""
@@ -308,6 +320,10 @@ class PipelineConfig:
     superposition: SuperpositionConfig = field(default_factory=SuperpositionConfig)
     # Program-efficacy dossier (analysis-time; ON by default)
     efficacy: EfficacyConfig = field(default_factory=EfficacyConfig)
+    # Re-centered mechanism estimator (FROM×move interaction + sensitivity + trajectory;
+    # analysis-time; ON by default, degrades to the additive table if modeling libs absent).
+    # Class lives in analysis/mechanism_model.py (masterplan §3.1); lazily default-constructed.
+    mechanism: "MechanismModelConfig" = field(default_factory=_default_mechanism_config)  # noqa: F821
 
     # Resume from checkpoint
     resume_from: Optional[str] = None
@@ -358,6 +374,7 @@ class PipelineConfig:
         environment variables if blank in the data.
         """
         import os
+        from analysis.mechanism_model import MechanismModelConfig
 
         sub_config_map = {
             'segmentation': SegmentationConfig,
@@ -376,6 +393,7 @@ class PipelineConfig:
             'gnn_layer': GnnLayerConfig,
             'superposition': SuperpositionConfig,
             'efficacy': EfficacyConfig,
+            'mechanism': MechanismModelConfig,
             'inter_rater_reliability': InterRaterReliabilityConfig,
         }
 

@@ -329,7 +329,7 @@ Therapist response between consecutive participant turns = one cue-block, one PU
 
 `process/cross_validation.py`
 
-Lift(stage, code) = P(code | stage) / P(code). Default thresholds: lift ≥ 1.5 and minimum 3 segments. Currently exploratory — computes empirical co-occurrence patterns. An `expected_codes` pre-specification (encoding theoretical VCE predictions per VAAMR stage) is planned before Cohort 3, enabling mechanical expected-vs-observed comparison implementing Varela's (1996) neurophenomenological mutual-constraints logic.
+Lift(stage, code) = P(code | stage) / P(code). Default thresholds: lift ≥ 1.5 and minimum 3 segments. Currently exploratory — computes empirical co-occurrence patterns only; VCE is an optional enrichment layer and no construct-validity claim rests on the lift table. A rigorous cross-framework construct-validity test (controlled for the shared-LLM-lexicon confound, on a human-validated VCE subset at larger n) is deferred to future work.
 
 **Output:** → `cv_labels` table in `qra.db` (refreshable overlay), lift report
 
@@ -635,7 +635,7 @@ The setup wizard serializes to `qra_config.json`; `--config` reproduces any run 
 QRA implements a scalable pipeline for maintaining human-validated datasets across a scaling content database:
 
 - **Content validity** — frozen content-validity test sets at `04_validation/content_validity/` with exemplar, subtle, and adversarial utterances from each framework definition. Run the classifier against known labels before touching real transcripts.
-- **Construct validity** — empirical VAAMR × VCE lift statistics. Currently exploratory (Cohorts 1–2 characterization). An `expected_codes` pre-specification (encoding theoretical VCE predictions per VAAMR stage) is a committed engineering item before Cohort 3 begins, which will enable mechanical expected-vs-observed comparison.
+- **Construct validity** — empirical VAAMR × VCE lift statistics. Currently exploratory (Cohorts 1–2 characterization) — VCE is an optional enrichment layer and no construct-validity claim rests on it; a rigorous, independently-measured cross-framework test is deferred to future, larger-*n* work.
 - **Reliability** — multi-run consensus (`llm_run_consistency`). Current production: single-model stochastic (stability measure). Planned: multi-model rotation (genuine cross-rater agreement).
 - **Human validation** — stratified 20% evaluation set at `04_validation/human_coding_evaluation_set.csv`. Four qualitative researchers blind-coding VAAMR; PURER validation underway. Target: Krippendorff's α ≥ 0.60 (VAAMR) and α ≥ 0.70 (PURER).
 

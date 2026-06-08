@@ -432,7 +432,7 @@ The importer handles REDCap's longitudinal arms/events and flags missingness exp
 
 ### 4.2 Convergent-Validity Analysis (Pre-Registered Directions)
 
-With measures aligned to the linguistic timeline, the VAAMR language index is correlated against the external outcomes. The expected directions are **pre-registered here, before the analysis is run**, so confirmations are falsifiable rather than post-hoc (the same discipline §8.2 commits to for `expected_codes`):
+With measures aligned to the linguistic timeline, the VAAMR language index is correlated against the external outcomes. The expected directions are **pre-registered here, before the analysis is run**, so confirmations are falsifiable rather than post-hoc:
 
 | VAAMR-side measure | External measure | Pre-registered direction |
 |---|---|---|

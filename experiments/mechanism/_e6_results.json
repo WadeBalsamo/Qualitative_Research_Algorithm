@@ -1,0 +1,72 @@
+{
+  "design": {
+    "seed": 42,
+    "knn": 10
+  },
+  "arms": {
+    "minilm_5class": {
+      "label": "minilm_5class",
+      "n": 205,
+      "n_classes": 5,
+      "n_folds": 5,
+      "kappa_probe": 0.1134,
+      "probe_ci": [
+        0.040078283127699565,
+        0.19686734276909199
+      ],
+      "kappa_content_sim": 0.1614,
+      "content_ci": [
+        0.07497822550119589,
+        0.25204903201622725
+      ],
+      "delta_kappa": -0.048,
+      "delta_kappa_ci": [
+        -0.123,
+        0.0285
+      ],
+      "delta_excludes_0": false,
+      "knn_homophily": 0.2971,
+      "note": "\u0394\u03ba>0 with CI excluding 0 => the supervised probe recovers VAAMR stage better than content similarity => developmental, not topical (H6)."
+    },
+    "minilm_6class": {
+      "label": "minilm_6class",
+      "n": 339,
+      "n_classes": 6,
+      "n_folds": 5,
+      "kappa_probe": 0.2278,
+      "probe_ci": [
+        0.1685941179211258,
+        0.2815941680966391
+      ],
+      "kappa_content_sim": 0.3189,
+      "content_ci": [
+        0.26612086165016996,
+        0.38600667776554604
+      ],
+      "delta_kappa": -0.091,
+      "delta_kappa_ci": [
+        -0.1577,
+        -0.0309
+      ],
+      "delta_excludes_0": true,
+      "knn_homophily": 0.3552,
+      "note": "\u0394\u03ba>0 with CI excluding 0 => the supervised probe recovers VAAMR stage better than content similarity => developmental, not topical (H6)."
+    }
+  },
+  "qwen": {
+    "status": "UNAVAILABLE \u2014 endpoint up but embeddings HTTP 400: {\"error\":\"Failed to load model \\\"text-embedding-qwen3-embedding-8b\\\". Error: Operation canceled.\"}",
+    "needed": "the shipped Qwen H6 result uses Qwen3-8B embeddings + the Correct-&-Smooth content model in src/gnn_layer/discriminant.py; this lightweight pass cannot adjudicate the encoder cleanly without it"
+  },
+  "headline": {
+    "minilm_5class": {
+      "delta_kappa": -0.048,
+      "excludes_0": false
+    },
+    "minilm_6class": {
+      "delta_kappa": -0.091,
+      "excludes_0": true
+    }
+  },
+  "interpretation": "ROBUSTNESS CAVEAT, NOT an H6 refutation. The shipped H6 (discriminant.py) finds probe \u226b content-similarity (\u0394\u03ba ~ +0.17 human / +0.21 LLM) on QWEN3-8B embeddings with a Correct-&-Smooth content model. Here, on the WEAKER all-MiniLM-L6-v2 encoder and a kNN-majority content instrument, the sign FLIPS: content-similarity matches/edges out the linear probe (\u0394\u03ba -0.05 5-class CI incl. 0; -0.09 6-class CI EXCLUDES 0). Two honest, non-exclusive reasons: (a) MiniLM-384d carries less linearly-separable VAAMR signal than Qwen-4096d, so a nonparametric kNN extracts more local structure than a linear probe \u2014 a CLASSIFIER-CAPACITY effect, not proof of topicality; (b) the 6-class 'No code' class is strongly content-clustered (kNN homophily rises 0.30->0.36 and content-sim's edge grows with 'No code' added), so Q27/Q28: 'No code' inflates the CONTENT model, not the probe. Bottom line: H6's probe\u226bcontent contrast is NOT shown to be encoder-robust by this proxy; a faithful Q8 test must re-run the SAME discriminant.py probe-vs-C&S instrument on MiniLM AND Qwen. The Qwen embedding model was listed but failed to load at run time.",
+  "note": "Q8: H6 robustness to encoder choice (MiniLM, weaker than Qwen). Q27/Q28: 'No code' contribution = compare 5-class vs 6-class \u0394\u03ba. Probe = logistic regression; content-sim = kNN-majority over cosine neighbours (a hard proxy for discriminant.py's Correct-&-Smooth); both on identical participant-grouped folds + embeddings. Chance \u03ba = 0."
+}

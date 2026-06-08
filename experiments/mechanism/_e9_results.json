@@ -1,0 +1,252 @@
+{
+  "design": {
+    "n_rows": 71,
+    "n_participants": 20,
+    "n_sessions": 8,
+    "seed": 42
+  },
+  "group_slope": {
+    "mixed_trend": {
+      "slope": 0.1071,
+      "se": 0.05123,
+      "p_value": 0.03656,
+      "ci_lo": 0.0067,
+      "ci_hi": 0.2075,
+      "n": 71,
+      "n_groups": 20,
+      "method": "mixedlm"
+    },
+    "cluster_bootstrap_slope": {
+      "point": 0.09722,
+      "ci_lo": 0.00702,
+      "ci_hi": 0.19726,
+      "n": 71,
+      "n_clusters": 20,
+      "excludes_0": true
+    },
+    "group_mann_kendall": {
+      "n": 8,
+      "S": 14.0,
+      "tau": 0.5,
+      "p_value": 0.10776,
+      "sen_slope": 0.07985,
+      "direction": "increasing",
+      "method": "mann_kendall"
+    },
+    "group_series_by_session": [
+      1.7864,
+      2.2865,
+      2.1192,
+      2.5618,
+      2.5426,
+      2.49,
+      2.4165,
+      2.5774
+    ]
+  },
+  "power_flag": {
+    "underpowered": false,
+    "note": ""
+  },
+  "barrier": {
+    "n_participants": 20,
+    "n_expressed_avoidance": 9,
+    "n_crossed": 17,
+    "crossing_rate": 0.85,
+    "first_crossing_session": {
+      "median": 2.0,
+      "distribution": {
+        "1": 6,
+        "2": 8,
+        "3": 2,
+        "4": 1
+      }
+    },
+    "mean_dwell_below_barrier": 0.4,
+    "endpoint_prog_crossed": 2.7383,
+    "endpoint_prog_never": 0.8638,
+    "per_participant": [
+      {
+        "participant_id": "Participant_MM001",
+        "n_sessions": 4,
+        "expressed_avoidance": true,
+        "crossed": true,
+        "first_crossing_session": 1,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 3.1695
+      },
+      {
+        "participant_id": "Participant_MM004",
+        "n_sessions": 5,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 1,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 3.2761
+      },
+      {
+        "participant_id": "Participant_MM005",
+        "n_sessions": 6,
+        "expressed_avoidance": true,
+        "crossed": true,
+        "first_crossing_session": 2,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 3.4624
+      },
+      {
+        "participant_id": "Participant_MM006",
+        "n_sessions": 5,
+        "expressed_avoidance": true,
+        "crossed": true,
+        "first_crossing_session": 2,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 3.116
+      },
+      {
+        "participant_id": "Participant_MM008",
+        "n_sessions": 4,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 4,
+        "dwell_sessions_below_barrier": 1,
+        "endpoint_prog": 2.1707
+      },
+      {
+        "participant_id": "Participant_MM010",
+        "n_sessions": 1,
+        "expressed_avoidance": false,
+        "crossed": false,
+        "first_crossing_session": null,
+        "dwell_sessions_below_barrier": 1,
+        "endpoint_prog": 0.3036
+      },
+      {
+        "participant_id": "Participant_MM011",
+        "n_sessions": 4,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 3,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 2.2958
+      },
+      {
+        "participant_id": "Participant_MM012",
+        "n_sessions": 1,
+        "expressed_avoidance": true,
+        "crossed": true,
+        "first_crossing_session": 3,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 2.3461
+      },
+      {
+        "participant_id": "Participant_MM014",
+        "n_sessions": 8,
+        "expressed_avoidance": true,
+        "crossed": true,
+        "first_crossing_session": 2,
+        "dwell_sessions_below_barrier": 1,
+        "endpoint_prog": 2.4163
+      },
+      {
+        "participant_id": "Participant_MM016",
+        "n_sessions": 4,
+        "expressed_avoidance": true,
+        "crossed": true,
+        "first_crossing_session": 2,
+        "dwell_sessions_below_barrier": 1,
+        "endpoint_prog": 2.1704
+      },
+      {
+        "participant_id": "Participant_MM017",
+        "n_sessions": 3,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 2,
+        "dwell_sessions_below_barrier": 1,
+        "endpoint_prog": 2.0
+      },
+      {
+        "participant_id": "Participant_MM018",
+        "n_sessions": 5,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 2,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 3.723
+      },
+      {
+        "participant_id": "Participant_MM019",
+        "n_sessions": 6,
+        "expressed_avoidance": true,
+        "crossed": true,
+        "first_crossing_session": 1,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 2.0
+      },
+      {
+        "participant_id": "Participant_MM021",
+        "n_sessions": 5,
+        "expressed_avoidance": true,
+        "crossed": true,
+        "first_crossing_session": 2,
+        "dwell_sessions_below_barrier": 1,
+        "endpoint_prog": 2.0
+      },
+      {
+        "participant_id": "Participant_MM026",
+        "n_sessions": 3,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 1,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 3.1382
+      },
+      {
+        "participant_id": "Participant_MM028",
+        "n_sessions": 1,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 1,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 2.5576
+      },
+      {
+        "participant_id": "Participant_MM029",
+        "n_sessions": 1,
+        "expressed_avoidance": true,
+        "crossed": false,
+        "first_crossing_session": null,
+        "dwell_sessions_below_barrier": 1,
+        "endpoint_prog": 1.3878
+      },
+      {
+        "participant_id": "Participant_MM030",
+        "n_sessions": 1,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 2,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 3.6923
+      },
+      {
+        "participant_id": "Participant_MM031",
+        "n_sessions": 1,
+        "expressed_avoidance": false,
+        "crossed": false,
+        "first_crossing_session": null,
+        "dwell_sessions_below_barrier": 1,
+        "endpoint_prog": 0.9
+      },
+      {
+        "participant_id": "Participant_MM032",
+        "n_sessions": 3,
+        "expressed_avoidance": false,
+        "crossed": true,
+        "first_crossing_session": 1,
+        "dwell_sessions_below_barrier": 0,
+        "endpoint_prog": 3.0164
+      }
+    ],
+    "note": "'Rate-limiting' read: most participants who advance do so only AFTER first reaching Attention-Regulation; participants who never cross the Avoidance barrier sit at lower endpoint progression. Descriptive (single arm), not a causal bottleneck test."
+  }
+}

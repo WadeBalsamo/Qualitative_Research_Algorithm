@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
-
+.venv_bayes/
 # Build / packaging artifacts
 *.egg-info/
 build/
