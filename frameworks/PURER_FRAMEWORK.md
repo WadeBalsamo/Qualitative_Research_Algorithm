@@ -74,7 +74,7 @@ PURER operationalizes five guided-inquiry moves drawn from the 2018 MORE Manual 
                               ignoring or pivoting from maladaptive
                               narratives)
 
-These labels apply EXCLUSIVELY to therapist segments. They do NOT apply to participant utterances; the participant-facing framework is VAAMR (see theme_framework/vaamr.py).
+These labels apply EXCLUSIVELY to therapist segments. They do NOT apply to participant utterances; the participant-facing framework is VAAMR (see constructs/vaamr.py).
 
 ### Co-Occurrence and Precedence
 
@@ -94,7 +94,7 @@ When the analytic unit permits only one label, the following empirical precedenc
 
 Exemplar utterances are drawn from MORE-for-LRP session recordings analyzed during framework development. Quotes ending with parenthetical notes (e.g., "(also reinforces)") are included to demonstrate co-occurrence; the primary code is the one in the section header.
 
-Structural parallel to theme_framework/vaamr.py. Exports get_purer_framework() which returns a ThemeFramework with five ThemeDefinition objects.
+Structural parallel to constructs/vaamr.py. Exports get_purer_framework() which returns a ThemeFramework with five ThemeDefinition objects.
 
 ---
 
