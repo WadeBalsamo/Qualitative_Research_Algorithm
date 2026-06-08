@@ -25,7 +25,7 @@ by Wexler, Balsamo et al. (2026, Mindfulness, 17, 819–833):
 
 These labels apply EXCLUSIVELY to therapist segments. They do NOT apply to
 participant utterances; the participant-facing framework is VAAMR (see
-theme_framework/vaamr.py).
+constructs/vaamr.py).
 
 ================================================================================
 CO-OCCURRENCE AND PRECEDENCE
@@ -69,15 +69,15 @@ analyzed during framework development. Quotes ending with parenthetical
 notes (e.g., "(also reinforces)") are included to demonstrate co-
 occurrence; the primary code is the one in the section header.
 
-Structural parallel to theme_framework/vaamr.py. Exports
+Structural parallel to constructs/vaamr.py. Exports
 get_purer_framework() which returns a ThemeFramework with five
 ThemeDefinition objects.
 """
 
 import functools
 from pathlib import Path
-from theme_framework.theme_schema import ThemeDefinition, ThemeFramework  # noqa: F401
-from theme_framework.markdown_loader import load_framework_md
+from .theme_schema import ThemeDefinition, ThemeFramework  # noqa: F401
+from .markdown_loader import load_framework_md
 
 _PURER_MD = Path(__file__).resolve().parents[2] / "frameworks" / "PURER_FRAMEWORK.md"
 

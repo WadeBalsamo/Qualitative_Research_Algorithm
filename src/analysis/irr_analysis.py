@@ -38,7 +38,7 @@ from typing import Dict, List, Optional, Tuple
 from process import output_paths as _paths
 from process import irr_import
 from process import segments_io
-from theme_framework.registry import load as load_framework
+from constructs.registry import load as load_framework
 from . import irr_stats
 
 ABSTAIN_CODE = irr_import.ABSTAIN_CODE
@@ -666,7 +666,7 @@ def load_irr_metrics(output_dir: str) -> dict:
     """
     out: dict = {'probe': {}, 'gnn': {}, 'llm': {}}
     try:
-        from classification_tools.probe_classifier import read_probe_gate
+        from classification_tools.probe.probe_classifier import read_probe_gate
         pg = read_probe_gate(output_dir) or {}
         if pg:
             out['probe'] = {

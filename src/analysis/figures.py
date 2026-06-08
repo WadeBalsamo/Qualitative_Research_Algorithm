@@ -23,7 +23,7 @@ from .loader import sort_session_ids
 from .stage_progression import compute_state_transition_matrix, compute_cross_session_transitions
 from process import output_paths as _paths
 
-# VAAMR theme colors from theme_framework/vaamr.py
+# VAAMR theme colors from constructs/vaamr.py
 _VAAMR_COLORS = {
     0: '#DC267F',  # Vigilance — magenta/pink
     1: '#FE6100',  # Avoidance — orange

@@ -399,7 +399,7 @@ class TestRunFullPipelineOverlayWrites(unittest.TestCase):
         """After run_full_pipeline, theme_labels.jsonl must exist on disk."""
         from process.orchestrator import run_full_pipeline
         from process import classifications_io
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         config = self._minimal_config()
         framework = get_vaamr_framework()
@@ -440,7 +440,7 @@ class TestRunFullPipelineOverlayWrites(unittest.TestCase):
     def test_stage_ingest_called_from_run_full_pipeline(self):
         """run_full_pipeline must delegate Stage 1 to stage_ingest (no inline duplication)."""
         from process.orchestrator import run_full_pipeline
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         config = self._minimal_config()
         framework = get_vaamr_framework()
@@ -472,7 +472,7 @@ class TestRunFullPipelineOverlayWrites(unittest.TestCase):
     def test_stage_classify_theme_called_from_run_full_pipeline(self):
         """run_full_pipeline must call stage_classify_theme (not inline code)."""
         from process.orchestrator import run_full_pipeline
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         config = self._minimal_config()
         framework = get_vaamr_framework()
@@ -509,7 +509,7 @@ class TestRunFullPipelineOverlayWrites(unittest.TestCase):
     def test_stage_classify_purer_called_when_purer_enabled_and_therapists(self):
         """run_full_pipeline calls stage_classify_purer when purer enabled and therapists exist."""
         from process.orchestrator import run_full_pipeline
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         config = self._minimal_config()
         config.run_purer_labeler = True
@@ -546,7 +546,7 @@ class TestRunFullPipelineOverlayWrites(unittest.TestCase):
     def test_run_full_pipeline_skips_purer_when_no_therapists(self):
         """run_full_pipeline must NOT call stage_classify_purer if no therapist segments."""
         from process.orchestrator import run_full_pipeline
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         config = self._minimal_config()
         config.run_purer_labeler = True  # enabled but no therapists
@@ -616,7 +616,7 @@ class TestStageValidationArtifactsWrites(unittest.TestCase):
 
     def test_writes_human_classification_forms(self):
         from process.orchestrator import stage_validation_artifacts
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         stage_validation_artifacts(
             None, get_vaamr_framework(),
@@ -629,7 +629,7 @@ class TestStageValidationArtifactsWrites(unittest.TestCase):
 
     def test_writes_flagged_for_review(self):
         from process.orchestrator import stage_validation_artifacts
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         stage_validation_artifacts(
             None, get_vaamr_framework(),
@@ -642,7 +642,7 @@ class TestStageValidationArtifactsWrites(unittest.TestCase):
     def test_loads_from_disk_when_segments_none(self):
         """When segments=None, stage_validation_artifacts loads from frozen disk."""
         from process.orchestrator import stage_validation_artifacts
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         # Should not raise even when segments not passed in
         stage_validation_artifacts(
@@ -656,7 +656,7 @@ class TestStageValidationArtifactsWrites(unittest.TestCase):
         """create_missing=False must not create new testsets that don't already exist."""
         from process.orchestrator import stage_validation_artifacts
         from process.config import PipelineConfig, TestSetsConfig, TestSetSpec
-        from theme_framework.vaamr import get_vaamr_framework
+        from constructs.vaamr import get_vaamr_framework
 
         config = PipelineConfig()
         config.output_dir = self.tmpdir

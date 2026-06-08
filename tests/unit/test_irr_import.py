@@ -66,7 +66,7 @@ def _build_fixture_db(run_dir, session_id, texts, *, sha_override=None):
 
 class TestNormalization(unittest.TestCase):
     def setUp(self):
-        from theme_framework.registry import load
+        from constructs.registry import load
         self.m = load('vaamr').build_name_to_id_map()
 
     def test_known_labels(self):

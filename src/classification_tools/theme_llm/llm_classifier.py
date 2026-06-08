@@ -9,7 +9,7 @@ Contains both:
 - PURER cue-unit classification: therapist response classification at the dialogue turn level
 
 All modules use a unified interface with the llm_client for backend compatibility
-and majority_vote for inter-rater reliability aggregation. Integrates with theme_framework
+and majority_vote for inter-rater reliability aggregation. Integrates with constructs
 for framework definitions and data_structures for segment objects.
 """
 
@@ -18,14 +18,14 @@ import os
 import datetime
 from typing import List, Dict, Any, Optional, Tuple
 
-from .data_structures import Segment
-from .llm_client import LLMClient, LLMClientConfig, extract_json
-from .classification_loop import filter_participant_segments, classify_segments
-from .majority_vote import vote_single_label, vote_multi_label
-from theme_framework.theme_schema import ThemeFramework
-from theme_framework.config import ThemeClassificationConfig
-from codebook.codebook_schema import Codebook, CodeAssignment
-from codebook.config import LLMCodebookConfig
+from classification_tools.data_structures import Segment
+from classification_tools.llm_client import LLMClient, LLMClientConfig, extract_json
+from classification_tools.classification_loop import filter_participant_segments, classify_segments
+from classification_tools.majority_vote import vote_single_label, vote_multi_label
+from constructs.theme_schema import ThemeFramework
+from constructs.config import ThemeClassificationConfig
+from constructs.codebook.codebook_schema import Codebook, CodeAssignment
+from classification_tools.codebook_multilabel.config import LLMCodebookConfig
 
 
 # ---------------------------------------------------------------------------

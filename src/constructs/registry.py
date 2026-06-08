@@ -1,10 +1,10 @@
 """
-theme_framework/registry.py
+constructs/registry.py
 ----------------------------
 Framework name → ThemeFramework dispatch.
 
 Usage:
-    from theme_framework.registry import load, FRAMEWORKS
+    from constructs.registry import load, FRAMEWORKS
 
     fw = load('vaamr')   # ThemeFramework parsed from VAAMR_FRAMEWORK.md
     fw = load('purer')   # ThemeFramework parsed from PURER_FRAMEWORK.md
