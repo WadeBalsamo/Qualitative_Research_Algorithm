@@ -1,7 +1,7 @@
 """
 analysis/mechanism_model.py
 ---------------------------
-The re-centered mechanism estimator (masterplan.md §3; methodology_assessment.md verdict).
+The re-centered mechanism estimator (docs/ROADMAP.md; design verdict in the 2026-06 methodology review, archived in git history).
 
 The program's central question — *does a therapist PURER move's effect on the next
 participant VAAMR stage depend on the participant's FROM stage?* — is a **FROM_stage ×
@@ -53,17 +53,27 @@ _VAAMR_LABELS = [0, 1, 2, 3, 4]
 class MechanismModelConfig:
     """Settings for the re-centered mechanism estimator (serialized into PipelineConfig.mechanism).
 
-    NOTE ON ``estimator``: the masterplan lists 'bayesian' as the primary arm, but the
+    NOTE ON ``estimator``: the roadmap lists 'bayesian' as the strongest small-n arm, but the
     in-process DEFAULT here is 'frequentist' because the Bayesian stack (bambi/pymc)
     requires numpy≥2.0 while the pipeline's pinned transformers requires numpy<2.0 — the
     two cannot coexist in the main venv. 'bayesian' / 'both' are opt-in and lazy-import
     bambi, degrading gracefully when it is absent (it WILL be absent in the main venv).
+
+    PRODUCTION POSTURE (Gate 4, signed off): ``enabled=True`` default-on is the SHIPPED,
+    INTENTIONAL behavior — the frequentist estimator runs in-process by default and the
+    report leads with it. The Bayesian arm stays isolated: bambi/arviz are imported ONLY
+    inside ``_bayesian_ordinal`` and ONLY when ``estimator in ('bayesian','both')``, so no
+    numpy≥2 dependency is reachable from the default frequentist path (verified by grep:
+    the only ``import bambi``/``import arviz`` in src/ is that lazy block).
     """
-    enabled: bool = True                     # default-on; degrades to the additive table if libs absent
+    enabled: bool = True                     # default-on (Gate 4: intentional, shipped); degrades to additive table if libs absent
     # ---- adjacency interaction model (H2 / §7.6) ----
     estimator: str = 'frequentist'           # 'frequentist' (safe in-process default) | 'bayesian' | 'both'
     ordinal: bool = True                     # cumulative-logit on the ordered VAAMR arc (0..4)
     interaction: bool = True                 # FROM_stage × move — the §7.6 moderation term
+    lr_cluster_bootstrap_n_boot: int = 500   # participant-cluster bootstrap resamples for the
+                                             # cluster-robust ordinal-LR p (Gate 2). 0 disables it
+                                             # (report falls back to the in-sample p alone, labeled).
     random_effect: str = 'participant_id'    # partial-pooling unit
     # ---- priors (weakly-informative; only used by the opt-in Bayesian arm) ----
     prior_scale: float = 2.5                 # Normal(0, prior_scale) on logit coefficients
@@ -267,6 +277,18 @@ def fit_adjacency_interaction(blocks_df: pd.DataFrame, config: MechanismModelCon
             inter = S.ordered_logit(Dm, 'to_stage', 'C(from_stage) * C(move)')
             if add and inter:
                 lr = S.likelihood_ratio_test(inter['llf'], add['llf'], inter['n_params'] - add['n_params'])
+                # Gate 2: the in-sample LR p above is NOT participant-cluster-robust
+                # (OrderedModel exposes no cluster-robust covariance). Calibrate it with a
+                # participant-cluster bootstrap of ΔLR; report BOTH, never the naive p alone.
+                n_boot = int(getattr(config, 'lr_cluster_bootstrap_n_boot', 500) or 0)
+                if n_boot >= 20:
+                    cb = S.cluster_bootstrap_lr_test(
+                        Dm, 'to_stage', 'C(from_stage) + C(move)', 'C(from_stage) * C(move)',
+                        group='participant_id', n_boot=n_boot, seed=config.seed)
+                else:
+                    cb = {'status': 'disabled', 'p_value': float('nan'), 'n_boot_ok': 0}
+                cb_p = (round(cb['p_value'], 4)
+                        if cb.get('status') == 'ok' and cb['p_value'] == cb['p_value'] else None)
                 ordinal = {
                     'status': 'ok',
                     'll_additive': round(add['llf'], 3),
@@ -276,6 +298,10 @@ def fit_adjacency_interaction(blocks_df: pd.DataFrame, config: MechanismModelCon
                     'LR': round(lr['LR'], 3),
                     'df': lr['df'],
                     'p_value': (round(lr['p_value'], 4) if lr['p_value'] == lr['p_value'] else None),
+                    'p_value_naive_label': 'in-sample LR, NOT cluster-robust (anti-conservative for nested data)',
+                    'p_value_cluster_bootstrap': cb_p,
+                    'cluster_bootstrap_status': cb.get('status'),
+                    'cluster_bootstrap_n_ok': cb.get('n_boot_ok'),
                 }
             else:
                 ordinal = {'status': 'unavailable_or_unfit'}
@@ -669,8 +695,11 @@ def run_mechanism_models(enriched_blocks: List[dict], participant_df: pd.DataFra
     if config.trajectory:
         result['trajectory'] = fit_trajectory(participant_df, D, config)
 
-    # Earns-its-place CV summary CSV.
+    # Earns-its-place CV summary CSV. The ordinal LR (naive in-sample + cluster-bootstrap)
+    # p-values ride along as ADDITIVE columns so the results brief can lead with the
+    # cluster-robust verdict without re-fitting. Existing columns are unchanged.
     eip = adjacency.get('earns_its_place', {})
+    olr = adjacency.get('ordinal_lr', {})
     if eip.get('status') == 'ok':
         cv_rows = []
         for name in ('FROM_only', 'additive', 'interaction'):
@@ -683,6 +712,12 @@ def run_mechanism_models(enriched_blocks: List[dict], participant_df: pd.DataFra
                 'n_params': r.get('n_params'),
                 'delta_logloss_vs_from_only': (0.0 if name == 'FROM_only'
                                                else eip.get(f'{name}_delta_logloss')),
+                # additive-only columns (same value on every row — the model-level LR verdict):
+                'lr_p_naive_insample': (olr.get('p_value') if olr.get('status') == 'ok' else None),
+                'lr_p_cluster_bootstrap': (olr.get('p_value_cluster_bootstrap')
+                                           if olr.get('status') == 'ok' else None),
+                'lr_cluster_bootstrap_status': (olr.get('cluster_bootstrap_status')
+                                                if olr.get('status') == 'ok' else None),
             })
         p = _write_csv(cv_rows, os.path.join(mech_dir, 'mechanism_interaction_cv.csv'))
         if p:

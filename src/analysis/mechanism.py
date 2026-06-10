@@ -456,6 +456,7 @@ def _append_interaction_lead(L: List[str], mm: dict, framework: dict) -> None:
     Emitted only when the re-centered estimator ran (``mechanism_models`` present). The
     additive per-cell table (§1) is demoted to a descriptive companion below this block.
     """
+    from .reports.stat_format import fmt_p
     adj = mm.get('adjacency', {})
     design = mm.get('design', {})
     L.append("-" * 78)
@@ -473,22 +474,43 @@ def _append_interaction_lead(L: List[str], mm: dict, framework: dict) -> None:
     olr = adj.get('ordinal_lr', {})
     if olr.get('status') == 'ok':
         p = olr.get('p_value')
-        pv = f"{p:.4f}" if isinstance(p, (int, float)) and p == p else "n/a"
+        pv = fmt_p(p) if isinstance(p, (int, float)) and p == p else "p=n/a"
+        cbp = olr.get('p_value_cluster_bootstrap')
+        cb_status = olr.get('cluster_bootstrap_status')
         L.append(f"  (a) Ordinal additive-vs-interaction LR test (ordered logit): "
-                 f"LR={olr['LR']:.2f} (df={olr['df']}), p={pv}.")
+                 f"LR={olr['LR']:.2f} (df={olr['df']}).")
         L.append("      (Does the FROM×move interaction earn a better ORDINAL fit than additive?)")
-        L.append("      NOTE: in-sample LR, NOT cluster-robust — it ignores within-participant")
-        L.append("      correlation (anti-conservative); read it as descriptive. The leakage-free")
-        L.append("      inference is the participant-grouped CV in (c), not this p-value.")
+        L.append(f"      • in-sample LR {pv}  — NOT cluster-robust: ignores within-participant")
+        L.append("        correlation (anti-conservative). Descriptive only.")
+        if cbp is not None:
+            L.append(f"      • participant-cluster-bootstrap {fmt_p(cbp)}  (n={olr.get('cluster_bootstrap_n_ok', '?')} "
+                     "refits of reduced+full ordered logit on resampled participants) —")
+            L.append("        the leakage-respecting calibration of the same LR statistic.")
+        else:
+            L.append(f"      • cluster-robust p UNAVAILABLE ({cb_status or 'n/a'}) — read the in-sample")
+            L.append("        p above with that caveat; do NOT treat it as cluster-robust.")
+        L.append("      The leakage-free model-selection verdict is the participant-grouped CV in (c).")
     else:
         L.append(f"  (a) Ordinal LR test: not estimable ({olr.get('status', 'n/a')}).")
 
     g = adj.get('gaussian_interaction', {})
     if g.get('method') == 'mixedlm':
-        sing = " [SINGULAR/under-identified design]" if g.get('singular') else ""
-        L.append(f"  (b) Gaussian mixed interaction Δprog ~ C(from)×C(move)+(1|participant): "
-                 f"{g.get('n_ci_excludes_0', 0)}/{g.get('n_interaction_terms', 0)} interaction")
-        L.append(f"      contrasts have a 95% CI excluding 0{sing}. (The term the §5 model omits.)")
+        if g.get('singular'):
+            # Gate 3: on a rank-deficient/boundary fit the CI-excluding-0 COUNT is not
+            # interpretable — at least one interaction CI is non-finite. Suppress the count
+            # claim and flag the degeneracy rather than print a misleading "k/N excludes 0".
+            L.append(f"  (b) Gaussian mixed interaction Δprog ~ C(from)×C(move)+(1|participant): "
+                     f"SINGULAR / under-identified fit")
+            L.append(f"      ({g.get('n_interaction_terms', 0)} interaction terms; the design is "
+                     "rank-deficient at n≈32, so the")
+            L.append("      count of CIs excluding 0 is NOT interpretable and is suppressed. "
+                     "This is the")
+            L.append("      expected small-n status — it MOTIVATES the regularized hierarchical "
+                     "(Bayesian) arm.")
+        else:
+            L.append(f"  (b) Gaussian mixed interaction Δprog ~ C(from)×C(move)+(1|participant): "
+                     f"{g.get('n_ci_excludes_0', 0)}/{g.get('n_interaction_terms', 0)} interaction")
+            L.append("      contrasts have a 95% CI excluding 0. (The term the §5 model omits.)")
     else:
         L.append(f"  (b) Gaussian mixed interaction: not estimable ({g.get('status', 'n/a')}).")
 
@@ -565,18 +587,31 @@ def _append_interaction_lead(L: List[str], mm: dict, framework: dict) -> None:
 def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
                             trajectories, construct, framework, path,
                             mixed_rows=None, mechanism_models=None) -> str:
+    from .reports.stat_format import (
+        fmt_est_ci, fmt_signed, fmt_p, m_ref, provenance_header,
+    )
     L = []
     L.append("=" * 78)
     L.append("MECHANISTIC ANALYSIS — therapist language × continuous Δprogression")
     L.append("=" * 78)
     L.append("")
-    L.append("DIRECTIONAL / HYPOTHESIS-GENERATING. Δprogression is the change in the")
-    L.append("continuous VAAMR progression coordinate (E[stage], 0–4) from the FROM to")
-    L.append("the TO participant segment of each therapist cue block. Positive = movement")
-    L.append("toward later stages. These are observational associations, NOT causal effects.")
-    L.append("CONFOUND: therapists choose PURER moves IN RESPONSE TO participant state, so a")
-    L.append("move's association with progression may reflect responsiveness, not impact.")
-    L.append("Inference (CIs, permutation p, FDR) bounds sampling noise, not confounding.")
+    # Compact provenance block — full prose lives in 08_methods.txt
+    for hline in provenance_header(
+        ['purer_labels', 'delta_prog', 'evalues', 'interaction_model', 'cluster_bootstrap'],
+        extra="PURER labels are unvalidated (human IRR planned, not yet started).",
+    ):
+        L.append(hline)
+    L.append("")
+    L.append("SCOPE: Δprogression = E[stage]_TO − E[stage]_FROM per therapist cue block.")
+    L.append("Positive = participant moved toward later VAAMR stages. DIRECTIONAL only —")
+    L.append("these are bounded associations, not causal effects.")
+    L.append("")
+    L.append("ELICITATION/RESPONSIVENESS CONFOUND (methodology §9.4): therapists select")
+    L.append("PURER moves IN RESPONSE TO participant state — moves that follow difficult")
+    L.append("participant moments may be deployed exactly when progress is least likely,")
+    L.append("biasing associations toward zero or even inverting them. Inference (CIs,")
+    L.append("permutation p, BH-FDR) bounds sampling noise, not this confound.")
+    L.append("The E-value and Rosenbaum Γ in the interaction section quantify its magnitude.")
     L.append("")
 
     # PRIMARY ESTIMATOR — the FROM×move interaction (masterplan §3). Emitted only when the
@@ -591,9 +626,9 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
     else:
         L.append("1. ΔPROGRESSION BY THERAPIST BEHAVIOUR × FROM-STAGE (conditioned, inferential)")
     L.append("-" * 78)
-    L.append("  Δ = mean change in progression coordinate; [lo, hi] = participant-cluster")
-    L.append("  bootstrap 95% CI; p = within-from-stage permutation (this move vs other moves");
-    L.append("  at the same starting stage); * = survives Benjamini–Hochberg FDR (q<.05).")
+    L.append(f"  {m_ref('delta_prog')}  Notation: Δ [95% CI lo, hi], permutation p, n=blocks/participants.")
+    L.append("  CI = participant-cluster bootstrap 95%; p = within-from-stage permutation")
+    L.append("  (this move vs other moves at the same starting stage). * = survives BH-FDR q<.05.")
     L.append("  prog/stab/reg = blocks that progressed / stabilized within-stage / regressed.")
     if delta_rows:
         for grouping in ('purer', 'motif'):
@@ -603,42 +638,80 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
             L.append(f"\n  [{grouping.upper()}]")
             for r in sorted(grows, key=lambda r: -r['mean_delta_prog'])[:12]:
                 star = ' *' if r.get('fdr_significant') else '  '
-                ci = (f"[{r['ci_lo']:+.2f},{r['ci_hi']:+.2f}]"
-                      if r.get('ci_lo') is not None else "[ n/a ]")
-                pv = f"p={r['perm_p']:.3f}" if r.get('perm_p') is not None else "p=n/a"
+                est_s = fmt_est_ci(
+                    r['mean_delta_prog'],
+                    r.get('ci_lo'), r.get('ci_hi'),
+                    p=r.get('perm_p'),
+                    p_kind='permutation',
+                    n_desc=f"{r['n']} blocks / {r['n_participants']}p",
+                )
                 L.append(f"   {star}{r['from_stage_name']:<20} {str(r['behavior'])[:24]:<24} "
-                         f"Δ={r['mean_delta_prog']:+.3f} {ci} {pv} "
-                         f"(n={r['n']}/{r['n_participants']}p; "
-                         f"{r['n_progress']}/{r['n_stabilize']}/{r['n_regress']})")
+                         f"Δ={est_s}  "
+                         f"({r['n_progress']}/{r['n_stabilize']}/{r['n_regress']})")
     else:
         L.append("  No behaviour-labelled cue blocks available.")
 
+    # PLAIN-LANGUAGE READING for top cells ─────────────────────────────────
+    if delta_rows:
+        _purer_rows = [r for r in delta_rows if r['grouping'] == 'purer']
+        _fdr_cells = [r for r in _purer_rows if r.get('fdr_significant')]
+        # Fall back to top-3 by |Δ| with n≥4 if nothing survives FDR
+        _reading_cells = (_fdr_cells if _fdr_cells
+                         else sorted([r for r in _purer_rows if r.get('n', 0) >= 4],
+                                     key=lambda r: abs(r['mean_delta_prog']), reverse=True)[:3])
+        if _reading_cells:
+            L.append("")
+            L.append("  PLAIN-LANGUAGE READING (top cells; PURER labels directional — not validated):")
+            for rc in _reading_cells[:5]:
+                _stage = rc.get('from_stage_name', str(rc.get('from_stage', '?')))
+                _move = str(rc.get('behavior', '?'))
+                _d = rc.get('mean_delta_prog', 0.0)
+                _dir = "forward (adaptive)" if _d > 0.05 else ("backward" if _d < -0.05 else "negligible")
+                _n = rc.get('n', 0)
+                _np = rc.get('n_participants', 0)
+                _fdr_note = " [survives BH-FDR]" if rc.get('fdr_significant') else " [descriptive]"
+                L.append(f"    • FROM {_stage}, move={_move}: "
+                         f"when the participant was in {_stage} and the therapist used {_move}, "
+                         f"the next participant turn moved {_dir} "
+                         f"(mean Δ={fmt_signed(_d)}, n={_n}/{_np}p{_fdr_note}).")
+                L.append(f"      DIRECTIONAL — PURER labels are as-yet unvalidated; effect may reflect "
+                         f"therapist responsiveness to participant state, not cue impact (§9.4).")
     L.append("")
     L.append("-" * 78)
     L.append("2. LIMINALITY LEVERAGE — do cues bite harder at the stage cusp?")
     L.append("-" * 78)
     corr = liminality.get('entropy_abs_delta_correlation')
-    L.append(f"  Correlation(FROM entropy, |Δprogression|): "
-             f"{corr if corr is not None else 'n/a'}")
+    corr_s = f"{corr:+.4f}" if isinstance(corr, (int, float)) and corr == corr else "n/a"
+    L.append(f"  r(FROM entropy, |Δprogression|) = {corr_s}  (higher entropy = more liminal segment)")
     for tier in ('low', 'medium', 'high'):
         t = liminality.get(tier, {})
         if t.get('n'):
             L.append(f"    {tier:<7} entropy: n={t['n']:<4} "
-                     f"mean|Δ|={t['mean_abs_delta_prog']:+.3f}  meanΔ={t['mean_delta_prog']:+.3f}")
+                     f"mean|Δ|={fmt_signed(t['mean_abs_delta_prog'], nd=3)}  "
+                     f"meanΔ={fmt_signed(t['mean_delta_prog'], nd=3)}")
     L.append("  (Higher mean|Δ| at high entropy ⇒ therapist language has maximal leverage at the cusp.)")
 
     L.append("")
     L.append("-" * 78)
-    L.append("3. AVOIDANCE BARRIER — what crosses participants toward Attention-Regulation")
+    L.append("3. AVOIDANCE BARRIER — what crosses participants toward Attention-Regulation  " + m_ref('delta_prog'))
     L.append("-" * 78)
+    _av_mean = avoidance.get('mean_delta_from_avoidance')
+    _av_mean_s = fmt_signed(_av_mean, nd=3) if isinstance(_av_mean, (int, float)) and _av_mean == _av_mean else "n/a"
     L.append(f"  Avoidance cue blocks: {avoidance['n_avoidance_blocks']}  "
-             f"(mean Δprogression from Avoidance: {avoidance['mean_delta_from_avoidance']})")
+             f"(mean Δprogression from Avoidance: {_av_mean_s})")
+    L.append("  Full per-direction rankings in 02_outcomes/avoidance_barrier.txt.")
     for label, key in (('PURER', 'by_purer'), ('Motif', 'by_motif')):
         ranked = [r for r in avoidance[key] if r['mean_delta_prog'] > 0][:6]
         if ranked:
-            L.append(f"\n  Top {label} movers out of Avoidance:")
+            L.append(f"\n  Top {label} movers out of Avoidance (Δ>0, directional):")
             for r in ranked:
-                L.append(f"    {str(r['behavior'])[:30]:<30} Δ={r['mean_delta_prog']:+.3f} (n={r['n']})")
+                _est = fmt_est_ci(
+                    r['mean_delta_prog'],
+                    r.get('ci_lo'), r.get('ci_hi'),
+                    p=r.get('perm_p'), p_kind='permutation',
+                    n_desc=str(r['n']),
+                )
+                L.append(f"    {str(r['behavior'])[:30]:<30} Δ={_est}")
     if cusp_density:
         L.append("\n  Avoidance↔Attention-Regulation cusp density by session (longitudinal):")
         for r in cusp_density:
@@ -651,25 +724,33 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
     L.append("4. PARTICIPANT TRAJECTORY TYPOLOGY (rule-based)")
     L.append("-" * 78)
     if trajectories:
+        L.append("  E[stage] OLS slope = per-participant interval-scale sensitivity estimator "
+                 + m_ref('estage'))
         for r in trajectories:
+            slope_s = fmt_signed(r['progression_slope'], nd=3)
             L.append(f"    {r['participant_id']:<16} {r['trajectory_type']:<20} "
-                     f"slope={r['progression_slope']:+.3f}  vol={r['within_session_volatility']:.2f}  "
+                     f"E[stage] OLS slope={slope_s}  vol={r['within_session_volatility']:.2f}  "
                      f"max={r['max_progression']:.2f}")
     else:
         L.append("  No trajectory data.")
 
     L.append("")
     L.append("-" * 78)
-    L.append("5. MIXED-EFFECTS ΔPROGRESSION MODEL (random participant intercept)")
+    L.append("5. MIXED-EFFECTS ΔPROGRESSION MODEL (random participant intercept)  "
+             + m_ref('interaction_model'))
     L.append("-" * 78)
     if mixed_rows:
         L.append("  Δprog ~ C(dominant_purer) + (1|participant). Estimates are vs the reference")
         L.append("  PURER move; CI is the model 95% interval. Accounts for repeated blocks per")
-        L.append("  participant. Directional — small N, interpret with the caveats below.")
+        L.append("  participant. Directional — small N; interpret with §9.4 confound in mind.")
         for r in mixed_rows:
-            pv = f"p={r['p_value']:.3f}" if r.get('p_value') is not None else "p=n/a"
-            L.append(f"    {str(r['term'])[:34]:<34} β={r['estimate']:+.3f} "
-                     f"[{r['ci_lo']:+.2f},{r['ci_hi']:+.2f}] {pv}")
+            _est_s = fmt_est_ci(
+                r['estimate'],
+                r.get('ci_lo'), r.get('ci_hi'),
+                p=r.get('p_value'), p_kind='model',
+                n_desc=None,
+            )
+            L.append(f"    {str(r['term'])[:34]:<34} β={_est_s}")
     else:
         L.append("  Not fit (statsmodels unavailable or too few participants/blocks).")
 
@@ -687,10 +768,12 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
             L.append(f"  Pairs elevated under BOTH the GNN geometry and LLM labels: {nb}")
             L.append("  Convergence across independent substrates is stronger evidence than")
             L.append("  LLM↔LLM agreement — but remains directional pending human validation.")
+            L.append("  [See 07_gnn/discriminant_validity.txt for full H6 discriminant-validity report]")
     else:
         L.append("  GNN lift comparison not available (GNN layer did not run).")
         L.append("  Mixtures here are sourced from LLM ballots / secondary_stage — a stability")
         L.append("  signal, not an independent substrate. Interpret accordingly.")
+        L.append("  [See 07_gnn/discriminant_validity.txt when the GNN layer is enabled]")
     L.append("")
 
     with open(path, 'w', encoding='utf-8') as f:
@@ -699,22 +782,33 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
 
 
 def _write_avoidance_report(avoidance, cusp_density, framework, path) -> str:
+    from .reports.stat_format import (
+        fmt_est_ci, fmt_signed, m_ref, provenance_header,
+    )
     L = []
     L.append("=" * 78)
     L.append("AVOIDANCE BARRIER REPORT")
     L.append("=" * 78)
     L.append("")
-    L.append("The Avoidance→Attention-Regulation crossing is the clinically central barrier.")
-    L.append("This report ranks therapist language by the continuous Δprogression it is")
-    L.append("associated with when participants begin in Avoidance, and tracks how the")
-    L.append("Avoidance↔Attention-Regulation cusp density shifts across the program.")
-    L.append("Reported in BOTH directions: language associated with crossing FORWARD out of")
-    L.append("Avoidance, and language associated with STALLING or sliding back into it — so")
-    L.append("the barrier can be read as something to lean into, not only as failures.")
-    L.append("DIRECTIONAL — associational, curriculum-actionable hypotheses, not causal claims.")
+    # Compact provenance block
+    for hline in provenance_header(
+        ['purer_labels', 'delta_prog', 'barrier', 'cluster_bootstrap'],
+        extra="PURER labels are unvalidated; these rankings are DIRECTIONAL.",
+    ):
+        L.append(hline)
     L.append("")
+    L.append("SCOPE: Avoidance→Attention-Regulation crossing is the central barrier in")
+    L.append("the VA-MR model. Reported in BOTH directions: language associated with crossing")
+    L.append("FORWARD out of Avoidance, and language associated with STALLING or sliding")
+    L.append("back into it — so the barrier can be read as something to lean into, not")
+    L.append("only as failures. DIRECTIONAL — associational, curriculum-actionable hypotheses,")
+    L.append("not causal claims. PURER labels unvalidated (human IRR planned, not started).")
+    L.append("")
+    _av_mean = avoidance.get('mean_delta_from_avoidance')
+    _av_mean_s = (fmt_signed(_av_mean, nd=3)
+                  if isinstance(_av_mean, (int, float)) and _av_mean == _av_mean else "n/a")
     L.append(f"Avoidance cue blocks analysed: {avoidance['n_avoidance_blocks']}")
-    L.append(f"Mean Δprogression out of Avoidance: {avoidance['mean_delta_from_avoidance']}")
+    L.append(f"Mean Δprogression from Avoidance: {_av_mean_s}  {m_ref('delta_prog')}")
     L.append(f"Blocks landing back IN Avoidance from a higher stage: {avoidance.get('n_into_avoidance', 0)}")
     L.append("")
 
@@ -727,8 +821,13 @@ def _write_avoidance_report(avoidance, cusp_density, framework, path) -> str:
             L.append("")
             return
         for r in rows:
-            L.append(f"  {str(r['behavior'])[:34]:<34} Δ={r['mean_delta_prog']:+.3f} "
-                     f"(±{r.get('sd_delta_prog', 0):.2f}, n={r['n']})")
+            _est = fmt_est_ci(
+                r['mean_delta_prog'],
+                r.get('ci_lo'), r.get('ci_hi'),
+                p=r.get('perm_p'), p_kind='permutation',
+                n_desc=str(r['n']),
+            )
+            L.append(f"  {str(r['behavior'])[:34]:<34} Δ={_est}")
         L.append("")
 
     for label, key in (('PURER move', 'by_purer'), ('Cue motif', 'by_motif')):
