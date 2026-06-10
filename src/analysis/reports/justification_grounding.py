@@ -18,7 +18,7 @@ Outputs
 -------
   04_validation/justification_grounding.csv   — per-segment audit rows
   04_validation/justification_grounding.json  — aggregate rates
-  06_reports/06_classifier/justification_grounding.txt — human-readable report
+  06_reports/09_supplementary/justification_grounding.txt — human-readable report
 
 Stdlib-only (re, difflib, json) — no network, no model downloads, no new deps.
 Default-ON: wired into analysis/runner.py right after segments are loaded.
@@ -367,7 +367,7 @@ def _write_report(vaamr: dict, purer: dict, df_lookup: Dict[str, str],
     L.append("justification did not DEMONSTRABLY cite the segment text (a review queue), not")
     L.append("that the model lied: an honest abstractive/paraphrased rationale that shares")
     L.append("no surface tokens lands here too. Read alongside the human↔LLM IRR")
-    L.append("(06b_irr_report.txt).")
+    L.append("(01_reliability/irr_report.txt).")
     L.append("")
 
     for title, audit in (("VAAMR (participant segments)", vaamr),
@@ -472,7 +472,7 @@ def _write_report(vaamr: dict, purer: dict, df_lookup: Dict[str, str],
         L.append("  (none flagged — all justifications are grounded)")
         L.append("")
 
-    path = os.path.join(_paths.reports_classifier_dir(output_dir), 'justification_grounding.txt')
+    path = os.path.join(_paths.reports_supplementary_dir(output_dir), 'justification_grounding.txt')
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         f.write("\n".join(L))

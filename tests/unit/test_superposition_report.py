@@ -110,7 +110,7 @@ class TestSuperpositionWritesFile(unittest.TestCase):
 
     def test_path_in_mechanism_dir(self):
         path = generate_superposition_report(self.df, FRAMEWORK, self.tmp)
-        self.assertIn('02_mechanism', path)
+        self.assertIn('03_mechanism', path)
         self.assertTrue(path.endswith('superposition.txt'))
 
     def test_five_section_headers(self):

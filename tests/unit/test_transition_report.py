@@ -168,8 +168,9 @@ class TestTransitionExplanationWrites(unittest.TestCase):
         self.assertTrue(os.path.isfile(path))
 
     def test_path_in_mechanism_dir(self):
+        from process import output_paths as _paths
         path = generate_transition_explanation(self.df, FRAMEWORK, self.tmp)
-        self.assertIn('02_mechanism', path)
+        self.assertIn(_paths.reports_mechanism_dir(self.tmp), path)
         self.assertTrue(path.endswith('transitions.txt'))
 
     def test_within_session_header(self):

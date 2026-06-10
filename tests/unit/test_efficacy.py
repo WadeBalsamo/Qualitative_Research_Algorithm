@@ -111,7 +111,7 @@ class TestEndToEnd(unittest.TestCase):
     def test_run_writes_artifacts(self):
         res = E.run_efficacy_analysis(self.df, _FRAMEWORK, self.tmp, config=EfficacyConfig())
         files = res['files_written']
-        self.assertTrue(any(os.path.join('01_outcomes', 'progression_summary.txt') in f for f in files))
+        self.assertTrue(any(os.path.join('02_outcomes', 'progression_summary.txt') in f for f in files))
         self.assertTrue(os.path.isfile(os.path.join(_paths.efficacy_dir(self.tmp),
                                                      'group_progression_trajectory.csv')))
 

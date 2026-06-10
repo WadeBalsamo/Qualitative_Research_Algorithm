@@ -317,7 +317,7 @@ def generate_transition_explanation(
         liminal_note = ''
         if 'is_liminal' in df.columns and len(df):
             liminal_note = f"  |  liminal (mixed-stage) segments: {100 * float(df['is_liminal'].mean()):.1f}%"
-        lines.append(f'  See 06_reports/02_mechanism/superposition.txt and mechanism.txt.{liminal_note}')
+        lines.append(f'  See 06_reports/03_mechanism/superposition.txt and mechanism.txt.{liminal_note}')
         lines.append('')
 
     # ── PURER × transition correlation table ──
@@ -355,7 +355,9 @@ def generate_transition_explanation(
     # Example quotes for all non-self transitions — one per (cohort, session), max 5 per pair
     non_self = [(cnt, fr, to) for cnt, fr, to in pairs if fr != to]
     if non_self:
-        lines.append('Exemplar quotes by cohort and session (within-session transitions):')
+        lines.append('Exemplar quotes by cohort and session (within-session transitions, top 3):')
+        lines.append('[Full inventory: 06_reports/09_supplementary/cue_response.txt + 04_per_session/]')
+        lines.append('')
         for cnt, fr, to in non_self:
             examples = _find_transition_examples_by_cohort_session(df, fr, to)
             if not examples:
@@ -364,7 +366,7 @@ def generate_transition_explanation(
             lines.append(
                 f'\n  ── {stage_names[fr]} → {stage_names[to]}  ({cnt}x, [{direction}]) ──'
             )
-            for ex in examples[:5]:
+            for ex in examples[:3]:
                 _show_cue = (
                     therapist_cue_config is not None
                     and getattr(therapist_cue_config, 'enabled', False)
@@ -444,7 +446,9 @@ def generate_transition_explanation(
     # Exemplar quotes for all between-session transitions — one per (cohort, from_session), max 5 per pair
     non_self_cross = [(cnt, fr, to) for cnt, fr, to in cross_pairs if fr != to]
     if non_self_cross:
-        lines.append('Exemplar quotes by cohort and session (between-session transitions):')
+        lines.append('Exemplar quotes by cohort and session (between-session transitions, top 3):')
+        lines.append('[Full inventory: 06_reports/09_supplementary/cue_response.txt + 04_per_session/]')
+        lines.append('')
         for cnt, fr, to in non_self_cross:
             examples = _find_cross_transition_examples_by_cohort_session(
                 df, fr, to, participant_sequences
@@ -455,7 +459,7 @@ def generate_transition_explanation(
             lines.append(
                 f'\n  ── {stage_names[fr]} → {stage_names[to]}  ({cnt}x, [{direction}]) ──'
             )
-            for ex in examples[:5]:
+            for ex in examples[:3]:
                 gap = ex.get('session_gap', 0)
                 if gap > 0:
                     skipped = list(range(ex['from_snum'] + 1, ex['to_snum']))
@@ -508,7 +512,7 @@ def generate_therapist_cues_report(
     llm_client,
     df_all: pd.DataFrame = None,
 ) -> str:
-    """Generate 02_mechanism/cue_response.txt.
+    """Generate 09_supplementary/cue_response.txt (auditable long-form dossier).
 
     Iterates all within-session transitions, groups by (from_stage, to_stage),
     and produces averaged FROM / CUE / TO blocks for each transition type.
@@ -682,8 +686,8 @@ def generate_therapist_cues_report(
             lines.append('')
 
     content = '\n'.join(lines)
-    os.makedirs(_paths.reports_mechanism_dir(output_dir), exist_ok=True)
-    path = os.path.join(_paths.reports_mechanism_dir(output_dir), 'cue_response.txt')
+    os.makedirs(_paths.reports_supplementary_dir(output_dir), exist_ok=True)
+    path = os.path.join(_paths.reports_supplementary_dir(output_dir), 'cue_response.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(content)
     return path

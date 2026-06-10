@@ -61,7 +61,7 @@ def _render_block(b, tlu, framework, L, indent='    '):
 
 
 def generate_language_atlas(df, df_all, framework, output_dir) -> Optional[str]:
-    """Write 02_mechanism/language_atlas.txt. Returns path, or None if inputs are missing."""
+    """Write 03_mechanism/language_atlas.txt. Returns path, or None if inputs are missing."""
     from gnn_layer.cue_features import build_cue_blocks_with_segments
     from ..mechanism import _seg_lookup, _load_block_motifs, _enrich_blocks
 
@@ -82,7 +82,7 @@ def generate_language_atlas(df, df_all, framework, output_dir) -> Optional[str]:
     L.append("The actual language behind the mechanism statistics: FROM participant quote →")
     L.append("therapist CUE → TO participant quote, for the therapist moves most associated")
     L.append("with progression — BOTH forward-moving and backward/stalling patterns. ")
-    L.append("Directional/associational (see 02_mechanism/mechanism.txt for CIs and")
+    L.append("Directional/associational (see 03_mechanism/mechanism.txt for CIs and")
     L.append("significance). Read as candidate teachable patterns, not proof.")
     L.append("")
 

@@ -39,7 +39,7 @@ class TestCriticalLayouts(unittest.TestCase):
     def test_reports_gnn_dir(self):
         self.assertEqual(
             P.reports_gnn_dir(self.tmp),
-            os.path.join(self.tmp, '06_reports', '06_gnn'),
+            os.path.join(self.tmp, '06_reports', '07_gnn'),
         )
 
     def test_gnn_model_dir(self):
@@ -65,31 +65,31 @@ class TestCriticalLayouts(unittest.TestCase):
     def test_reports_outcomes_dir(self):
         self.assertEqual(
             P.reports_outcomes_dir(self.tmp),
-            os.path.join(self.tmp, '06_reports', '01_outcomes'),
+            os.path.join(self.tmp, '06_reports', '02_outcomes'),
         )
 
     def test_reports_mechanism_dir(self):
         self.assertEqual(
             P.reports_mechanism_dir(self.tmp),
-            os.path.join(self.tmp, '06_reports', '02_mechanism'),
+            os.path.join(self.tmp, '06_reports', '03_mechanism'),
         )
 
     def test_themes_dir(self):
         self.assertEqual(
             P.themes_dir(self.tmp),
-            os.path.join(self.tmp, '06_reports', '05_per_stage'),
+            os.path.join(self.tmp, '06_reports', '06_per_stage'),
         )
 
     def test_reports_per_session_dir(self):
         self.assertEqual(
             P.reports_per_session_dir(self.tmp),
-            os.path.join(self.tmp, '06_reports', '03_per_session'),
+            os.path.join(self.tmp, '06_reports', '04_per_session'),
         )
 
     def test_reports_per_participant_dir(self):
         self.assertEqual(
             P.reports_per_participant_dir(self.tmp),
-            os.path.join(self.tmp, '06_reports', '04_per_participant'),
+            os.path.join(self.tmp, '06_reports', '05_per_participant'),
         )
 
 
@@ -306,23 +306,61 @@ class TestHumanReportsPaths(unittest.TestCase):
             os.path.join(self.tmp, '06_reports'),
         )
 
-    def test_executive_summary_path(self):
+    def test_reports_results_path(self):
         self.assertEqual(
-            P.executive_summary_path(self.tmp),
-            os.path.join(self.tmp, '06_reports', '00_executive_summary.txt'),
+            P.reports_results_path(self.tmp),
+            os.path.join(self.tmp, '06_reports', '00_RESULTS.txt'),
         )
 
-    def test_reports_readme_path(self):
+    def test_reports_methods_path(self):
         self.assertEqual(
-            P.reports_readme_path(self.tmp),
-            os.path.join(self.tmp, '06_reports', '00_READ_ME.txt'),
+            P.reports_methods_path(self.tmp),
+            os.path.join(self.tmp, '06_reports', '08_methods.txt'),
         )
 
-    def test_methods_appendix_path(self):
+    def test_reports_irr_path(self):
         self.assertEqual(
-            P.methods_appendix_path(self.tmp),
-            os.path.join(self.tmp, '06_reports', '07_methods_appendix.txt'),
+            P.reports_irr_path(self.tmp),
+            os.path.join(self.tmp, '06_reports', '01_reliability', 'irr_report.txt'),
         )
+
+    def test_reports_reliability_dir(self):
+        self.assertEqual(
+            P.reports_reliability_dir(self.tmp),
+            os.path.join(self.tmp, '06_reports', '01_reliability'),
+        )
+
+    def test_reports_classifier_dir_aliases_reliability_dir(self):
+        self.assertEqual(
+            P.reports_classifier_dir(self.tmp),
+            P.reports_reliability_dir(self.tmp),
+        )
+
+    def test_reports_supplementary_dir(self):
+        self.assertEqual(
+            P.reports_supplementary_dir(self.tmp),
+            os.path.join(self.tmp, '06_reports', '09_supplementary'),
+        )
+
+    def test_thesis_figure_path_1(self):
+        self.assertTrue(
+            P.thesis_figure_path(self.tmp, 1).endswith('00_fig1_rehabituation_arc.png'),
+        )
+
+    def test_thesis_figure_path_2(self):
+        self.assertTrue(
+            P.thesis_figure_path(self.tmp, 2).endswith('00_fig2_dyadic_mechanism.png'),
+        )
+
+    def test_thesis_figure_path_3(self):
+        self.assertTrue(
+            P.thesis_figure_path(self.tmp, 3).endswith('00_fig3_dashboard.png'),
+        )
+
+    def test_thesis_figures_in_reports_root(self):
+        for n in (1, 2, 3):
+            fig = P.thesis_figure_path(self.tmp, n)
+            self.assertEqual(os.path.dirname(fig), P.human_reports_dir(self.tmp))
 
 
 class TestTrainingDataPaths(unittest.TestCase):

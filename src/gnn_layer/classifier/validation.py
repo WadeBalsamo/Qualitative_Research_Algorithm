@@ -229,7 +229,7 @@ def _fmt(x, pct=False):
 
 
 def write_validation_report(metrics: dict, output_dir: str, config=None) -> str:
-    """Human-readable reliability-gate report → 06_reports/06_gnn/validation.txt."""
+    """Human-readable reliability-gate report → 06_reports/07_gnn/validation.txt."""
     W = 78
     tgt = metrics.get('irr_target', 0.70)
     L = []
@@ -566,7 +566,7 @@ def scale_mode_simulation(df_all, segment_embeddings, config, framework=None,
 
 
 def write_scale_sim_report(result: dict, output_dir: str) -> str:
-    """Human-readable A5 scale-mode simulation report → 06_reports/06_gnn/."""
+    """Human-readable A5 scale-mode simulation report → 06_reports/07_gnn/."""
     def _k(x):
         return 'n/a' if not isinstance(x, (int, float)) else f"{x:+.3f}"
 

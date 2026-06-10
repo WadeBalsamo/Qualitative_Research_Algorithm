@@ -29,7 +29,8 @@ from process.interactive_tui import _gnn_status, _gnn_tag, _probe_status, _probe
 # ---------------------------------------------------------------------------
 
 def _make_reports_gnn_dir(run_dir: str) -> str:
-    p = os.path.join(run_dir, '06_reports', '06_gnn')
+    from process import output_paths as _paths
+    p = _paths.reports_gnn_dir(run_dir)
     os.makedirs(p, exist_ok=True)
     return p
 
@@ -170,6 +171,7 @@ class TestDetectStateGnnKey(unittest.TestCase):
         # Create the minimum directory skeleton that _detect_state touches:
         # it calls output_paths.* functions which all do os.path.* checks.
         # Many dirs just need to not raise; they need not be populated.
+        from process import output_paths as _paths
         for sub in (
             '01_transcripts/segmented',
             '02_meta/classifications',
@@ -178,9 +180,9 @@ class TestDetectStateGnnKey(unittest.TestCase):
             '04_validation/testsets',
             '04_validation/content_validity',
             '05_figures',
-            '06_reports/06_gnn',
         ):
             os.makedirs(os.path.join(self.run_dir, sub), exist_ok=True)
+        os.makedirs(_paths.reports_gnn_dir(self.run_dir), exist_ok=True)
 
     def tearDown(self):
         shutil.rmtree(self.run_dir, ignore_errors=True)
@@ -196,7 +198,8 @@ class TestDetectStateGnnKey(unittest.TestCase):
         self.assertEqual(state['gnn_status'], 'absent')
 
     def test_detect_state_gnn_status_ready_when_report_yes(self):
-        gnn_dir = os.path.join(self.run_dir, '06_reports', '06_gnn')
+        from process import output_paths as _paths
+        gnn_dir = _paths.reports_gnn_dir(self.run_dir)
         path = os.path.join(gnn_dir, 'validation.txt')
         with open(path, 'w', encoding='utf-8') as f:
             f.write('LLM-FREE SCALING? YES\n')

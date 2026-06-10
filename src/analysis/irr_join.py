@@ -20,7 +20,7 @@ Encoding matches the rest of the IRR stack (``process.irr_import``):
 encoded as ``-1`` (``irr_import.ABSTAIN_CODE``). Only *usable* consensus rows
 (``source != 'unresolved'``, a resolved ``segment_id``, a non-null primary) are
 marked; every other row is left non-human. The number is therefore directly
-comparable to the GNN↔human κ reported in ``06_reports/06b_irr_report.txt``.
+comparable to the GNN↔human κ reported in ``06_reports/01_reliability/irr_report.txt``.
 """
 
 from typing import Dict

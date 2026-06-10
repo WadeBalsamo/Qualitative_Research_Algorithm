@@ -120,13 +120,47 @@ class TestParticipantTxtReport(unittest.TestCase):
         content = open(path, encoding='utf-8').read()
 
         for heading in (
-            'OVERVIEW',
-            'PARTICIPATION STATISTICS',
-            'STAGE DISTRIBUTION',
-            'LONGITUDINAL TRAJECTORY',
+            'TRAJECTORY',
+            'BARRIER STATUS',
+            'STAGE PROFILE',
+            'WITHIN-PERSON MOVEMENT',
             'BEST EXPRESSIONS BY STAGE',
         ):
             self.assertIn(heading, content, f'Missing section: {heading}')
+
+    def test_trajectory_table_headers(self):
+        """The trajectory table must carry its quantitative column headers."""
+        pid = 'P02'
+        session_ids = ['c1s1', 'c1s2', 'c1s3']
+        df = self._df_for_participant(pid, session_ids)
+        pjson = _make_participant_json(pid, session_ids)
+
+        path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
+        content = open(path, encoding='utf-8').read()
+
+        for col in ('Session', 'Seg', 'Dominant Stage', 'E[stage]', 'Adapt%', 'ΔE[stage]'):
+            self.assertIn(col, content, f'Missing trajectory column: {col}')
+
+    def test_estage_ols_slope_label_with_3plus_sessions(self):
+        """With ≥3 sessions the estimator-labeled slope line appears exactly."""
+        pid = 'P02'
+        session_ids = ['c1s1', 'c1s2', 'c1s3']
+        df = self._df_for_participant(pid, session_ids)
+        pjson = _make_participant_json(pid, session_ids)
+
+        path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
+        content = open(path, encoding='utf-8').read()
+        self.assertIn('E[stage] OLS slope', content)
+
+    def test_provenance_header_present(self):
+        pid = 'P02'
+        session_ids = ['c1s1', 'c1s2']
+        df = self._df_for_participant(pid, session_ids)
+        pjson = _make_participant_json(pid, session_ids)
+
+        path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
+        content = open(path, encoding='utf-8').read()
+        self.assertIn('HOW THESE NUMBERS WERE COMPUTED', content)
 
     def test_participant_id_in_header(self):
         pid = 'P03'
@@ -148,35 +182,66 @@ class TestParticipantTxtReport(unittest.TestCase):
         content = open(path, encoding='utf-8').read()
         self.assertIn('Cohort 2', content)
 
-    def test_progression_trend_advancing(self):
+    def _df_with_estage(self, pid, session_ids, estages):
+        """Single-segment-per-session participant df with a controlled E[stage] per session."""
+        rows = []
+        for i, (sid, est) in enumerate(zip(session_ids, estages)):
+            rows.append({
+                'participant_id': pid, 'session_id': sid, 'speaker': 'participant',
+                'session_number': i + 1, 'segment_index': 0,
+                'final_label': int(round(est)), 'progression_coord': float(est),
+                'llm_confidence_primary': 0.9, 'text': f'seg {sid}',
+                'label_confidence_tier': 'high', 'start_time_ms': 1000, 'end_time_ms': 1800,
+            })
+        return pd.DataFrame(rows)
+
+    def test_direction_word_advancing(self):
+        """A rising E[stage] trajectory (≥3 sessions) yields 'advancing'."""
         pid = 'P01'
-        session_ids = ['c1s1', 'c1s2']
-        df = self._df_for_participant(pid, session_ids)
-        pjson = _make_participant_json(pid, session_ids, trend=0.5)
+        session_ids = ['c1s1', 'c1s2', 'c1s3', 'c1s4']
+        df = self._df_with_estage(pid, session_ids, [0.5, 1.5, 2.5, 3.5])
+        pjson = _make_participant_json(pid, session_ids)
 
         path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
         content = open(path, encoding='utf-8').read()
+        self.assertIn('E[stage] OLS slope', content)
         self.assertIn('advancing', content)
 
-    def test_progression_trend_regressing(self):
+    def test_direction_word_regressing(self):
         pid = 'P01'
-        session_ids = ['c1s1', 'c1s2']
-        df = self._df_for_participant(pid, session_ids)
-        pjson = _make_participant_json(pid, session_ids, trend=-0.5)
+        session_ids = ['c1s1', 'c1s2', 'c1s3', 'c1s4']
+        df = self._df_with_estage(pid, session_ids, [3.5, 2.5, 1.5, 0.5])
+        pjson = _make_participant_json(pid, session_ids)
 
         path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
         content = open(path, encoding='utf-8').read()
         self.assertIn('regressing', content)
 
-    def test_progression_trend_stable(self):
+    def test_direction_word_stable(self):
         pid = 'P01'
-        session_ids = ['c1s1', 'c1s2']
-        df = self._df_for_participant(pid, session_ids)
-        pjson = _make_participant_json(pid, session_ids, trend=0.0)
+        session_ids = ['c1s1', 'c1s2', 'c1s3', 'c1s4']
+        df = self._df_with_estage(pid, session_ids, [2.0, 2.0, 2.0, 2.0])
+        pjson = _make_participant_json(pid, session_ids)
 
         path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
         content = open(path, encoding='utf-8').read()
         self.assertIn('stable', content)
+
+    def test_barrier_crossing_detected(self):
+        """A participant who is Avoidance-dominant then advances shows a barrier crossing."""
+        pid = 'P01'
+        session_ids = ['c1s1', 'c1s2', 'c1s3']
+        df = self._df_with_estage(pid, session_ids, [1.0, 1.0, 3.0])
+        pjson = _make_participant_json(pid, session_ids)
+        # Force the dominant-stage sequence: Avoidance, Avoidance, Reappraisal.
+        pjson['sessions']['c1s1']['dominant_stage'] = 1
+        pjson['sessions']['c1s2']['dominant_stage'] = 1
+        pjson['sessions']['c1s3']['dominant_stage'] = 4
+
+        path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
+        content = open(path, encoding='utf-8').read()
+        self.assertIn('BARRIER STATUS', content)
+        self.assertIn('Crossed the barrier: yes', content)
 
     def test_session_ids_appear_in_trajectory(self):
         pid = 'P01'
@@ -190,7 +255,7 @@ class TestParticipantTxtReport(unittest.TestCase):
         for sid in session_ids:
             self.assertIn(sid, content, f'Session {sid} missing from trajectory')
 
-    def test_between_session_transitions_section(self):
+    def test_within_person_movement_section(self):
         pid = 'P01'
         session_ids = ['c1s1', 'c1s2', 'c1s3']
         df = self._df_for_participant(pid, session_ids)
@@ -198,7 +263,8 @@ class TestParticipantTxtReport(unittest.TestCase):
 
         path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
         content = open(path, encoding='utf-8').read()
-        self.assertIn('BETWEEN-SESSION TRANSITIONS', content)
+        self.assertIn('WITHIN-PERSON MOVEMENT', content)
+        self.assertIn('Between-session moves:', content)
 
     def test_exemplar_quotes_present(self):
         pid = 'P01'
@@ -256,8 +322,8 @@ class TestParticipantTxtReport(unittest.TestCase):
         content = open(path, encoding='utf-8').read()
         self.assertIn(f'PARTICIPANT {pid}', content)
 
-    def test_single_session_no_between_session_section(self):
-        """With only one session the between-session transitions section is omitted."""
+    def test_single_session_slope_not_reported(self):
+        """With one session the OLS slope is n/a, not a fabricated number."""
         pid = 'P01'
         session_ids = ['c1s1']
         df = self._df_for_participant(pid, session_ids)
@@ -265,8 +331,9 @@ class TestParticipantTxtReport(unittest.TestCase):
 
         path = generate_participant_txt_report(df, pid, pjson, _FRAMEWORK, self.tmp)
         content = open(path, encoding='utf-8').read()
-        # One session — no between-session block expected
-        self.assertNotIn('BETWEEN-SESSION TRANSITIONS', content)
+        # Single session — slope must be flagged n/a, and the section still renders.
+        self.assertIn('E[stage] OLS slope: n/a', content)
+        self.assertIn('WITHIN-PERSON MOVEMENT', content)
 
 
 # ---------------------------------------------------------------------------

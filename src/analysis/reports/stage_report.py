@@ -42,9 +42,14 @@ def generate_stage_text_report(
         'stable'
     )
 
+    from .stat_format import m_ref, provenance_header
+
     lines = []
     lines.append(f'STAGE: {full_name} ({stage_name})')
     lines.append('=' * (len(full_name) + len(stage_name) + 10))
+    lines.append('')
+    for hline in provenance_header(['vaamr_labels']):
+        lines.append(hline)
     lines.append('')
     lines.append('Definition:')
     # Word-wrap definition

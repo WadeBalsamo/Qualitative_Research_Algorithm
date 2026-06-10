@@ -191,7 +191,7 @@ A **descriptive, single-arm** summary of how participants' LLM-coded VAAMR langu
 
 **Convergent validity (exploratory):** when an external-outcomes CSV is present at `02_meta/outcomes.csv` (auto-detects wide pre/post or long per-session), within-program progression is correlated with measured clinical change — *convergent-validity evidence that the language index tracks something real, still not efficacy*. Integration path: REDCap exports are mapped to `02_meta/outcomes.csv`.
 
-Outputs: `06_reports/01_outcomes/progression_summary.txt`, `03_analysis_data/efficacy/*.csv` (incl. `efficacy_summary.json`), `05_figures/program_efficacy.png`.
+Outputs: `06_reports/02_outcomes/progression_summary.txt`, `03_analysis_data/efficacy/*.csv` (incl. `efficacy_summary.json`), `05_figures/program_efficacy.png`.
 
 ### State Transition Matrices
 
@@ -215,25 +215,25 @@ Per-participant reports track the dominant stage, continuous progression coordin
 
 The language atlas produces a curriculum-actionable guide to *what therapists actually say* when participants advance through VAAMR stages. For each top-ranked (FDR-significant) PURER move, emergent motif, and named coupling factor, the atlas renders FROM → CUE → TO exemplar blocks with mixture annotations and stage contexts. Emergent motifs — high-influence, low-PURER-purity language patterns that predict progression but map to no existing PURER category — are highlighted as candidates for new therapeutic constructs.
 
-Output: `06_reports/02_mechanism/language_atlas.txt` (top forward AND backward/stalling patterns).
+Output: `06_reports/03_mechanism/language_atlas.txt` (top forward AND backward/stalling patterns).
 
 ### GNN Representation and Discovery Layer
 
 `gnn_layer/`
 
-The GNN layer is a pure-PyTorch GraphSAGE network (no torch-geometric) over a **homogeneous segment graph** — every node is a transcript segment in the shared Qwen3-Embedding-8B space (reused from segmentation/VCE, no second model), connected by temporal-chain edges (FROM→CUE→TO in graph form) and kNN-similarity edges. On that substrate it plays two roles: a **discovery & triangulation** instrument that augments (never replaces) the LLM/embedding classifiers, and a **consensus-distillation classifier** that learns to reproduce the multi-run LLM majority-vote consensus from graph structure and — once gated — can label new segments with no LLM calls. It is an **analysis-time layer only**: frozen segments and `master_segments` are never mutated. It is **ON by default** (`config.gnn_layer.enabled=True`), GPU-preferred / CPU-safe (`device=None` auto-detects CUDA), and wraps every capability in its own try/except so one failure never aborts the rest. Artifacts go to `03_analysis_data/gnn/` (CSVs), `06_reports/06_gnn/` (reports), `05_figures/gnn_*.png` (figures), and `02_meta/gnn/` (weights + embedding cache). The full design record is `docs/GNN_MASTER_PLAN.md`; the as-built prose spec is `methodology.md` §8.5.
+The GNN layer is a pure-PyTorch GraphSAGE network (no torch-geometric) over a **homogeneous segment graph** — every node is a transcript segment in the shared Qwen3-Embedding-8B space (reused from segmentation/VCE, no second model), connected by temporal-chain edges (FROM→CUE→TO in graph form) and kNN-similarity edges. On that substrate it plays two roles: a **discovery & triangulation** instrument that augments (never replaces) the LLM/embedding classifiers, and a **consensus-distillation classifier** that learns to reproduce the multi-run LLM majority-vote consensus from graph structure and — once gated — can label new segments with no LLM calls. It is an **analysis-time layer only**: frozen segments and `master_segments` are never mutated. It is **ON by default** (`config.gnn_layer.enabled=True`), GPU-preferred / CPU-safe (`device=None` auto-detects CUDA), and wraps every capability in its own try/except so one failure never aborts the rest. Artifacts go to `03_analysis_data/gnn/` (CSVs), `06_reports/07_gnn/` (reports), `05_figures/gnn_*.png` (figures), and `02_meta/gnn/` (weights + embedding cache). The full design record is `experiments/docs/design_decisions.md` + `experiments/docs/graph_experiments.md`; the as-built prose spec is `methodology.md` §8.5.
 
 **Discovery & triangulation — five capabilities (A–E):**
 
 - **A — Continuous superposition:** soft-VAAMR head (KL to the ballot mixture) + a scalar progression coordinate `E[stage]=Σk·pₖ`; the primary mixture source when enabled. → `gnn/segment_positions.csv`.
-- **B — Cue motif discovery:** cue blocks pooled into GNN embeddings, clustered into emergent *motifs* that cut across the five PURER categories, scored for from-stage-conditioned forward-transition influence, and flagged when influential but low-PURER-purity (candidate new constructs). → `cue_motifs.csv`, `cue_block_assignments.csv`, `06_gnn/emergent_motifs.txt`.
-- **C — Triangulation:** GNN-vs-LLM and GNN-vs-human Cohen's κ + GNN-geometry lift tables beside LLM-derived ones; GNN↔LLM is labeled *distillation fidelity*, GNN↔human is the load-bearing validity axis. → `06_gnn/triangulation.txt`, `gnn_vs_llm_lift.csv`.
-- **D — Construct-signal ablation (opt-in):** remove a head (VCE/PURER), retrain, report Δ; plus the decisive VCE-on-VAAMR test (held-out κ with/without the VCE head). → `06_gnn/construct_signal.txt`, `vce_contribution.txt`.
-- **E — Participant↔therapist coupling:** latent factors of cue language correlated with subsequent forward movement, named post-hoc against an inline CF/IC alliance lexicon (discovered, not imposed). → `coupling_factors.csv`, `06_gnn/coupling.txt`.
+- **B — Cue motif discovery:** cue blocks pooled into GNN embeddings, clustered into emergent *motifs* that cut across the five PURER categories, scored for from-stage-conditioned forward-transition influence, and flagged when influential but low-PURER-purity (candidate new constructs). → `cue_motifs.csv`, `cue_block_assignments.csv`, `07_gnn/emergent_motifs.txt`.
+- **C — Triangulation:** GNN-vs-LLM and GNN-vs-human Cohen's κ + GNN-geometry lift tables beside LLM-derived ones; GNN↔LLM is labeled *distillation fidelity*, GNN↔human is the load-bearing validity axis. → `07_gnn/triangulation.txt`, `gnn_vs_llm_lift.csv`.
+- **D — Construct-signal ablation (opt-in):** remove a head (VCE/PURER), retrain, report Δ; plus the decisive VCE-on-VAAMR test (held-out κ with/without the VCE head). → `07_gnn/construct_signal.txt`, `vce_contribution.txt`.
+- **E — Participant↔therapist coupling:** latent factors of cue language correlated with subsequent forward movement, named post-hoc against an inline CF/IC alliance lexicon (discovered, not imposed). → `coupling_factors.csv`, `07_gnn/coupling.txt`.
 
-**Trustworthy LLM-free classifier (the scaling engine).** Before the graph may label of record, it must reproduce the consensus *out-of-sample*. The reliability gate (`gnn_layer/validation.py`) reports per-VAAMR-stage and per-PURER-move κ with a rare-stage recall floor (the over-smoothing safeguard) and a YES/NO "ready for LLM-free scaling?" verdict (`06_gnn/validation.txt`), persisted machine-readably (`gnn_gate.json`). Promotion to the `gnn_consensus` provenance tier engages **only** when an analyst sets `gnn_authoritative=True` *and* the persisted gate verdict passes. Around that backbone the layer adds opt-in, individually-measured trust mechanisms: typed therapist→participant *precipitates* edges, per-stage **abstention/deferral**, temperature **calibration + OOD** deferral, measured label **propagation**, and an inductive **scale-mode simulation gate**. Each is kept only if it earns its place on the gate's κ.
+**Trustworthy LLM-free classifier (the scaling engine).** Before the graph may label of record, it must reproduce the consensus *out-of-sample*. The reliability gate (`gnn_layer/validation.py`) reports per-VAAMR-stage and per-PURER-move κ with a rare-stage recall floor (the over-smoothing safeguard) and a YES/NO "ready for LLM-free scaling?" verdict (`07_gnn/validation.txt`), persisted machine-readably (`gnn_gate.json`). Promotion to the `gnn_consensus` provenance tier engages **only** when an analyst sets `gnn_authoritative=True` *and* the persisted gate verdict passes. Around that backbone the layer adds opt-in, individually-measured trust mechanisms: typed therapist→participant *precipitates* edges, per-stage **abstention/deferral**, temperature **calibration + OOD** deferral, measured label **propagation**, and an inductive **scale-mode simulation gate**. Each is kept only if it earns its place on the gate's κ.
 
-**Track B — dyadic FROM→CUE→TO transition model** (`gnn_layer/transition.py` + `confound.py`; default-on discovery). The *observed* Δprogression (`analysis/mechanism.py`) is the lead "what language progresses participants" evidence; Track B adds a learned response function. The original per-segment model-counterfactual (`gnn_layer/influence.py`) was **retired** — it inverted the observed ranking (ρ = −0.13) and was mis-specified for a process question — and **rebuilt** as a small dyadic transition model `TO_mixture ≈ f(FROM_mixture, FROM_stage, pooled raw-Qwen cue)` (no kNN, FROM-stage conditioned). Its counterfactual swaps the cue to each PURER centroid and reads the predicted shift in the *following* participant's E[stage], per move and per from-stage×move, with participant-clustered bootstrap CIs, **triangulated** against `mechanism.py` (now ρ ≈ +0.34), plus a confound-localization map. Sensitivity analysis of a model, **not causation**; at n≈32 the cue is under-identified, so `mechanism.py` leads. → `06_gnn/{transition_model,confound_localization}.txt`, `03_analysis_data/gnn/{transition_counterfactual,transition_per_move,confound_localization}.csv`.
+**Track B — dyadic FROM→CUE→TO transition model** (`gnn_layer/transition.py` + `confound.py`; default-on discovery). The *observed* Δprogression (`analysis/mechanism.py`) is the lead "what language progresses participants" evidence; Track B adds a learned response function. The original per-segment model-counterfactual (`gnn_layer/influence.py`) was **retired** — it inverted the observed ranking (ρ = −0.13) and was mis-specified for a process question — and **rebuilt** as a small dyadic transition model `TO_mixture ≈ f(FROM_mixture, FROM_stage, pooled raw-Qwen cue)` (no kNN, FROM-stage conditioned). Its counterfactual swaps the cue to each PURER centroid and reads the predicted shift in the *following* participant's E[stage], per move and per from-stage×move, with participant-clustered bootstrap CIs, **triangulated** against `mechanism.py` (now ρ ≈ +0.34), plus a confound-localization map. Sensitivity analysis of a model, **not causation**; at n≈32 the cue is under-identified, so `mechanism.py` leads. → `07_gnn/{transition_model,confound_localization}.txt`, `03_analysis_data/gnn/{transition_counterfactual,transition_per_move,confound_localization}.csv`.
 
 **Track C — MindfulBERT training-set builder** (`process/assembly/mindfulbert_dataset.py`). The end-goal artifact: a versioned `(cue language → observed Δprogression)` dataset for fine-tuning MindfulBERT. Units are cue blocks; **primary labels are the observed Δprogression** (signed + direction) with per-example provenance (weakest-endpoint label-source tier, abstention flag, gate verdict). An optional, gate-gated, provenance-tagged **GNN-counterfactual "would-progress" augmentation channel** is retained **only if** a participant-grouped held-out ablation shows it helps — otherwise dropped. Ships with a datasheet (provenance mix, gate status, ablation result, n≈32 caveats). → `02_meta/training_data/mindfulbert_dataset.jsonl` + `mindfulbert_datasheet.{json,txt}`.
 
@@ -255,7 +255,7 @@ construct validity + the reliability gate) and the in-sample **distillation** ov
 default; its LLM agreement is *distillation fidelity*, never reported as validity). All chance-corrected
 statistics come from **proven libraries** — Cohen's κ (scikit-learn), Fleiss' κ (statsmodels),
 Krippendorff's α (`krippendorff`, the headline statistic since it tolerates missing ballots). Outputs are
-a single report (`06_reports/06b_irr_report.txt`) plus, under `04_validation/irr/`, the stats
+a single report (`06_reports/01_reliability/irr_report.txt`) plus, under `04_validation/irr/`, the stats
 (`irr_results.json`, `irr_pairwise.csv`), a ranked discrepancy list, confusion/agreement figures, and a
 **line-by-line per-test-set dossier** (`irr_items_testset_<n>.txt`) showing each item's text beside the
 human codes + reasoning, the LLM codes + justifications, the GNN held-out prediction, and the LLM↔GNN
@@ -382,11 +382,12 @@ output_dir/
 │       └── AI_classification_testset_worksheet_N.txt    # refreshable
 ├── 05_figures/                  # PNG figures (incl. gnn_*.png)
 └── 06_reports/                  # tiered, numbered human-readable reports
-    ├── 00_executive_summary.txt # start here — program-improvement brief
-    ├── 00_READ_ME.txt           # guide to the tree
-    ├── 01_outcomes/  02_mechanism/  03_per_session/
-    ├── 04_per_participant/  05_per_stage/  06_gnn/
-    └── 07_methods_appendix.txt
+    ├── 00_RESULTS.txt           # start here — publication-core results brief
+    ├── 00_fig{1,2,3}_*.png     # flagship thesis figures
+    ├── 01_reliability/          # irr_report.txt, probe_validation.txt
+    ├── 02_outcomes/  03_mechanism/  04_per_session/
+    ├── 05_per_participant/  06_per_stage/  07_gnn/
+    └── 08_methods.txt           # [M#] registry + caveats
 ```
 
 > Internal pipeline data (segments, classification overlays, provenance manifest, testset metadata) lives in `qra.db`; the files below it are human-facing or generated exports.
@@ -560,9 +561,9 @@ python qra.py edit-anonymization -o ./data/output/         # interactive speaker
 python qra.py edit-anonymization -o ./data/output/ --rename therapist_1=therapist_9 --yes
 ```
 
-> **GNN scale mode** (`gnn classify`) and **GNN-authoritative labels** are recommended only after the graph passes its out-of-sample reliability gate — check it with `qra gnn status` (or `06_reports/06_gnn/validation.txt`). Until then the default flow remains LLM classification. A trustworthy gate needs multi-run LLM ballots (`n_runs >= 3`); `gnn train` warns when they are missing. See the [GNN Representation and Discovery Layer](#gnn-representation-and-discovery-layer) section above and `methodology.md` §8.5.
+> **GNN scale mode** (`gnn classify`) and **GNN-authoritative labels** are recommended only after the graph passes its out-of-sample reliability gate — check it with `qra gnn status` (or `06_reports/07_gnn/validation.txt`). Until then the default flow remains LLM classification. A trustworthy gate needs multi-run LLM ballots (`n_runs >= 3`); `gnn train` warns when they are missing. See the [GNN Representation and Discovery Layer](#gnn-representation-and-discovery-layer) section above and `methodology.md` §8.5.
 
-> **Track C/D outputs are config-flag driven** during `analyze` (no separate subcommand): set `gnn_layer.build_mindfulbert_dataset=true` (+`augmentation_enabled`) for the MindfulBERT dataset, and `gnn_layer.subtext_communities=true` for routine discovery. **Track B** (the dyadic FROM→CUE→TO transition model) runs **by default** — no flag (it replaced the retired `counterfactual`/`influence.py` path). See [Configuration](#configuration) and `docs/GNN_MASTER_PLAN.md` §12.
+> **Track C/D outputs are config-flag driven** during `analyze` (no separate subcommand): set `gnn_layer.build_mindfulbert_dataset=true` (+`augmentation_enabled`) for the MindfulBERT dataset, and `gnn_layer.subtext_communities=true` for routine discovery. **Track B** (the dyadic FROM→CUE→TO transition model) runs **by default** — no flag (it replaced the retired `counterfactual`/`influence.py` path). See [Configuration](#configuration) and `experiments/docs/graph_experiments.md`.
 
 ### Interactive TUI
 

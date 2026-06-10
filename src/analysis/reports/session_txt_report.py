@@ -1,4 +1,10 @@
-"""Per-session human-readable text report generator."""
+"""Per-session human-readable text report generator.
+
+Restructured to LEAD with a quantitative SESSION DASHBOARD (stage distribution,
+mean E[stage], liminal-segment count, PURER move mix) before any narrative. Then
+who-was-where per participant, within-session transitions, capped expressions by
+stage, and the LLM session summary LAST under an explicit "not analysis" rule.
+"""
 
 import os
 from collections import defaultdict
@@ -8,78 +14,29 @@ import pandas as pd
 
 from process import output_paths as _paths
 from ._formatting import (
-    _bar, _pct, _wrap_quote, _wrap_text, _collect_therapist_cue, _summarize_cue,
-    _collect_cue_block_purer_profile, _format_purer_profile,
+    _bar, _pct, _wrap_quote, _wrap_text,
     _PURER_SHORT, _PURER_NAME,
 )
-from .transition_report import _find_transition_examples_by_cohort_session
+from .stat_format import provenance_header
 
 
 _PURER_DISPLAY_ORDER = [3, 0, 4, 2, 1]  # E, P, R2, R, U — typical frequency
 
+_PURER_DIRECTIONAL_NOTE = (
+    'PURER therapist-move labels are DIRECTIONAL (human validation not yet '
+    'complete); read therapist-side counts as provisional.'
+)
 
-def _compute_session_purer_by_transition(df_all: pd.DataFrame, session_id: str) -> dict:
-    """Compute PURER distribution per (from_stage, to_stage) for one session.
 
-    Uses timestamp-window logic identical to _collect_therapist_cue: therapist
-    segments that overlap the window between two consecutive participant segments.
-
-    Returns {(from_stage, to_stage): {'counts': {purer_id: n}, 'total_mediated': n}}.
-    """
-    required = {'session_id', 'speaker', 'final_label', 'start_time_ms', 'end_time_ms'}
-    if not required.issubset(df_all.columns):
-        return {}
-    if 'purer_primary' not in df_all.columns:
-        return {}
-
-    sdf = df_all[df_all['session_id'] == session_id]
-
-    participant_rows = (
-        sdf[
-            (sdf['speaker'] == 'participant')
-            & sdf['final_label'].notna()
-        ]
-        .sort_values('start_time_ms')
-        .reset_index(drop=True)
-    )
-    if len(participant_rows) < 2:
-        return {}
-
-    therapist_rows = sdf[sdf['speaker'] == 'therapist']
-
-    result: dict = defaultdict(lambda: {'counts': defaultdict(int), 'total_mediated': 0})
-
-    for i in range(len(participant_rows) - 1):
-        from_row = participant_rows.iloc[i]
-        to_row = participant_rows.iloc[i + 1]
-        from_end_ms = int(from_row['end_time_ms'])
-        to_start_ms = int(to_row['start_time_ms'])
-        from_stage = int(from_row['final_label'])
-        to_stage = int(to_row['final_label'])
-
-        if to_start_ms <= from_end_ms:
-            continue
-
-        between = therapist_rows[
-            (therapist_rows['start_time_ms'] < to_start_ms)
-            & (therapist_rows['end_time_ms'] > from_end_ms)
-        ]
-        if between.empty:
-            continue
-
-        # Only count mediated blocks that have at least one PURER label
-        labeled = between[between['purer_primary'].notna()]
-        if labeled.empty:
-            continue
-
-        key = (from_stage, to_stage)
-        result[key]['total_mediated'] += 1
-        dominant = labeled['purer_primary'].value_counts().idxmax()
-        result[key]['counts'][int(dominant)] += 1
-
-    # Convert defaultdicts to plain dicts for cleaner access
-    return {k: {'counts': dict(v['counts']), 'total_mediated': v['total_mediated']}
-            for k, v in result.items()}
+def _session_estage(sdf: pd.DataFrame) -> float:
+    """Mean E[stage] for a session's participant segments (mixture-weighted; falls back to label mean)."""
+    if sdf is None or sdf.empty:
+        return None
+    if 'progression_coord' in sdf.columns and sdf['progression_coord'].notna().any():
+        return float(sdf['progression_coord'].dropna().mean())
+    if 'final_label' in sdf.columns and sdf['final_label'].notna().any():
+        return float(sdf['final_label'].dropna().astype(float).mean())
+    return None
 
 
 def generate_session_txt_report(
@@ -95,8 +52,16 @@ def generate_session_txt_report(
 ) -> str:
     """Generate a human-readable .txt report for a single session.
 
-    session_summaries: pre-computed {session_id: summary_text} from session_summaries.py.
-    If not provided or session not present, shows a placeholder.
+    Structure (quantitative-first):
+      1. Title + provenance header
+      2. SESSION DASHBOARD  (participants, segments, stage dist, mean E[stage],
+         liminal count, PURER move mix + directional note)
+      3. WHO WAS WHERE      (per participant: dominant stage, E[stage], n segs)
+      4. WITHIN-SESSION TRANSITIONS  (compact)
+      5. EXPRESSIONS BY STAGE  (≤2 per stage)
+      6. NARRATIVE CONTEXT (LLM session summary, LAST)
+
+    session_summaries: pre-computed {session_id: summary_text}.
 
     Returns path to written file.
     """
@@ -113,28 +78,18 @@ def generate_session_txt_report(
     participants_detail = session_json.get('participants', {})
 
     cohort_str = f'Cohort {cohort_id}' if cohort_id is not None else ''
-    _cue_df = df_all if df_all is not None else df
 
-    max_cue_words = 150
-    if therapist_cue_config is not None:
-        max_cue_words = getattr(therapist_cue_config, 'max_length_per_cue', 150)
-
-    # Get segment-level data for secondary_stage analysis
+    # Participant-segment slice for this session.
     sdf = df[df['session_id'] == session_id] if df is not None else pd.DataFrame()
 
-    # ── Precompute dominant / runner-up stage ─────────────────────────────────
+    # ── Dominant / runner-up stage ────────────────────────────────────────────
     stage_props_sorted = sorted(
         [(float(group_props.get(str(st), 0.0)), st) for st in stage_ids],
         reverse=True,
     )
     dominant_stage = stage_props_sorted[0][1] if stage_props_sorted else None
-    runner_up_stage = (
-        stage_props_sorted[1][1]
-        if len(stage_props_sorted) > 1 and stage_props_sorted[1][0] > 0
-        else None
-    )
 
-    # ── Precompute PURER therapist stats for this session ────────────────────
+    # ── PURER therapist stats for this session ────────────────────────────────
     purer_session_counts = {}
     total_t_purer = 0
     purer_dominant_id = None
@@ -152,112 +107,83 @@ def generate_session_txt_report(
 
     lines = []
 
-    # ── Header ────────────────────────────────────────────────────────────────
+    # ── Title + provenance ────────────────────────────────────────────────────
     header = f'SESSION {session_id} — Session {snum}'
     if cohort_str:
         header += f'  [{cohort_str}]'
     lines.append(header)
     lines.append('=' * 68)
     lines.append(f'Generated: {date.today().isoformat()}')
+    lines.extend(provenance_header(['vaamr_labels', 'purer_labels']))
     lines.append('')
 
-    # ── Session instruction summary ───────────────────────────────────────────
-    lines.append('SESSION INSTRUCTION SUMMARY')
-    lines.append('─' * 35)
-    summary = (session_summaries or {}).get(session_id)
-    if summary:
-        lines.append(_wrap_text(summary, indent=2))
-    else:
-        lines.append('  [session summaries not generated]')
+    # ── 1. SESSION DASHBOARD ──────────────────────────────────────────────────
+    lines.append('SESSION DASHBOARD')
+    lines.append('─' * 72)
+    lines.append(f'  Participants: {n_participants}    Participant segments: {n_segments}')
+    mean_est = _session_estage(sdf)
+    if mean_est is not None:
+        lines.append(f'  Mean E[stage]: {mean_est:.2f}'
+                     + (f'   (dominant: {stage_names.get(dominant_stage, "?")})'
+                        if dominant_stage is not None else ''))
+    elif dominant_stage is not None:
+        lines.append(f'  Dominant stage: {stage_names.get(dominant_stage, "?")} '
+                     f'({_pct(float(group_props.get(str(dominant_stage), 0.0)))})')
+
+    # Liminal-segment count (mixture entropy above the session median).
+    if 'mixture_entropy' in sdf.columns and sdf['mixture_entropy'].notna().any():
+        ent = sdf['mixture_entropy'].dropna()
+        if len(ent) >= 2:
+            med = float(ent.median())
+            n_liminal = int((ent > med).sum())
+            lines.append(f'  Liminal segments (mixture entropy > session median): {n_liminal} / {len(ent)}')
     lines.append('')
 
-    # ── Overview with inline VAAMR + PURER dominant ───────────────────────────
-    lines.append('OVERVIEW')
-    lines.append('─' * 10)
-    lines.append(f'Participants: {n_participants}   Segments: {n_segments}')
-    vaamr_str = (
-        f'VAAMR dominant: {stage_names[dominant_stage]} '
-        f'({_pct(float(group_props.get(str(dominant_stage), 0.0)))})'
-        if dominant_stage is not None else ''
-    )
-    if purer_dominant_id is not None:
-        purer_dom_name = _PURER_NAME.get(purer_dominant_id, str(purer_dominant_id))
-        purer_dom_pct = _pct(purer_session_counts[purer_dominant_id] / total_t_purer)
-        purer_str = f'PURER dominant: {purer_dom_name} ({purer_dom_pct}, n={total_t_purer} turns)'
-        if vaamr_str:
-            lines.append(f'{vaamr_str}   |   {purer_str}')
-        else:
-            lines.append(purer_str)
-    elif vaamr_str:
-        lines.append(vaamr_str)
-    lines.append('')
-
-    # ── Stage distribution ────────────────────────────────────────────────────
-    lines.append('STAGE DISTRIBUTION (group, equal-weighted)')
-    lines.append('─' * 45)
+    # Stage distribution.
+    lines.append('  Stage distribution (group, equal-weighted):')
     for st in stage_ids:
         name = stage_names[st]
         prop = float(group_props.get(str(st), 0.0))
         cnt = round(prop * n_segments)
-        lines.append(f'  {name:<20} {cnt:>3} segs  ({_pct(prop):>6})  {_bar(prop)}')
-    lines.append(f'  [see session_{session_id}_stage_timeline.png for temporal view]')
+        lines.append(f'    {name:<20} {cnt:>3} segs  ({_pct(prop):>6})  {_bar(prop, width=24)}')
 
-    # Dual-coded segment annotation
-    if 'secondary_stage' in sdf.columns:
-        dual_coded = sdf['secondary_stage'].notna()
-        n_dual = int(dual_coded.sum())
-        if n_dual > 0:
-            lines.append('')
-            lines.append(f'  Dual-coded segments: {n_dual} / {n_segments} ({_pct(n_dual / n_segments)}% have secondary stage)')
-            sec_counts = sdf.loc[dual_coded, 'secondary_stage'].dropna().astype(int).value_counts()
-            for st_id in sorted(sec_counts.index):
-                cnt = int(sec_counts[st_id])
-                name = stage_names.get(st_id, f'Stage {st_id}')
-                lines.append(f'    {name:<16} {cnt:>3} segs')
-
-    lines.append('')
-
-    # ── PURER therapist move distribution ─────────────────────────────────────
+    # PURER move distribution for this session's cue blocks.
     if purer_session_counts:
-        lines.append('PURER THERAPIST MOVE DISTRIBUTION (this session)')
-        lines.append('─' * 50)
+        lines.append('')
+        lines.append(f'  PURER therapist-move distribution ({total_t_purer} turns):')
         for pid in _PURER_DISPLAY_ORDER:
             cnt = int(purer_session_counts.get(pid, 0))
             if cnt == 0:
                 continue
             short = _PURER_SHORT.get(pid, str(pid))
-            name  = _PURER_NAME.get(pid, str(pid))
-            prop  = cnt / total_t_purer
+            name = _PURER_NAME.get(pid, str(pid))
+            prop = cnt / total_t_purer
             lines.append(
-                f'  {short:<3} {name:<18} {cnt:>3} turns  ({_pct(prop):>6})  {_bar(prop)}'
+                f'    {short:<3} {name:<16} {cnt:>3} turns  ({_pct(prop):>6})  {_bar(prop, width=20)}'
             )
-        lines.append(f'  [{total_t_purer} therapist turns classified]')
-        lines.append('')
+        lines.append('  ' + _PURER_DIRECTIONAL_NOTE)
+    lines.append('')
 
-    # ── Expressions of dominant stage + runner-up stage ───────────────────────
-    for rank, (rank_label, st) in enumerate([
-        ('dominant stage', dominant_stage),
-        ('runner-up stage', runner_up_stage),
-    ]):
-        if st is None:
-            continue
-        ex_list = exemplars.get(str(st), [])
-        if not ex_list:
-            continue
-        ex = ex_list[0]
-        prop = float(group_props.get(str(st), 0.0))
-        conf = ex.get('confidence') or 0
-        text = ex.get('text', '').strip()
-        pid_ex = ex.get('participant_id', '')
-        lines.append(f'EXPRESSIONS OF {stage_names[st].upper()}')
-        lines.append(f'  [{rank_label} — {_pct(prop)}]')
-        lines.append(f'  [{pid_ex}, conf={conf:.2f}]:')
-        lines.append(_wrap_quote(text, indent=4))
-        lines.append('')
+    # ── 2. WHO WAS WHERE ──────────────────────────────────────────────────────
+    lines.append('WHO WAS WHERE  [per participant this session]')
+    lines.append('─' * 72)
+    lines.append(f'  {"Participant":<22} {"Dominant Stage":<14} {"E[stage]":>8}  {"Seg":>4}')
+    if participants_detail:
+        for pid in sorted(participants_detail.keys()):
+            pdet = participants_detail[pid]
+            n_pseg = pdet.get('n_segments', 0)
+            dom_name = pdet.get('dominant_stage_name', '?')
+            pdf_p = sdf[sdf['participant_id'] == pid] if not sdf.empty else sdf
+            p_est = _session_estage(pdf_p)
+            p_est_s = f'{p_est:.2f}' if p_est is not None else '  ─'
+            lines.append(f'  {pid:<22} {dom_name:<14} {p_est_s:>8}  {n_pseg:>4}')
+    else:
+        lines.append('  [no per-participant data]')
+    lines.append('')
 
-    # ── Transition counts ─────────────────────────────────────────────────────
-    lines.append('TRANSITIONS THIS SESSION')
-    lines.append('─' * 28)
+    # ── 3. WITHIN-SESSION TRANSITIONS ─────────────────────────────────────────
+    lines.append('WITHIN-SESSION TRANSITIONS')
+    lines.append('─' * 72)
     forward = sum(
         trans_mat.get(str(a), {}).get(str(b), 0)
         for a in stage_ids for b in stage_ids if b > a
@@ -270,9 +196,7 @@ def generate_session_txt_report(
         trans_mat.get(str(a), {}).get(str(a), 0)
         for a in stage_ids
     )
-    lines.append(f'Forward: {forward}   Backward: {backward}   Lateral: {lateral}')
-    lines.append('')
-
+    lines.append(f'  Forward: {forward}   Backward: {backward}   Lateral: {lateral}')
     all_trans = sorted(
         [
             (trans_mat.get(str(a), {}).get(str(b), 0), a, b)
@@ -281,148 +205,48 @@ def generate_session_txt_report(
         ],
         reverse=True,
     )
-
-    if all_trans:
-        lines.append('Most common transitions:')
-        for cnt, fr, to in all_trans[:5]:
-            direction = 'forward' if to > fr else ('backward' if to < fr else 'lateral')
-            lines.append(f'  {stage_names[fr]} → {stage_names[to]}  {cnt}x  [{direction}]')
-        lines.append('')
-
-    # ── PURER by transition type (this session) ───────────────────────────────
-    if df_all is not None and 'purer_primary' in df_all.columns:
-        purer_by_trans = _compute_session_purer_by_transition(df_all, session_id)
-        if purer_by_trans:
-            lines.append('PURER BY TRANSITION TYPE (this session)')
-            lines.append('─' * 43)
-            # Sort by total mediated descending, matching all_trans order
-            trans_sorted = sorted(
-                purer_by_trans.items(),
-                key=lambda kv: kv[1]['total_mediated'],
-                reverse=True,
-            )
-            for (fr, to), stats in trans_sorted:
-                total_med = stats['total_mediated']
-                counts = stats['counts']
-                direction = '→' if to > fr else ('←' if to < fr else '↔')
-                lines.append(
-                    f'  {stage_names[fr]} {direction} {stage_names[to]}'
-                    f'  (n={total_med} mediated cue blocks)'
-                )
-                for pid in _PURER_DISPLAY_ORDER:
-                    cnt = counts.get(pid, 0)
-                    if cnt == 0:
-                        continue
-                    short = _PURER_SHORT.get(pid, str(pid))
-                    name  = _PURER_NAME.get(pid, str(pid))
-                    frac  = cnt / total_med
-                    bar   = '█' * int(frac * 20)
-                    lines.append(
-                        f'    {short:<2} {name:<18}  {bar:<20}  {_pct(frac):>6}  (n={cnt})'
-                    )
-                lines.append('')
-
-    # ── Transition examples with therapist cue ────────────────────────────────
     non_self = [(cnt, fr, to) for cnt, fr, to in all_trans if fr != to]
     if non_self:
-        lines.append('Transition examples (with therapist cue):')
-        sdf = df[df['session_id'] == session_id]
-        for cnt, fr, to in non_self[:3]:
-            examples = _find_transition_examples_by_cohort_session(sdf, fr, to)
-            if not examples:
-                continue
-            lines.append(f'  ── {stage_names[fr]} → {stage_names[to]} ──')
-            for ex in examples[:2]:
-                lines.append(
-                    f'  [{ex["participant_id"]}  {ex["session_id"]}  '
-                    f'seg{ex["from_seg_idx"]:04d}→seg{ex["to_seg_idx"]:04d}]'
-                )
-                lines.append(
-                    f'    FROM: [{stage_names[fr]}={ex["from_conf"]:.2f}] '
-                    + _wrap_quote(ex['from_text'].strip(), indent=12).lstrip()
-                )
-                cue_raw = _collect_therapist_cue(
-                    _cue_df, ex['session_id'],
-                    ex.get('from_end_ms', 0), ex.get('to_start_ms', 0),
-                    annotate_purer=True,
-                )
-                if cue_raw:
-                    cue_text, was_summarized = _summarize_cue(cue_raw, llm_client, max_cue_words)
-                    cue_words = len(cue_text.split())
-                    marker = ', summarized' if was_summarized else ''
-                    purer_profile = _collect_cue_block_purer_profile(
-                        _cue_df, ex['session_id'],
-                        ex.get('from_end_ms', 0), ex.get('to_start_ms', 0),
-                        include_secondary=True,
-                    )
-                    purer_str = _format_purer_profile(purer_profile)
-                    purer_part = f' | PURER: {purer_str}' if purer_str else ''
-                    lines.append(
-                        f'     CUE: [therapist, {cue_words} words{marker}{purer_part}] '
-                        + _wrap_quote(cue_text.strip(), indent=12).lstrip()
-                    )
-                lines.append(
-                    f'      TO: [{stage_names[to]}={ex["to_conf"]:.2f}] '
-                    + _wrap_quote(ex['to_text'].strip(), indent=12).lstrip()
-                )
-        lines.append('')
+        lines.append('  Most common stage changes:')
+        for cnt, fr, to in non_self[:5]:
+            direction = 'forward' if to > fr else 'backward'
+            lines.append(f'    {stage_names[fr]} → {stage_names[to]}  {cnt}x  [{direction}]')
+    lines.append('')
 
-    # ── Per-participant breakdown ──────────────────────────────────────────────
-    lines.append('PER-PARTICIPANT BREAKDOWN')
-    lines.append('─' * 28)
-    for pid in sorted(participants_detail.keys()):
-        pdet = participants_detail[pid]
-        n_pseg = pdet.get('n_segments', 0)
-        dom_name = pdet.get('dominant_stage_name', '?')
-        props = pdet.get('stage_proportions', {})
-        lines.append(f'{pid}  ({n_pseg} segments)')
-        lines.append(f'  Dominant stage: {dom_name}')
-        pct_parts = ' | '.join(
-            f'{stage_names[st]} {_pct(float(props.get(str(st), 0.0)))}'
-            for st in stage_ids
-        )
-        lines.append(f'  {pct_parts}')
+    # ── 4. EXPRESSIONS BY STAGE (capped at top-2 per stage) ───────────────────
+    lines.append('EXPRESSIONS BY STAGE  [≤2 per stage]')
+    lines.append('─' * 72)
+    any_ex = False
+    for st in stage_ids:
+        ex_list = exemplars.get(str(st), [])
+        if not ex_list:
+            continue
+        any_ex = True
+        lines.append(f'  {stage_names[st]}:')
+        for ex in ex_list[:2]:
+            conf = ex.get('confidence') or 0
+            text = ex.get('text', '').strip()
+            pid_ex = ex.get('participant_id', '')
+            conf_str = f'conf={conf:.2f}' if conf else ''
+            head = ', '.join(p for p in (pid_ex, conf_str) if p)
+            lines.append(f'    [{head}]:' if head else '    :')
+            lines.append(_wrap_quote(text, indent=6))
+    if not any_ex:
+        lines.append('  [no exemplars available]')
+    lines.append('')
 
-        # Participant-level stage transitions for this session
-        pdf = df[(df['participant_id'] == pid) & (df['session_id'] == session_id)]
-        if not pdf.empty and 'final_label' in pdf.columns:
-            sort_col = 'segment_index' if 'segment_index' in pdf.columns else 'start_time_ms'
-            pseq = [int(v) for v in pdf.sort_values(sort_col)['final_label'].tolist() if pd.notna(v)]
-            if len(pseq) >= 2:
-                trans_counts: dict = defaultdict(int)
-                p_fwd = p_bwd = p_lat = 0
-                for a, b in zip(pseq, pseq[1:]):
-                    trans_counts[(a, b)] += 1
-                    if b > a:
-                        p_fwd += 1
-                    elif b < a:
-                        p_bwd += 1
-                    else:
-                        p_lat += 1
-                lines.append(
-                    f'  Transitions: {p_fwd} forward, {p_bwd} backward, {p_lat} lateral'
-                )
-                trans_sorted = sorted(trans_counts.items(), key=lambda kv: -kv[1])
-                for (fa, fb), tc in trans_sorted:
-                    direction = 'forward' if fb > fa else ('backward' if fb < fa else 'lateral')
-                    lines.append(
-                        f'    {stage_names[fa]} → {stage_names[fb]}  {tc}x  [{direction}]'
-                    )
+    # ── 5. NARRATIVE CONTEXT (LLM session summary, LAST) ──────────────────────
+    lines.append('NARRATIVE CONTEXT (LLM-generated, not analysis)')
+    lines.append('─' * 72)
+    summary = (session_summaries or {}).get(session_id)
+    if summary:
+        lines.append(_wrap_text(summary, indent=2))
+    else:
+        lines.append('  [session summaries not generated]')
+    lines.append('')
 
-        if not pdf.empty:
-            has_conf = 'llm_confidence_primary' in pdf.columns
-            if has_conf and pdf['llm_confidence_primary'].notna().any():
-                best_row = pdf.sort_values('llm_confidence_primary', ascending=False).iloc[0]
-            else:
-                best_row = pdf.iloc[0]
-            best_text = str(best_row.get('text', '')).strip()
-            best_stage = int(best_row.get('final_label', 0))
-            best_conf = float(best_row.get('llm_confidence_primary', 0) or 0)
-            lines.append(
-                f'  Best expression [{stage_names.get(best_stage, str(best_stage))}={best_conf:.2f}]:'
-            )
-            lines.append(_wrap_quote(best_text, indent=4))
-        lines.append('')
+    lines.append(f'For mechanism (PURER × transition) detail see 09_supplementary/cue_response.txt;')
+    lines.append(f'for the cross-session matrix see 04_per_session/_overview.txt.')
 
     content = '\n'.join(lines)
     out_dir = _paths.reports_per_session_dir(output_dir)

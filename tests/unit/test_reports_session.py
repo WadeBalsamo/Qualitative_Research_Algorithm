@@ -129,12 +129,24 @@ class TestComprehensiveSessionReport(unittest.TestCase):
         path = generate_comprehensive_session_report(df, _FRAMEWORK, reports, self.tmp)
         content = open(path, encoding='utf-8').read()
 
-        self.assertIn('QRA COMPREHENSIVE THEME ANALYSIS', content)
-        self.assertIn('THEME CONSISTENCY ANALYSIS', content)
-        self.assertIn('Theme Distribution', content)
-        self.assertIn('Transitions:', content)
+        self.assertIn('CROSS-SESSION OVERVIEW', content)
+        self.assertIn('SESSION × STAGE OCCUPANCY MATRIX', content)
+        self.assertIn('PER-SESSION SUMMARY', content)
+        self.assertIn('E[stage]', content)
+        # Pointers to the per-session drill-down.
+        self.assertIn('04_per_session/session_<id>.txt', content)
 
-    def test_stage_names_in_distribution(self):
+    def test_compact_length(self):
+        """The overview must stay compact (no per-session prose dump)."""
+        df = make_master_df(n_sessions=2, n_participants=2)
+        session_ids = sorted(df['session_id'].unique())[:2]
+        reports = [_make_session_json(sid, i + 1) for i, sid in enumerate(session_ids)]
+
+        path = generate_comprehensive_session_report(df, _FRAMEWORK, reports, self.tmp)
+        n_lines = len(open(path, encoding='utf-8').read().splitlines())
+        self.assertLessEqual(n_lines, 120, f'overview too long: {n_lines} lines')
+
+    def test_stage_names_in_legend(self):
         df = make_master_df(n_sessions=1, n_participants=2)
         session_ids = sorted(df['session_id'].unique())[:1]
         reports = [_make_session_json(session_ids[0], 1)]
@@ -142,18 +154,9 @@ class TestComprehensiveSessionReport(unittest.TestCase):
         path = generate_comprehensive_session_report(df, _FRAMEWORK, reports, self.tmp)
         content = open(path, encoding='utf-8').read()
 
+        # Full stage names appear in the matrix column legend.
         for name in ('Vigilance', 'Avoidance', 'Attention Regulation'):
             self.assertIn(name, content)
-
-    def test_exemplar_quotes_included(self):
-        df = make_master_df(n_sessions=1, n_participants=2)
-        session_ids = sorted(df['session_id'].unique())[:1]
-        reports = [_make_session_json(session_ids[0], 1)]
-
-        path = generate_comprehensive_session_report(df, _FRAMEWORK, reports, self.tmp)
-        content = open(path, encoding='utf-8').read()
-
-        self.assertIn('I feel tense all day', content)
 
     def test_empty_session_reports_list(self):
         """Empty session_reports list should still produce a valid (minimal) file."""
@@ -162,7 +165,7 @@ class TestComprehensiveSessionReport(unittest.TestCase):
 
         self.assertTrue(os.path.isfile(path))
         content = open(path, encoding='utf-8').read()
-        self.assertIn('QRA COMPREHENSIVE THEME ANALYSIS', content)
+        self.assertIn('CROSS-SESSION OVERVIEW', content)
 
     def test_none_reports_skipped(self):
         """None entries in session_reports should be skipped gracefully."""
@@ -172,20 +175,6 @@ class TestComprehensiveSessionReport(unittest.TestCase):
 
         path = generate_comprehensive_session_report(df, _FRAMEWORK, reports, self.tmp)
         self.assertTrue(os.path.isfile(path))
-
-    def test_theme_consistency_none_present_all(self):
-        """With only one session each stage appears at most in one session.
-
-        The report's consistency block should appear and not crash.
-        """
-        df = make_master_df(n_sessions=1, n_participants=1)
-        session_ids = sorted(df['session_id'].unique())[:1]
-        reports = [_make_session_json(session_ids[0], 1)]
-
-        path = generate_comprehensive_session_report(df, _FRAMEWORK, reports, self.tmp)
-        content = open(path, encoding='utf-8').read()
-        # Single session → themes_all is empty OR all present — either is fine
-        self.assertIn('THEME CONSISTENCY ANALYSIS', content)
 
     def test_multiple_sessions_session_ids_appear(self):
         df = make_master_df(n_sessions=2, n_participants=2)
@@ -238,11 +227,21 @@ class TestSessionTxtReport(unittest.TestCase):
         path = generate_session_txt_report(df, sid, session_json, _FRAMEWORK, self.tmp)
         content = open(path, encoding='utf-8').read()
 
-        self.assertIn('SESSION INSTRUCTION SUMMARY', content)
-        self.assertIn('OVERVIEW', content)
-        self.assertIn('STAGE DISTRIBUTION', content)
-        self.assertIn('TRANSITIONS THIS SESSION', content)
-        self.assertIn('PER-PARTICIPANT BREAKDOWN', content)
+        self.assertIn('SESSION DASHBOARD', content)
+        self.assertIn('Stage distribution', content)
+        self.assertIn('WHO WAS WHERE', content)
+        self.assertIn('WITHIN-SESSION TRANSITIONS', content)
+        self.assertIn('EXPRESSIONS BY STAGE', content)
+        self.assertIn('NARRATIVE CONTEXT (LLM-generated, not analysis)', content)
+
+    def test_provenance_header_present(self):
+        sid = 'c1s2'
+        df = self._make_df_for_session(sid)
+        session_json = _make_session_json(sid, 2)
+
+        path = generate_session_txt_report(df, sid, session_json, _FRAMEWORK, self.tmp)
+        content = open(path, encoding='utf-8').read()
+        self.assertIn('HOW THESE NUMBERS WERE COMPUTED', content)
 
     def test_session_id_and_number_in_header(self):
         sid = 'c1s3'
@@ -338,7 +337,7 @@ class TestSessionTxtReport(unittest.TestCase):
         path = generate_session_txt_report(df_empty, sid, session_json, _FRAMEWORK, self.tmp)
         self.assertTrue(os.path.isfile(path))
         content = open(path, encoding='utf-8').read()
-        self.assertIn('SESSION INSTRUCTION SUMMARY', content)
+        self.assertIn('SESSION DASHBOARD', content)
 
     def test_transition_counts_rendered(self):
         """Forward/backward/lateral transition counts should appear."""

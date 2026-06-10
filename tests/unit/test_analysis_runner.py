@@ -31,7 +31,8 @@ from tests.testhelpers import make_master_df
 from process.output_paths import (
     master_segments_dir,
     meta_dir,
-    executive_summary_path,
+    reports_results_path,
+    reports_methods_path,
 )
 
 
@@ -130,16 +131,17 @@ class TestRunAnalysis(unittest.TestCase):
     # ------------------------------------------------------------------ #
     # Top-level artifacts written to disk
     # ------------------------------------------------------------------ #
-    def test_executive_summary_written(self):
+    def test_results_brief_written(self):
+        """Runner step 13 should write 00_RESULTS.txt (top-level synthesis)."""
         with patch('gnn_layer.runner.run_gnn_analysis', side_effect=_fake_gnn), \
              patch('analysis.figures.generate_all_figures', return_value=[]), \
              patch('analysis.figures.generate_all_session_stage_timelines', return_value=[]):
             from analysis.runner import run_analysis
             run_analysis(self.tmp, verbose=False, force_gnn=False)
 
-        es_path = executive_summary_path(self.tmp)
-        self.assertTrue(os.path.isfile(es_path),
-                        f"Expected executive summary at {es_path}")
+        rb_path = reports_results_path(self.tmp)
+        self.assertTrue(os.path.isfile(rb_path),
+                        f"Expected results brief at {rb_path}")
 
     def test_session_json_files_written(self):
         from process.output_paths import sessions_json_dir
@@ -189,25 +191,15 @@ class TestRunAnalysis(unittest.TestCase):
         csv = os.path.join(longitudinal_dir(self.tmp), 'session_stage_progression.csv')
         self.assertTrue(os.path.isfile(csv), f"Expected progression CSV at {csv}")
 
-    def test_reports_readme_written(self):
-        from process.output_paths import reports_readme_path
+    def test_methods_report_written(self):
+        """Runner step 13 should write 08_methods.txt ([M#] registry)."""
         with patch('gnn_layer.runner.run_gnn_analysis', side_effect=_fake_gnn), \
              patch('analysis.figures.generate_all_figures', return_value=[]), \
              patch('analysis.figures.generate_all_session_stage_timelines', return_value=[]):
             from analysis.runner import run_analysis
             run_analysis(self.tmp, verbose=False, force_gnn=False)
 
-        self.assertTrue(os.path.isfile(reports_readme_path(self.tmp)))
-
-    def test_methods_appendix_written(self):
-        from process.output_paths import methods_appendix_path
-        with patch('gnn_layer.runner.run_gnn_analysis', side_effect=_fake_gnn), \
-             patch('analysis.figures.generate_all_figures', return_value=[]), \
-             patch('analysis.figures.generate_all_session_stage_timelines', return_value=[]):
-            from analysis.runner import run_analysis
-            run_analysis(self.tmp, verbose=False, force_gnn=False)
-
-        self.assertTrue(os.path.isfile(methods_appendix_path(self.tmp)))
+        self.assertTrue(os.path.isfile(reports_methods_path(self.tmp)))
 
     # ------------------------------------------------------------------ #
     # force_gnn routing

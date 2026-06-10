@@ -204,9 +204,10 @@ class TestLanguageAtlasWrites(unittest.TestCase):
             self.assertTrue(path.endswith('language_atlas.txt'))
 
     def test_path_in_mechanism_dir(self):
+        from process import output_paths as _paths
         with tempfile.TemporaryDirectory() as tmp:
             path = self._run(tmp)
-            self.assertIn('02_mechanism', path)
+            self.assertIn(_paths.reports_mechanism_dir(tmp), path)
 
     def test_section_headers_present(self):
         with tempfile.TemporaryDirectory() as tmp:

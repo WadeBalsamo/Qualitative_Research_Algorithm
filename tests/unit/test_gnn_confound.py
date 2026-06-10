@@ -76,8 +76,9 @@ class TestRunConfound(unittest.TestCase):
             self.assertEqual((c['from_stage'], c['move']), (2, 1))
             self.assertTrue(c['sign_disagree'])              # observed +, counterfactual −
             self.assertAlmostEqual(c['divergence'], 2.5, places=3)
-            self.assertTrue(os.path.isfile(os.path.join(tmp, '06_reports', '06_gnn',
-                                                         'confound_localization.txt')))
+            from process import output_paths as _paths
+            self.assertTrue(os.path.isfile(
+                os.path.join(_paths.reports_gnn_dir(tmp), 'confound_localization.txt')))
             self.assertTrue(os.path.isfile(os.path.join(tmp, '03_analysis_data', 'gnn',
                                                         'confound_localization.csv')))
 

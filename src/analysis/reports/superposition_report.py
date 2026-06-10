@@ -1,7 +1,7 @@
 """
 analysis/reports/superposition_report.py
 -----------------------------------------
-Human-readable superposition report (06_reports/02_mechanism/superposition.txt).
+Human-readable superposition report (06_reports/03_mechanism/superposition.txt).
 
 Surfaces the VAAMR stage-mixture signal the hard reports collapse: the corpus
 superposition rate, the stage co-occurrence ("cusp") matrix, how liminality
@@ -32,9 +32,11 @@ _SOURCE_NOTE = {
 
 
 def generate_superposition_report(df: pd.DataFrame, framework: dict, output_dir: str) -> str:
-    """Write 02_mechanism/superposition.txt. Returns the path (or '' if no mixtures)."""
+    """Write 03_mechanism/superposition.txt. Returns the path (or '' if no mixtures)."""
     if 'mixture' not in df.columns or len(df) == 0:
         return ''
+
+    from .stat_format import m_ref, provenance_header
 
     stage_ids = sorted(framework.keys())
     n_stages = len(stage_ids)
@@ -44,6 +46,16 @@ def generate_superposition_report(df: pd.DataFrame, framework: dict, output_dir:
     L.append("=" * 78)
     L.append("VAAMR SUPERPOSITION REPORT")
     L.append("=" * 78)
+    L.append("")
+    # Compact provenance block
+    for hline in provenance_header(
+        ['superposition', 'vaamr_labels'],
+        extra=(
+            "Hard final_label remains the labeler-of-record. "
+            "Mixture/entropy are SENSITIVITY instruments — directional only."
+        ),
+    ):
+        L.append(hline)
     L.append("")
     L.append("Participant segments express a BLEND of VAAMR stages, not a single one.")
     L.append("This report surfaces that mixture. It is DIRECTIONAL / hypothesis-generating;")

@@ -601,7 +601,7 @@ def train_probe(df_all, output_dir: str, config: ProbeConfig, embeddings=None) -
 def evaluate_probe(df_all, output_dir: str, config: ProbeConfig, embeddings=None) -> dict:
     """Participant-grouped gate: probe↔LLM κ and probe↔human κ, per-class recall, CIs.
 
-    Writes ``06_reports/06_classifier/probe_validation.txt`` and
+    Writes ``06_reports/01_reliability/probe_validation.txt`` and
     ``03_analysis_data/probe/probe_gate.json``. Verdict ``ready_for_scaling`` iff
     probe↔human κ ≥ ``irr_human_band_floor`` AND no rare-stage recall < floor.
     """
