@@ -515,7 +515,7 @@ def _run_probe_stage(config, output_dir: str, df_all, segments, verbose: bool = 
         ready = bool(verdict.get('ready_for_scaling'))
         print(f"    probe gate: human κ={hk if hk is None else round(hk, 3)}; "
               f"ready_for_scaling={ready} "
-              f"(06_reports/06_classifier/probe_validation.txt)")
+              f"(06_reports/01_reliability/probe_validation.txt)")
         if not ready:
             print("    Gate not passed — probe stays assistive; no fill (LLM stays primary).")
             return 0

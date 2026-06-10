@@ -272,6 +272,8 @@ def generate_longitudinal_text_report(
     advances_by_snum = _find_illustrative_advances(df, participant_sequences, participant_reports, snum_lookup)
     reports_by_pid = {r['participant_id']: r for r in participant_reports if r}
 
+    from .stat_format import m_ref, provenance_header
+
     lines = []
 
     # ─────────────────────────────────────────────────────────────────
@@ -279,6 +281,18 @@ def generate_longitudinal_text_report(
     # ─────────────────────────────────────────────────────────────────
     lines.append('QRA LONGITUDINAL ANALYSIS REPORT')
     lines.append('=' * 70)
+    # Compact provenance block
+    for hline in provenance_header(
+        ['vaamr_labels', 'occupancy_trend', 'estage'],
+        extra=(
+            "MeanScore = E[stage] (mixture-weighted mean VAAMR stage, interval-scale SENSITIVITY). "
+            "Dominant-stage trend = slope of the per-participant dominant-stage sequence "
+            "(ordinal, different estimator from E[stage] OLS slope). "
+            "For primary ordinal-safe outcomes see 06_reports/02_outcomes/progression_summary.txt."
+        ),
+    ):
+        lines.append(hline)
+    lines.append('')
     lines.append(f'Generated:      {date.today().isoformat()}')
     lines.append(f'Participants:   {n_participants}  |  Sessions: {n_sessions}')
     lines.append(f'Sessions range: {min(session_numbers)}–{max(session_numbers)}')
@@ -289,11 +303,14 @@ def generate_longitudinal_text_report(
     # ─────────────────────────────────────────────────────────────────
     lines.append('VAAMR GROUP TRAJECTORY')
     lines.append('─' * 70)
-    lines.append('PROGRESSION SCORE: weighted mean VAAMR stage per session (range 0.0–4.0)')
+    lines.append('MeanScore = E[stage]: mixture-weighted mean VAAMR stage per session (0.0–4.0)  '
+                 + m_ref('estage'))
     lines.append('  0.0 = Vigilance dominant   |   2.0 = Attention dominant   |   4.0 = Reappraisal dominant')
     lines.append('')
-    lines.append('PROGRESSION TREND: linear regression slope across sessions (units: score/session)')
-    lines.append('  Positive trend → participants advancing toward higher mindfulness stages over time')
+    lines.append('Dominant-stage trend: slope of dominant stage across sessions (ordinal, per-participant)  '
+                 + m_ref('occupancy_trend'))
+    lines.append('  Positive trend → dominant stage advancing toward higher mindfulness stages over time')
+    lines.append('  NOTE: this is NOT the E[stage] OLS slope; they share direction but differ numerically.')
     lines.append('')
 
     trend_dir = 'ADVANCING' if mean_trend > 0.02 else ('REGRESSING' if mean_trend < -0.02 else 'STABLE')
@@ -301,7 +318,7 @@ def generate_longitudinal_text_report(
     bar_value = max(0.0, min(1.0, bar_value))
     trend_bar = _bar(bar_value, width=40)
     lines.append('━' * 70)
-    lines.append(f'  MEAN GROUP TREND:  {mean_trend:+.4f}/session  ▶  {trend_dir}')
+    lines.append(f'  MEAN GROUP DOMINANT-STAGE TREND:  {mean_trend:+.4f}/session  ▶  {trend_dir}')
     lines.append(f'  {trend_bar}  (scale: -2.0 ←——→ +2.0)')
     lines.append('━' * 70)
     lines.append('')
@@ -347,7 +364,7 @@ def generate_longitudinal_text_report(
         lines.append('  '.join(row_parts))
 
     lines.append('')
-    lines.append('[See figure: group_longitudinal_trajectory.png]')
+    lines.append('[See figure: 05_figures/group_longitudinal_trajectory.png]')
     lines.append('')
 
     # ─────────────────────────────────────────────────────────────────
@@ -389,12 +406,14 @@ def generate_longitudinal_text_report(
     lines.append('')
 
     # ─────────────────────────────────────────────────────────────────
-    # SECTION 5: Per-Participant Trajectories (numerical only)
+    # SECTION 5: Per-Participant Trajectories (summary table)
     # ─────────────────────────────────────────────────────────────────
-    lines.append('PER-PARTICIPANT TRAJECTORIES')
+    lines.append('PER-PARTICIPANT TRAJECTORY SUMMARY')
     lines.append('─' * 70)
-    lines.append('[See figures: reports/analysis/figures/participant_*_trajectory.png]')
+    lines.append('[See figures: 05_figures/participant_*_trajectory.png and 05_per_participant/]')
     lines.append('')
+    lines.append('  Participant      Cohort  Sessions  Dominant-stage trend  Direction')
+    lines.append('  ─────────────    ──────  ────────  ──────────────────── ─────────')
 
     for pid, seq in sorted(participant_sequences.items()):
         if not seq:
@@ -403,26 +422,12 @@ def generate_longitudinal_text_report(
         cohort = report.get('cohort_id', '?')
         n_sess = len(seq)
         trend = report.get('progression_trend', 0.0)
-        trend_interp = report.get('progression_trend_interpretation', '')
+        trend_dir_p = ('advancing' if trend > 0.1
+                       else ('regressing' if trend < -0.1 else 'stable'))
+        trend_s = f'{trend:+.3f}/session'
+        lines.append(f'  {pid:<16} {str(cohort):<6}  {n_sess:>7}   {trend_s:<20} {trend_dir_p}')
 
-        traj_str = ' → '.join(s[2] for s in seq)
-        lines.append(f'{pid}  (Cohort {cohort}, {n_sess} session{"s" if n_sess != 1 else ""})')
-        lines.append(f'  Trajectory: {traj_str}')
-        lines.append(f'  Trend: {trend:+.3f}/session — {trend_interp}')
-        lines.append('')
-
-        # Numeric table
-        lines.append('  Session  Dominant Stage         Prog.Score')
-        lines.append('  ───────  ─────────────────────  ──────────')
-
-        for session_id, stage_id, stage_name in seq:
-            snum = snum_lookup.get(session_id)
-            if snum is not None:
-                prog_score = report.get('progression_score_by_session', {}).get(str(snum))
-                score_str = f'{prog_score:.2f}' if prog_score is not None else '—'
-                lines.append(f'  {snum:>7}  {stage_name:<20}  {score_str:>10}')
-
-        lines.append('')
+    lines.append('')
 
     # ─────────────────────────────────────────────────────────────────
     # SECTION 6: PURER × VAAMR Longitudinal Influence

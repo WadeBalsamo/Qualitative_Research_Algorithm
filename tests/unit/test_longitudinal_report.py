@@ -163,7 +163,7 @@ class TestLongitudinalReportWrites(unittest.TestCase):
 
     def test_path_in_outcomes_dir(self):
         path = generate_longitudinal_text_report(self.df, self.reports, FRAMEWORK, self.tmp)
-        self.assertIn('01_outcomes', path)
+        self.assertIn('02_outcomes', path)
         self.assertTrue(path.endswith('longitudinal.txt'))
 
 
@@ -192,7 +192,7 @@ class TestLongitudinalSections(unittest.TestCase):
     def test_group_trajectory_section(self):
         self._run()
         self.assertIn('VAAMR GROUP TRAJECTORY', self._read())
-        self.assertIn('MEAN GROUP TREND', self._read())
+        self.assertIn('MEAN GROUP DOMINANT-STAGE TREND', self._read())
 
     def test_trend_direction_label(self):
         self._run()
@@ -215,7 +215,7 @@ class TestLongitudinalSections(unittest.TestCase):
     def test_per_participant_section(self):
         self._run()
         content = self._read()
-        self.assertIn('PER-PARTICIPANT TRAJECTORIES', content)
+        self.assertIn('PER-PARTICIPANT TRAJECTORY SUMMARY', content)
         self.assertIn('P01', content)
         self.assertIn('P02', content)
 

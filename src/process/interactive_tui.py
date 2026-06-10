@@ -449,7 +449,7 @@ def _action_classify_gnn(config, output_dir: str, framework, state: dict) -> Non
         return
     if status != 'ready':
         _warn('The graph has NOT passed its reliability gate yet')
-        _warn('(see 06_reports/06_gnn/validation.txt). Labels may be unreliable.')
+        _warn('(see 06_reports/07_gnn/validation.txt). Labels may be unreliable.')
         if not _confirm('Classify with the graph anyway?', default=False):
             return
     else:
@@ -1066,7 +1066,7 @@ def _action_edit_config(config_path: str) -> None:
     elif choice == 7:
         cur = raw.get('gnn_layer', {}).get('gnn_authoritative', False)
         if not cur:
-            _warn('Recommended only after 06_reports/06_gnn/validation.txt reports YES.')
+            _warn('Recommended only after 06_reports/07_gnn/validation.txt reports YES.')
         new_val = _confirm(
             f'Make GNN labels authoritative? (currently {"ON" if cur else "OFF"})', not cur)
         raw.setdefault('gnn_layer', {})['gnn_authoritative'] = new_val

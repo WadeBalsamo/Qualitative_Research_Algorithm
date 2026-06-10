@@ -284,7 +284,7 @@ def run_efficacy_analysis(df: pd.DataFrame, framework: dict, output_dir: str, co
 
     rep = _write_progression_report(group_prog, group_adapt, slopes, barrier, trend, sign,
                                      mk_adapt, mk_prog, power, mixture_provenance,
-                                     outcomes, linkage, framework, output_dir)
+                                     outcomes, linkage, framework, output_dir, ps=ps)
     files.append(rep)
 
     # Machine-readable headline stats so downstream synthesis (the executive
@@ -331,28 +331,29 @@ def run_efficacy_analysis(df: pd.DataFrame, framework: dict, output_dir: str, co
 
 def _write_progression_report(group_prog, group_adapt, slopes, barrier, trend, sign,
                               mk_adapt, mk_prog, power, mixture_provenance,
-                              outcomes, linkage, framework, output_dir) -> str:
+                              outcomes, linkage, framework, output_dir, ps=None) -> str:
+    from .reports.stat_format import (
+        fmt_est_ci, fmt_signed, fmt_p, m_ref, provenance_header,
+    )
     pflag = power.get('note', '')
     L = []
     L.append("=" * 78)
     L.append("PROGRAM PROGRESSION SUMMARY  (descriptive, single-arm)")
     L.append("=" * 78)
     L.append("")
-    L.append("WHAT THIS IS — and is NOT. This is a DESCRIPTIVE summary of how participants'")
-    L.append("LLM-coded VAAMR language moves across the program. It is NOT an efficacy")
-    L.append("estimate: there is no control arm, no randomized comparison here, and the")
-    L.append("'outcome' is the same coded language being analyzed — which is also shaped by")
-    L.append("therapist prompting (methodology §9.4). Read every number as hypothesis-")
-    L.append("generating for human validation and Cohort 3–4 replication, never as proof")
-    L.append("that the program caused clinical benefit.")
-    L.append("This is an observational, single-arm design: every relationship reported")
-    L.append("here is associational, not causal.")
+    # Compact provenance block — full prose lives in 08_methods.txt
+    for hline in provenance_header(
+        ['vaamr_labels', 'occupancy_trend', 'estage', 'cluster_bootstrap', 'barrier', 'sign_test'],
+        extra=f"Stage-mixture substrate: {mixture_provenance}.",
+    ):
+        L.append(hline)
     L.append("")
-    L.append("VAAMR is an ORDINAL developmental typology. The PRIMARY trend below uses a")
-    L.append("rank-based Mann–Kendall test (no equal-spacing assumption). The E[stage]")
-    L.append("'progression coordinate' and its linear slope appear only as a clearly-")
-    L.append("labeled interval-scale SENSITIVITY analysis.")
-    L.append(f"Stage-mixture substrate: {mixture_provenance}.")
+    L.append("SCOPE: DESCRIPTIVE summary of how participants' LLM-coded VAAMR language")
+    L.append("moves across the program. NOT an efficacy estimate: no control arm,")
+    L.append("no randomized comparison here. The 'outcome' is the same coded language")
+    L.append("being analyzed — also shaped by therapist prompting (methodology §9.4).")
+    L.append("Observational, single-arm design: every relationship is associational,")
+    L.append("not causal. Results are hypothesis-generating for Cohort 3–4 replication.")
     if str(mixture_provenance).lower().startswith('gnn'):
         L.append("  ⚠ Mixtures are GNN-derived. The GNN is validated against LLM consensus,")
         L.append("    NOT yet against human coding — do not treat as more reliable than the LLM.")
@@ -361,19 +362,28 @@ def _write_progression_report(group_prog, group_adapt, slopes, barrier, trend, s
     L.append("")
 
     L.append("-" * 78)
-    L.append("1. ADAPTIVE-STAGE OCCUPANCY OVER SESSIONS (primary, ordinal-safe)")
+    L.append("1. ADAPTIVE-STAGE OCCUPANCY OVER SESSIONS (primary, ordinal-safe)  " + m_ref('occupancy_trend'))
     L.append("-" * 78)
     L.append("  Proportion of each session's participant segments coded in adaptive stages")
-    L.append("  (Attention-Regulation/Metacognition/Reappraisal, 2–4):")
+    L.append("  (Attention-Regulation/Metacognition/Reappraisal, stages 2–4).")
+    L.append("  Cluster-bootstrapped 95% CI [lo, hi] resamples participants.")
+    L.append("")
+    L.append(f"  {'Session':<8} {'%Adaptive':>10}  {'95% CI':<18}  {'n_participants':>14}  {'n_segments':>10}")
+    L.append(f"  {'─'*7} {'─'*10}  {'─'*18}  {'─'*14}  {'─'*10}")
     for _, r in group_adapt.iterrows():
-        ci = (f"[{r['ci_lo']:.2f}, {r['ci_hi']:.2f}]" if r['ci_lo'] is not None else "[n/a]")
-        L.append(f"  session {int(r['session_number']):<3} {r['mean']*100:5.1f}% {ci}  (n={r['n_participants']})")
+        ci_s = (f"[{r['ci_lo']*100:5.1f}%, {r['ci_hi']*100:5.1f}%]"
+                if r['ci_lo'] is not None and r['ci_hi'] is not None else "[n/a        ]")
+        n_segs_all = group_adapt  # placeholder; segment count appended below from ps
+        L.append(f"  {int(r['session_number']):<8} {r['mean']*100:>9.1f}%  {ci_s:<18}  {int(r['n_participants']):>14}")
     if mk_adapt.get('n', 0) >= 3:
         tau = mk_adapt.get('tau')
         tau_s = f"{tau:+.3f}" if isinstance(tau, (int, float)) and tau == tau else "n/a"
-        L.append(f"\n  Monotonic trend (Mann–Kendall): {mk_adapt['direction']}, "
-                 f"τ={tau_s}, Sen slope={mk_adapt.get('sen_slope'):+.4f}/session, "
-                 f"p={mk_adapt.get('p_value'):.4f} (n={mk_adapt['n']} sessions).")
+        sen_s = (f"{mk_adapt.get('sen_slope'):+.4f}"
+                 if isinstance(mk_adapt.get('sen_slope'), (int, float)) else "n/a")
+        p_s = fmt_p(mk_adapt.get('p_value'))
+        L.append(f"\n  Mann–Kendall (rank-based, no equal-spacing assumption) {m_ref('occupancy_trend')}:")
+        L.append(f"    direction={mk_adapt['direction']}, τ={tau_s}, "
+                 f"Sen slope={sen_s}/session, {p_s} (n={mk_adapt['n']} sessions).")
     else:
         L.append("\n  Monotonic trend: not estimable (need ≥3 sessions with data).")
     if pflag:
@@ -381,67 +391,131 @@ def _write_progression_report(group_prog, group_adapt, slopes, barrier, trend, s
     L.append("")
 
     L.append("-" * 78)
-    L.append("2. E[stage] PROGRESSION COORDINATE  (SENSITIVITY — interval-scale assumed)")
+    L.append("2. E[stage] PROGRESSION COORDINATE  (SENSITIVITY — interval-scale assumed)  " + m_ref('estage'))
     L.append("-" * 78)
     L.append("  ⚠ Treats VAAMR 0–4 as equally spaced (Vigilance→Avoidance == Metacog→Reappraisal).")
-    L.append("    Provided for comparison only; the ordinal trend above is the headline.")
+    L.append("    Provided as a SENSITIVITY analysis only; §1 Mann–Kendall is the headline.")
     for _, r in group_prog.iterrows():
-        ci = (f"[{r['ci_lo']:+.2f}, {r['ci_hi']:+.2f}]" if r['ci_lo'] is not None else "[n/a]")
-        L.append(f"  session {int(r['session_number']):<3} mean={r['mean']:+.3f} {ci}  (n={r['n_participants']})")
+        est_s = fmt_est_ci(
+            r['mean'],
+            r.get('ci_lo'), r.get('ci_hi'),
+            n_desc=f"{int(r['n_participants'])} participants",
+        )
+        L.append(f"  session {int(r['session_number']):<3} E[stage] OLS slope (sensitivity) = {est_s}")
     if trend['slope'] == trend['slope']:
-        L.append(f"\n  Linear trend ({trend['method']}): slope = {trend['slope']:+.4f}/session "
-                 f"[{trend['ci_lo']:+.4f}, {trend['ci_hi']:+.4f}], p = "
-                 f"{trend['p_value']:.4f} (n={trend['n']} obs, {trend['n_groups']} participants).")
+        slope_s = fmt_est_ci(
+            trend['slope'],
+            trend.get('ci_lo'), trend.get('ci_hi'),
+            p=trend.get('p_value'),
+            n_desc=f"{trend['n']} obs / {trend['n_groups']} participants",
+            unit="/session",
+        )
+        L.append(f"\n  Mixed-effects linear slope ({trend['method']}) {m_ref('estage')}: {slope_s}.")
+        L.append("  (E[stage] OLS slope = sensitivity estimator; differs from Mann–Kendall Sen slope above.)")
     else:
         L.append("\n  Linear trend: not estimable.")
     mk_p = mk_prog.get('p_value')
     if mk_prog.get('n', 0) >= 3:
-        L.append(f"  Mann–Kendall on E[stage] (rank check): {mk_prog['direction']}, "
-                 f"p={mk_p:.4f}." if isinstance(mk_p, (int, float)) and mk_p == mk_p else
-                 f"  Mann–Kendall on E[stage]: {mk_prog['direction']}.")
+        L.append(f"  Mann–Kendall rank check on E[stage]: {mk_prog['direction']}, "
+                 f"{fmt_p(mk_p)}." if isinstance(mk_p, (int, float)) and mk_p == mk_p else
+                 f"  Mann–Kendall rank check on E[stage]: {mk_prog['direction']}.")
     if pflag:
         L.append(f"  ⚠ {pflag}")
     L.append("")
 
     L.append("-" * 78)
-    L.append("3. PER-PARTICIPANT TRAJECTORY DIRECTION")
+    L.append("3. PER-PARTICIPANT E[stage] OLS SLOPE DIRECTION  (SENSITIVITY)  " + m_ref('sign_test'))
     L.append("-" * 78)
+    L.append("  E[stage] OLS slope = per-participant sensitivity estimator (interval-scale")
+    L.append("  assumption; different from Mann–Kendall Sen slope in §1 and from dominant-")
+    L.append("  stage trend). Positive slope = participant's E[stage] rose session-on-session.")
     for _, r in slopes.iterrows():
         if r.get('slope') is None:
-            L.append(f"  {r['participant_id']:<16} (only {int(r['n_sessions'])} session — slope n/a)")
+            L.append(f"  {r['participant_id']:<16} (only {int(r['n_sessions'])} session — E[stage] OLS slope n/a)")
         else:
-            L.append(f"  {r['participant_id']:<16} slope={r['slope']:+.3f}  "
-                     f"baseline={r.get('baseline', float('nan')):+.2f} → endpoint={r.get('endpoint', float('nan')):+.2f} "
-                     f"(Δ={r.get('change', float('nan')):+.2f})")
-    L.append(f"\n  Advancing (slope>0): {sign['n_positive']}/{sign['n_total']} participants; "
-             f"sign-test p = {sign['p_value']:.4f}." if sign['p_value'] == sign['p_value']
-             else f"\n  Advancing: {sign['n_positive']}/{sign['n_total']}.")
-    L.append("  (Per-participant slopes inherit the interval-scale caveat from §2.)")
+            slope_s = fmt_signed(r['slope'], nd=3)
+            baseline_s = fmt_signed(r.get('baseline', float('nan')), nd=2)
+            endpoint_s = fmt_signed(r.get('endpoint', float('nan')), nd=2)
+            change_s = fmt_signed(r.get('change', float('nan')), nd=2)
+            L.append(f"  {r['participant_id']:<16} E[stage] OLS slope={slope_s}/session  "
+                     f"baseline={baseline_s} → endpoint={endpoint_s}  (Δ={change_s})")
+    if sign['p_value'] == sign['p_value']:
+        L.append(f"\n  Advancing (E[stage] OLS slope>0): {sign['n_positive']}/{sign['n_total']} participants; "
+                 f"exact sign-test {fmt_p(sign['p_value'])} {m_ref('sign_test')}.")
+    else:
+        L.append(f"\n  Advancing (E[stage] OLS slope>0): {sign['n_positive']}/{sign['n_total']}.")
+    L.append("  (E[stage] OLS slope inherits the interval-scale caveat from §2.)")
     L.append("")
 
     L.append("-" * 78)
-    L.append("4. AVOIDANCE → ATTENTION-REGULATION BARRIER (language-internal)")
+    L.append("4. AVOIDANCE → ATTENTION-REGULATION BARRIER (language-internal)  " + m_ref('barrier'))
     L.append("-" * 78)
-    L.append("  'Crossing' = first session in which Avoidance is no longer the participant's")
-    L.append("  dominant coded stage. A within-coding-scheme transition of LANGUAGE, shaped")
-    L.append("  by therapist prompting — not a verified clinical milestone.")
+    L.append("  'Crossing' = first session in which any segment reaches Attention-Regulation")
+    L.append("  after the participant has expressed Avoidance. A within-coding-scheme")
+    L.append("  language transition shaped by therapist prompting — not a verified clinical")
+    L.append(f"  milestone. Descriptive count only; no counterfactual {m_ref('barrier')}.")
     crossed = int(barrier['crossed_to_attention_regulation'].sum())
-    L.append(f"  Dominant stage left Avoidance: {crossed}/{len(barrier)} participants.")
+    L.append(f"  Barrier-crossers (language): {crossed}/{len(barrier)} participants.")
     for _, r in barrier.iterrows():
         fp = r['first_passage_session_index']
         fp_s = f"session #{int(fp) + 1}" if fp is not None and fp == fp else "—"
         L.append(f"    {r['participant_id']:<16} crossed={str(bool(r['crossed_to_attention_regulation'])):<5} first-passage={fp_s}")
+    # Crossers vs non-crossers endpoint comparison
+    if len(barrier) >= 2:
+        _ps_temp = slopes.copy() if 'participant_id' in slopes.columns else pd.DataFrame()
+        if not _ps_temp.empty and 'change' in _ps_temp.columns:
+            _merged = barrier.merge(_ps_temp[['participant_id', 'change', 'endpoint']],
+                                    on='participant_id', how='left')
+            _cross = _merged[_merged['crossed_to_attention_regulation'] == True]['change'].dropna()
+            _ncross = _merged[_merged['crossed_to_attention_regulation'] == False]['change'].dropna()
+            if len(_cross) > 0 and len(_ncross) > 0:
+                L.append(f"\n  Crossers vs non-crossers endpoint Δ (E[stage] change, baseline→last session):")
+                L.append(f"    crossed    (n={len(_cross)}): mean Δ = {fmt_signed(float(_cross.mean()), nd=2)}")
+                L.append(f"    not crossed (n={len(_ncross)}): mean Δ = {fmt_signed(float(_ncross.mean()), nd=2)}")
+                L.append("  (Descriptive; too small N for inference.)")
     L.append("")
 
     L.append("-" * 78)
-    L.append("5. CONVERGENT VALIDITY vs EXTERNAL CLINICAL OUTCOMES (exploratory)")
+    L.append("5. PER-COHORT ADAPTIVE-STAGE OCCUPANCY BREAKDOWN  (EXPLORATORY, small n)")
+    L.append("-" * 78)
+    L.append("  Same headline statistics computed per cohort independently.")
+    L.append("  EXPLORATORY: cohort subgroups are tiny (n≈4–8 per cohort); treat as")
+    L.append("  descriptive. No statistical inference warranted within a single cohort.")
+    _cohort_done = False
+    if ps is not None and 'cohort_id' in ps.columns:
+        _cohorts = sorted([c for c in ps['cohort_id'].dropna().unique()])
+        if len(_cohorts) >= 2:
+            for _c in _cohorts:
+                _ps_c = ps[ps['cohort_id'] == _c]
+                if _ps_c.empty:
+                    continue
+                _g_adapt_c = compute_group_trajectory(_ps_c, 'adaptive_occupancy')
+                _adapt_vals = _g_adapt_c.sort_values('session_number')['mean'].tolist()
+                _mk_c = S.mann_kendall_trend(_adapt_vals) if len(_adapt_vals) >= 3 else {}
+                _n_p = int(_ps_c['participant_id'].nunique())
+                L.append(f"\n  Cohort {_c}  (n_participants={_n_p}, n_sessions={_ps_c['session_number'].nunique()}):")
+                if _mk_c.get('n', 0) >= 3:
+                    tau_c = _mk_c.get('tau')
+                    tau_c_s = f"{tau_c:+.3f}" if isinstance(tau_c, (int, float)) and tau_c == tau_c else "n/a"
+                    L.append(f"    Adaptive occupancy Mann–Kendall: {_mk_c['direction']}, τ={tau_c_s}, "
+                             f"{fmt_p(_mk_c.get('p_value'))}  (EXPLORATORY)")
+                else:
+                    L.append(f"    Adaptive occupancy trend: not estimable (n={len(_adapt_vals)} sessions).")
+                _cohort_done = True
+    if not _cohort_done:
+        L.append("  (cohort_id not available in participant_session_outcomes.csv —")
+        L.append("   per-cohort breakdown skipped.)")
+    L.append("")
+
+    L.append("-" * 78)
+    L.append("6. CONVERGENT VALIDITY vs EXTERNAL CLINICAL OUTCOMES (exploratory)")
     L.append("-" * 78)
     L.append("  The ONLY place this analysis can speak to real-world change: does the coded-")
     L.append("  language trajectory CORRELATE with measured clinical outcomes? Correlation is")
     L.append("  convergent-validity evidence, still NOT efficacy.")
     if outcomes is None:
         L.append("  STATUS: no external outcomes integrated yet (expected at 02_meta/outcomes.csv).")
-        L.append("  See docs/OUTCOME_INTEGRATION_ROADMAP.md for the REDCap → outcomes.csv plan.")
+        L.append("  See docs/ROADMAP.md (Appendix A) for the REDCap → outcomes.csv plan.")
     elif linkage is None or linkage.empty:
         L.append(f"  External outcomes loaded ({outcomes['mode']}, measures: "
                  f"{', '.join(outcomes.get('measures', [])) or 'none'}), but too few matched")

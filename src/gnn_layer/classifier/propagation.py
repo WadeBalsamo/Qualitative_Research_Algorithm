@@ -148,7 +148,7 @@ def propagation_contribution(graph, targets, config, df_all, n_vce: int = 0) -> 
 
 
 def write_propagation_report(result: dict, output_dir: str) -> str:
-    """Human-readable A4 label-propagation report → 06_reports/06_gnn/."""
+    """Human-readable A4 label-propagation report → 06_reports/07_gnn/."""
     import os
     from process import output_paths as _paths
 

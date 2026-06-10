@@ -1,14 +1,33 @@
-"""Comprehensive per-session theme analysis report generator."""
+"""Cross-session overview report generator (_overview.txt).
+
+Compressed from the former ~1,600-line per-session dump into two compact
+tables — a session × stage occupancy matrix and a per-session summary table —
+plus pointers into 04_per_session/ for detail.
+"""
 
 import os
-from collections import defaultdict
 from datetime import date
 
 import pandas as pd
 
 from ..loader import sort_session_ids
 from process import output_paths as _paths
-from ._formatting import _bar, _pct, _wrap_quote
+from ._formatting import _pct
+from .stat_format import provenance_header
+
+
+def _session_mean_estage(df: pd.DataFrame, session_id: str) -> float:
+    """Mean E[stage] for a session's participant segments (mixture-weighted; falls back to label mean)."""
+    if df is None or len(df) == 0 or 'session_id' not in df.columns:
+        return None
+    sdf = df[df['session_id'] == session_id]
+    if sdf.empty:
+        return None
+    if 'progression_coord' in sdf.columns and sdf['progression_coord'].notna().any():
+        return float(sdf['progression_coord'].dropna().mean())
+    if 'final_label' in sdf.columns and sdf['final_label'].notna().any():
+        return float(sdf['final_label'].dropna().astype(float).mean())
+    return None
 
 
 def generate_comprehensive_session_report(
@@ -17,131 +36,91 @@ def generate_comprehensive_session_report(
     session_reports: list,
     output_dir: str,
 ) -> str:
-    """Generate comprehensive_theme_analysis.txt in the output root.
+    """Generate 04_per_session/_overview.txt — a compact cross-session view.
 
-    Integrates the per-session theme distribution, exemplars, transitions,
-    and overall consistency analysis from the pipeline's session JSON reports.
+    Sections:
+      1. Session × stage occupancy matrix (rows = sessions chronological,
+         columns = 5 stages, cells = %).
+      2. Per-session summary table (session_id, n participants, n segments,
+         mean E[stage], dominant stage).
+      3. Pointers to 04_per_session/ for detail.
 
     Returns path to written file.
     """
     stage_ids = sorted(framework.keys())
     stage_names = {sid: framework[sid].get('short_name', f'Stage {sid}') for sid in stage_ids}
+    # Short column abbreviations for the matrix header (first 5 chars).
+    stage_abbr = {sid: stage_names[sid][:5] for sid in stage_ids}
 
-    # Index session reports by session_id
     sessions_by_id = {r['session_id']: r for r in session_reports if r}
     session_id_order = sort_session_ids(list(sessions_by_id.keys()))
 
     total_segments = sum(r.get('n_segments', 0) for r in session_reports if r)
-    total_participants = df['participant_id'].nunique()
+    total_participants = df['participant_id'].nunique() if df is not None and 'participant_id' in df.columns else 0
 
     lines = []
-    lines.append('QRA COMPREHENSIVE THEME ANALYSIS')
-    lines.append('=' * 60)
+    lines.append('CROSS-SESSION OVERVIEW')
+    lines.append('=' * 68)
     lines.append(f'Generated:    {date.today().isoformat()}')
-    lines.append(f'Sessions:     {len(session_id_order)}')
-    lines.append(f'Participants: {total_participants}')
-    lines.append(f'Segments:     {total_segments}')
+    lines.append(f'Sessions:     {len(session_id_order)}    '
+                 f'Participants: {total_participants}    Segments: {total_segments}')
+    lines.extend(provenance_header(['vaamr_labels', 'estage']))
     lines.append('')
 
-    # Track theme presence across sessions for consistency analysis
-    theme_session_presence = defaultdict(set)
-
+    # ── 1. Session × stage occupancy matrix ───────────────────────────────────
+    lines.append('SESSION × STAGE OCCUPANCY MATRIX  [cells = % of session segments]')
+    lines.append('─' * 72)
+    hdr = f'{"Session":<10}' + ''.join(f'{stage_abbr[st]:>9}' for st in stage_ids)
+    lines.append(hdr)
+    lines.append('─' * 72)
     for sid in session_id_order:
         report = sessions_by_id.get(sid, {})
-        if not report:
-            continue
+        group_props = report.get('group_stage_proportions', {})
+        cells = ''.join(
+            f'{_pct(float(group_props.get(str(st), 0.0))):>9}' for st in stage_ids
+        )
+        lines.append(f'{sid:<10}{cells}')
+    lines.append('─' * 72)
+    lines.append('  Columns: ' + ' | '.join(f'{stage_abbr[st]}={stage_names[st]}' for st in stage_ids))
+    lines.append('')
 
+    # ── 2. Per-session summary table ──────────────────────────────────────────
+    lines.append('PER-SESSION SUMMARY')
+    lines.append('─' * 72)
+    lines.append(
+        f'{"Session":<10} {"S#":>3} {"Part":>5} {"Seg":>5}  {"E[stage]":>8}  {"Dominant Stage":<16}'
+    )
+    lines.append('─' * 72)
+    for sid in session_id_order:
+        report = sessions_by_id.get(sid, {})
         snum = report.get('session_number', '?')
         n_seg = report.get('n_segments', 0)
         n_part = report.get('n_participants', 0)
         group_props = report.get('group_stage_proportions', {})
-        exemplars = report.get('stage_exemplars', {})
-        trans_mat = report.get('stage_transition_matrix', {})
-
-        lines.append(f'── SESSION {sid} ' + '─' * max(1, 46 - len(sid)))
-        lines.append(f'Session Number: {snum}  |  Participants: {n_part}  |  Segments: {n_seg}')
-        lines.append('')
-        lines.append('  Theme Distribution:')
-
-        for st in stage_ids:
-            name = stage_names[st]
-            prop = float(group_props.get(str(st), 0.0))
-            cnt = round(prop * n_seg)
-            bar = _bar(prop, width=25)
-            lines.append(f'    {name:<20} {cnt:>3} segs  ({_pct(prop):>6})  {bar}')
-            if prop > 0:
-                theme_session_presence[name].add(sid)
-
-        lines.append('')
-
-        # Exemplar quotes per theme
-        has_any_exemplar = any(exemplars.get(str(st)) for st in stage_ids)
-        if has_any_exemplar:
-            lines.append('  Best Exemplars by Theme:')
-            for st in stage_ids:
-                ex_list = exemplars.get(str(st), [])
-                if not ex_list:
-                    continue
-                lines.append(f'    {stage_names[st]}:')
-                for i, ex in enumerate(ex_list[:2], 1):
-                    conf = ex.get('confidence', 0)
-                    text = ex.get('text', '').strip()
-                    pid_ex = ex.get('participant_id', '')
-                    lines.append(f'      {i}. [{pid_ex}] (confidence: {conf:.2f})')
-                    lines.append(_wrap_quote(text, indent=9))
-            lines.append('')
-
-        # Transition summary
-        forward = sum(
-            trans_mat.get(str(a), {}).get(str(b), 0)
-            for a in stage_ids for b in stage_ids if b > a
+        # Dominant stage by group proportion.
+        dom_stage = None
+        if group_props:
+            dom_stage = max(stage_ids, key=lambda st: float(group_props.get(str(st), 0.0)))
+            if float(group_props.get(str(dom_stage), 0.0)) <= 0:
+                dom_stage = None
+        dom_name = stage_names.get(dom_stage, '─') if dom_stage is not None else '─'
+        mean_est = _session_mean_estage(df, sid)
+        est_s = f'{mean_est:.2f}' if mean_est is not None else '   ─'
+        lines.append(
+            f'{sid:<10} {str(snum):>3} {n_part:>5} {n_seg:>5}  {est_s:>8}  {dom_name:<16}'
         )
-        backward = sum(
-            trans_mat.get(str(a), {}).get(str(b), 0)
-            for a in stage_ids for b in stage_ids if b < a
-        )
-        lateral = sum(
-            trans_mat.get(str(a), {}).get(str(a), 0)
-            for a in stage_ids
-        )
-        lines.append(f'  Transitions: {forward} forward, {backward} backward, {lateral} lateral')
-        lines.append('')
-
-    # Theme consistency analysis
+    lines.append('─' * 72)
     lines.append('')
-    lines.append('THEME CONSISTENCY ANALYSIS')
-    lines.append('-' * 40)
-    n_sessions_total = len(session_id_order)
 
-    themes_all = [t for t, sids in theme_session_presence.items()
-                  if len(sids) == n_sessions_total]
-    themes_one = [t for t, sids in theme_session_presence.items() if len(sids) == 1]
-    themes_most = [t for t, sids in theme_session_presence.items()
-                   if 2 <= len(sids) < n_sessions_total]
-
-    lines.append(f'Themes present in all {n_sessions_total} sessions:')
-    if themes_all:
-        for t in sorted(themes_all):
-            lines.append(f'  - {t}')
-    else:
-        lines.append('  (none)')
-
+    # ── 3. Pointers ───────────────────────────────────────────────────────────
+    lines.append('FOR DETAIL')
+    lines.append('─' * 72)
+    lines.append('  Per-session drill-down (dashboard, who-was-where, transitions, expressions):')
+    lines.append('    04_per_session/session_<id>.txt')
+    lines.append('  Per-participant trajectories: 05_per_participant/participant_<id>.txt')
+    lines.append('  Outcomes (did adaptive occupancy rise?): 02_outcomes/')
+    lines.append('  Mechanism (PURER × transition): 03_mechanism/ and 09_supplementary/cue_response.txt')
     lines.append('')
-    lines.append('Themes present in only one session:')
-    if themes_one:
-        for t in sorted(themes_one):
-            sid_val = next(iter(theme_session_presence[t]))
-            lines.append(f'  - {t} (session {sid_val})')
-    else:
-        lines.append('  (none)')
-
-    lines.append('')
-    if themes_most:
-        lines.append('Themes present in some but not all sessions:')
-        for t in sorted(themes_most, key=lambda x: -len(theme_session_presence[x])):
-            cnt_s = len(theme_session_presence[t])
-            lines.append(f'  - {t}: {cnt_s}/{n_sessions_total} sessions')
-        lines.append('')
 
     content = '\n'.join(lines)
     os.makedirs(_paths.reports_per_session_dir(output_dir), exist_ok=True)

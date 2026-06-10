@@ -194,73 +194,94 @@ def figures_dir(run_dir: str) -> str:
 # ── Human-readable reports (tiered, numbered) ─────────────────────────────
 #
 # 06_reports/ is organized into a numbered tier so reading order is obvious:
-#   00_READ_ME.txt / 00_executive_summary.txt  — start here
-#   01_outcomes/    — did the program work (efficacy, longitudinal, barrier)
-#   02_mechanism/   — how it works (transitions, cue→response, PURER, atlas…)
-#   03_per_session/ — per-session drill-down
-#   04_per_participant/
-#   05_per_stage/   — per VAAMR stage + codebook exemplars
-#   06_gnn/         — GNN discovery + validation
-#   07_methods_appendix.txt — how each metric is computed + caveats
+#   00_RESULTS.txt        — the publication-core results brief (start here)
+#   00_fig*.png           — the three flagship thesis figures
+#   01_reliability/       — trust instruments: IRR report + figures, probe gate
+#   02_outcomes/          — did the program work (progression, longitudinal, barrier)
+#   03_mechanism/         — how it works (transitions, PURER, mechanism, atlas…)
+#   04_per_session/       — per-session drill-down
+#   05_per_participant/
+#   06_per_stage/         — per VAAMR stage
+#   07_gnn/               — GNN discovery + validation
+#   08_methods.txt        — how every number is computed ([M#] registry) + caveats
+#   09_supplementary/     — auditable long-form (cue_response, grounding dossier,
+#                           codebook exemplars) — reference, not synthesis
 
 def human_reports_dir(run_dir: str) -> str:
     """Root for all human-readable .txt reports."""
     return os.path.join(run_dir, '06_reports')
 
 
+def reports_results_path(run_dir: str) -> str:
+    """The publication-core results brief (top-level synthesis; start here)."""
+    return os.path.join(human_reports_dir(run_dir), '00_RESULTS.txt')
+
+
+def thesis_figure_path(run_dir: str, n: int) -> str:
+    """Flagship thesis figure #n in the 06_reports root (next to 00_RESULTS.txt)."""
+    names = {
+        1: '00_fig1_rehabituation_arc.png',
+        2: '00_fig2_dyadic_mechanism.png',
+        3: '00_fig3_dashboard.png',
+    }
+    return os.path.join(human_reports_dir(run_dir), names[n])
+
+
+def reports_reliability_dir(run_dir: str) -> str:
+    """Trust instruments: IRR report + reliability figures, probe gate verdict."""
+    return os.path.join(run_dir, '06_reports', '01_reliability')
+
+
 def reports_outcomes_dir(run_dir: str) -> str:
-    """Program-outcome reports: efficacy, longitudinal, avoidance barrier."""
-    return os.path.join(run_dir, '06_reports', '01_outcomes')
+    """Program-outcome reports: progression, longitudinal, avoidance barrier."""
+    return os.path.join(run_dir, '06_reports', '02_outcomes')
 
 
 def reports_mechanism_dir(run_dir: str) -> str:
-    """Mechanism reports: transitions, cue→response, PURER, mechanism, atlas, superposition."""
-    return os.path.join(run_dir, '06_reports', '02_mechanism')
+    """Mechanism reports: transitions, PURER, mechanism, atlas, superposition."""
+    return os.path.join(run_dir, '06_reports', '03_mechanism')
 
 
 def reports_per_session_dir(run_dir: str) -> str:
     """Per-session drill-down reports and the session-distribution overview."""
-    return os.path.join(run_dir, '06_reports', '03_per_session')
+    return os.path.join(run_dir, '06_reports', '04_per_session')
 
 
 def reports_per_participant_dir(run_dir: str) -> str:
     """Per-participant longitudinal drill-down reports."""
-    return os.path.join(run_dir, '06_reports', '04_per_participant')
+    return os.path.join(run_dir, '06_reports', '05_per_participant')
 
 
 def reports_gnn_dir(run_dir: str) -> str:
     """GNN discovery & validation reports (validation, triangulation, motifs, coupling)."""
-    return os.path.join(run_dir, '06_reports', '06_gnn')
+    return os.path.join(run_dir, '06_reports', '07_gnn')
 
 
 def reports_classifier_dir(run_dir: str) -> str:
-    """LLM-free classifier (probe) reliability reports — separate from 06_gnn (mechanism)."""
-    return os.path.join(run_dir, '06_reports', '06_classifier')
+    """LLM-free classifier (probe) reliability reports — a trust instrument,
+    so it lives with IRR under 01_reliability/."""
+    return reports_reliability_dir(run_dir)
 
 
-def executive_summary_path(run_dir: str) -> str:
-    """Deterministic program-improvement brief (top-level synthesis)."""
-    return os.path.join(human_reports_dir(run_dir), '00_executive_summary.txt')
+def reports_methods_path(run_dir: str) -> str:
+    """How every reported number is computed ([M#] registry) + caveats."""
+    return os.path.join(human_reports_dir(run_dir), '08_methods.txt')
 
 
-def reports_readme_path(run_dir: str) -> str:
-    """Guide to every report in 06_reports/ with recommended reading order."""
-    return os.path.join(human_reports_dir(run_dir), '00_READ_ME.txt')
-
-
-def methods_appendix_path(run_dir: str) -> str:
-    """How each report/metric is computed, with methodological caveats."""
-    return os.path.join(human_reports_dir(run_dir), '07_methods_appendix.txt')
+def reports_supplementary_dir(run_dir: str) -> str:
+    """Auditable long-form reference dossiers (cue_response, justification
+    grounding, codebook exemplars) — kept out of the presentable tiers."""
+    return os.path.join(run_dir, '06_reports', '09_supplementary')
 
 
 def reports_irr_path(run_dir: str) -> str:
     """The single human-facing inter-rater-reliability report."""
-    return os.path.join(human_reports_dir(run_dir), '06b_irr_report.txt')
+    return os.path.join(reports_reliability_dir(run_dir), 'irr_report.txt')
 
 
 def themes_dir(run_dir: str) -> str:
-    """Per-theme/stage text reports (and codebook exemplars)."""
-    return os.path.join(run_dir, '06_reports', '05_per_stage')
+    """Per-theme/stage text reports."""
+    return os.path.join(run_dir, '06_reports', '06_per_stage')
 
 
 def themes_json_dir(run_dir: str) -> str:

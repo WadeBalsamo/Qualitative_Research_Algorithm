@@ -92,6 +92,39 @@ def _load_analysis_context(output_dir: str, llm_log_path, log) -> _AnalysisConte
     return ctx
 
 
+# Pre-restructure 06_reports artifacts. Every old name is disjoint from the
+# new tree (01_reliability/02_outcomes/03_mechanism/04_per_session/
+# 05_per_participant/06_per_stage/07_gnn/09_supplementary), so cleanup by name
+# is safe and idempotent. These are derived reports — regenerated each run.
+_LEGACY_REPORT_ARTIFACTS = (
+    '00_READ_ME.txt', '00_executive_summary.txt', '06b_irr_report.txt',
+    '07_methods_appendix.txt',
+    '01_outcomes', '02_mechanism', '03_per_session', '04_per_participant',
+    '05_per_stage', '06_gnn', '06_classifier',
+)
+
+
+def _cleanup_legacy_reports(output_dir: str, log) -> None:
+    """Remove pre-restructure 06_reports artifacts so old and new trees never coexist."""
+    import shutil
+    from process import output_paths as _paths
+    root = _paths.human_reports_dir(output_dir)
+    removed = []
+    for name in _LEGACY_REPORT_ARTIFACTS:
+        p = os.path.join(root, name)
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+                removed.append(name + '/')
+            elif os.path.isfile(p):
+                os.remove(p)
+                removed.append(name)
+        except OSError:
+            pass
+    if removed:
+        log(f"    Removed legacy report artifacts: {', '.join(removed)}")
+
+
 def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None,
                  force_gnn: bool = None, force_classifier: bool = None,
                  force_segmentation_sensitivity: bool = None) -> dict:
@@ -216,8 +249,12 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
         _paths.longitudinal_dir(output_dir),
         _paths.analysis_data_dir(output_dir),
         _paths.human_reports_dir(output_dir),
+        _paths.reports_reliability_dir(output_dir),
+        _paths.reports_supplementary_dir(output_dir),
     ):
         os.makedirs(_d, exist_ok=True)
+
+    _cleanup_legacy_reports(output_dir, log)
 
     files_generated = []
 
@@ -232,7 +269,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
         jg_path = generate_justification_grounding_report(df, framework, output_dir, df_all=df_all)
         if jg_path:
             files_generated.append(jg_path)
-            log("    Justification grounding: 06_reports/06_classifier/justification_grounding.txt")
+            log("    Justification grounding: 06_reports/09_supplementary/justification_grounding.txt")
     except Exception as e:
         print(f"  Warning: justification-grounding audit failed: {e}")
         if verbose:
@@ -298,7 +335,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
         ref_path = generate_codebook_text_report(df, framework, output_dir)
         if ref_path:
             files_generated.append(ref_path)
-            log("    Codebook exemplars: 06_reports/05_per_stage/codebook_exemplars.txt")
+            log("    Codebook exemplars: 06_reports/09_supplementary/codebook_exemplars.txt")
     except Exception as e:
         print(f"  Warning: codebook exemplars report failed: {e}")
         if verbose:
@@ -548,7 +585,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             from .purer_analysis import append_gnn_motif_section
             gnn_motif_section = append_gnn_motif_section(output_dir)
             if gnn_motif_section is not None:
-                log("    GNN motif section appended to 06_reports/02_mechanism/purer.txt.")
+                log("    GNN motif section appended to 06_reports/03_mechanism/purer.txt.")
         except Exception as e:
             print(f"  Warning: GNN motif section append failed: {e}")
             if verbose:
@@ -582,7 +619,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             sp_path = generate_superposition_report(df, framework, output_dir)
             if sp_path:
                 files_generated.append(sp_path)
-                log("    Superposition report: 06_reports/02_mechanism/superposition.txt")
+                log("    Superposition report: 06_reports/03_mechanism/superposition.txt")
         except Exception as e:
             print(f"  Warning: superposition report failed: {e}")
             if verbose:
@@ -605,7 +642,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                 log("    Running program-efficacy analysis...")
                 eff_result = run_efficacy_analysis(df, framework, output_dir, config=_eff_cfg)
                 files_generated.extend(eff_result.get('files_written', []))
-                log("    Progression summary: 06_reports/01_outcomes/progression_summary.txt")
+                log("    Progression summary: 06_reports/02_outcomes/progression_summary.txt")
             except Exception as e:
                 print(f"  Warning: efficacy analysis failed: {e}")
                 if verbose:
@@ -631,7 +668,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                 atlas_path = generate_language_atlas(df, df_all, framework, output_dir)
                 if atlas_path:
                     files_generated.append(atlas_path)
-                    log("    Language atlas: 06_reports/02_mechanism/language_atlas.txt")
+                    log("    Language atlas: 06_reports/03_mechanism/language_atlas.txt")
             except Exception as e:
                 print(f"  Warning: language atlas failed: {e}")
                 if verbose:
@@ -696,36 +733,44 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
                 log(f"    ‼ IRR: {len(_drift)} test-set item(s) DRIFTED from the human-coded "
                     "text — see the report header / run `qra irr run` to inspect.")
             log(f"    IRR regenerated (GNN axis: {_irr_res.get('gnn_axis')}): "
-                "06_reports/06b_irr_report.txt")
+                "06_reports/01_reliability/irr_report.txt")
     except Exception as e:
         print(f"  ‼ IRR analysis FAILED (non-fatal — analysis continues): {e}")
         traceback.print_exc()
 
     # ----------------------------------------------------------------
-    # 13. Top-level synthesis: executive summary, methods appendix, READ_ME.
+    # 13. Top-level synthesis: thesis figures, 00_RESULTS.txt, 08_methods.txt.
     #     Written LAST so they can read every artifact the run produced.
     # ----------------------------------------------------------------
-    log("[13/8] Writing executive summary, methods appendix, and reports READ_ME...")
+    log("[13/8] Writing thesis figures, 00_RESULTS.txt, and 08_methods.txt...")
     try:
-        from .reports.executive_summary import generate_executive_summary
-        es_path = generate_executive_summary(output_dir, df, framework, df_all=df_all)
-        if es_path:
-            files_generated.append(es_path)
-            log("    Executive summary: 06_reports/00_executive_summary.txt")
+        from .thesis_figures import generate_thesis_figures
+        tf_paths = generate_thesis_figures(df, df_all, framework, output_dir)
+        if tf_paths:
+            files_generated.extend(tf_paths)
+            log(f"    Thesis figures: {[os.path.basename(p) for p in tf_paths]}")
     except Exception as e:
-        print(f"  Warning: executive summary failed: {e}")
+        print(f"  Warning: thesis figures failed: {e}")
         if verbose:
             traceback.print_exc()
     try:
-        from .reports.reports_guide import generate_methods_appendix, generate_reports_readme
-        ma_path = generate_methods_appendix(output_dir)
-        if ma_path:
-            files_generated.append(ma_path)
-        rm_path = generate_reports_readme(output_dir)
-        if rm_path:
-            files_generated.append(rm_path)
+        from .reports.results_brief import generate_results_brief
+        rb_path = generate_results_brief(output_dir, df, framework, df_all=df_all)
+        if rb_path:
+            files_generated.append(rb_path)
+            log("    Results brief: 06_reports/00_RESULTS.txt")
     except Exception as e:
-        print(f"  Warning: reports guide failed: {e}")
+        print(f"  Warning: results brief failed: {e}")
+        if verbose:
+            traceback.print_exc()
+    try:
+        from .reports.methods_report import generate_methods_report
+        mr_path = generate_methods_report(output_dir)
+        if mr_path:
+            files_generated.append(mr_path)
+            log("    Methods: 06_reports/08_methods.txt")
+    except Exception as e:
+        print(f"  Warning: methods report failed: {e}")
         if verbose:
             traceback.print_exc()
 

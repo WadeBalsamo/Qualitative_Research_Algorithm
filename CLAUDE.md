@@ -163,10 +163,10 @@ Unit tests live in `tests/unit/` (hermetic, always run), integration tests in `t
 - Per-participant longitudinal trajectories, per-session summaries, per-theme analyses
 - Therapist cue response analysis (PURER × VAAMR)
 - Descriptive progression summary (single-arm, ordinal-safe — not efficacy) + mechanistic Δprogression (forward AND backward), avoidance barrier (bidirectional)
-- GNN discovery + mechanism layer (ON by default; figures + reports under `06_gnn/`), all on raw embeddings and hypothesis-generating (never causal): **H6 discriminant validity** (`discriminant_validity`), the **dyadic FROM→CUE→TO transition model** + **confound localization** (`transition_model`/`confound_localization` — the mechanism rebuild that replaced the mis-specified classifier-counterfactual, `GNN_MASTER_PLAN.md` §4.7), **subtext communities + dyadic routines** (`subtext_communities`), cue motifs, coupling factors. The GraphSAGE **consensus-distillation classifier is a SEPARATE concern in `src/gnn_layer/classifier/`, DEFAULT OFF** (`gnn_classifier_enabled`; H5-refuted at n≈32 — κ≈0.05–0.14 < human band, a probe ties/beats it); enable with `qra gnn train` to re-adjudicate at Cohorts 3–4. Track C MindfulBERT dataset builder (`build_mindfulbert_dataset`). Full design record: `docs/GNN_MASTER_PLAN.md`, `experiments/docs/graph_experiments.md`.
+- GNN discovery + mechanism layer (ON by default; figures + reports under `07_gnn/`), all on raw embeddings and hypothesis-generating (never causal): **H6 discriminant validity** (`discriminant_validity`), the **dyadic FROM→CUE→TO transition model** + **confound localization** (`transition_model`/`confound_localization` — the mechanism rebuild that replaced the mis-specified classifier-counterfactual, `experiments/docs/graph_experiments.md`), **subtext communities + dyadic routines** (`subtext_communities`), cue motifs, coupling factors. The GraphSAGE **consensus-distillation classifier is a SEPARATE concern in `src/gnn_layer/classifier/`, DEFAULT OFF** (`gnn_classifier_enabled`; H5-refuted at n≈32 — κ≈0.05–0.14 < human band, a probe ties/beats it); enable with `qra gnn train` to re-adjudicate at Cohorts 3–4. Track C MindfulBERT dataset builder (`build_mindfulbert_dataset`). Full design record: `experiments/docs/design_decisions.md`, `experiments/docs/graph_experiments.md`.
 - Graph-ready CSVs, visualization figures (incl. GNN figures)
 - Session and participant LLM summaries
-- **Top-level synthesis written last**: `00_executive_summary.txt` (deterministic program-improvement brief), `00_READ_ME.txt`, `07_methods_appendix.txt`
+- **Top-level synthesis written last (step 13)**: `00_RESULTS.txt` (publication-core results brief via `results_brief.py`), `08_methods.txt` (methods registry via `methods_report.py`), plus three thesis figures (`00_fig1/2/3_*.png`)
 
 ## Framework Boundaries: Critical Design Rule
 
@@ -213,25 +213,29 @@ output_dir/
 ├── _legacy_files/           # (only if migrated) original JSONL/JSON moved here, non-destructively
 ├── 05_figures/              # PNG visualization figures (incl. gnn_*.png)
 ├── 06_reports/              # Human-readable text reports (tiered, numbered)
-│   ├── 00_READ_ME.txt           # guide to the tree + reading order
-│   ├── 00_executive_summary.txt # deterministic program-improvement brief
-│   ├── 01_outcomes/             # progression_summary.txt, longitudinal.txt, avoidance_barrier.txt
-│   ├── 02_mechanism/            # transitions, cue_response, purer, mechanism, language_atlas, superposition
-│   ├── 03_per_session/          # _overview.txt, session_<id>.txt, session_summaries.txt
-│   ├── 04_per_participant/      # participant_<id>.txt
-│   ├── 05_per_stage/            # stage_<name>.txt, codebook_exemplars.txt
-│   ├── 06_gnn/                  # discriminant_validity, transition_model, confound_localization,
+│   ├── 00_RESULTS.txt           # publication-core results brief (start here) → reports_results_path
+│   ├── 00_fig1_rehabituation_arc.png   # flagship thesis figures → thesis_figure_path(n)
+│   ├── 00_fig2_dyadic_mechanism.png
+│   ├── 00_fig3_dashboard.png
+│   ├── 01_reliability/          # trust instruments: irr_report.txt, probe_validation.txt → reports_reliability_dir
+│   ├── 02_outcomes/             # progression_summary.txt, longitudinal.txt, avoidance_barrier.txt → reports_outcomes_dir
+│   ├── 03_mechanism/            # transitions, purer, mechanism, language_atlas, superposition → reports_mechanism_dir
+│   ├── 04_per_session/          # _overview.txt, session_<id>.txt, session_summaries.txt → reports_per_session_dir
+│   ├── 05_per_participant/      # participant_<id>.txt → reports_per_participant_dir
+│   ├── 06_per_stage/            # stage_<name>.txt → themes_dir
+│   ├── 07_gnn/                  # discriminant_validity, transition_model, confound_localization, → reports_gnn_dir
 │   │                            #   communities, dyadic_routines, emergent_motifs, coupling
 │   │                            #   (+ validation/triangulation only when the classifier is enabled)
-│   └── 07_methods_appendix.txt  # how each metric is computed + caveats
+│   ├── 08_methods.txt           # how each metric is computed ([M#] registry) + caveats → reports_methods_path
+│   └── 09_supplementary/        # cue_response.txt, justification_grounding.txt, codebook_exemplars.txt → reports_supplementary_dir
 └── 00_index.txt
 ```
 
-**06_reports tier:** `00_*` files are the top-level synthesis (start here); `01_outcomes`
-answers "did it work" (forward AND backward movement), `02_mechanism` answers "how";
-`03–05` are drill-downs; `06_gnn` holds the independent graph-model discovery/validation.
+**06_reports tier:** `00_RESULTS.txt` + three `00_fig*.png` are the top-level synthesis (start here); `01_reliability` establishes how far the machine labels can be trusted (read second); `02_outcomes` answers "did it work" (forward AND backward movement), `03_mechanism` answers "how"; `04–06` are drill-downs; `07_gnn` holds the independent graph-model discovery/validation; `08_methods.txt` resolves every `[M#]` provenance tag; `09_supplementary` holds auditable long-form reference dossiers.
 All report paths are resolved through `src/process/output_paths.py` (e.g. `reports_outcomes_dir`,
-`reports_mechanism_dir`, `reports_gnn_dir`, `themes_dir` → `05_per_stage`).
+`reports_mechanism_dir`, `reports_gnn_dir`, `reports_reliability_dir`, `reports_supplementary_dir`,
+`themes_dir` → `06_per_stage`, `reports_results_path`, `reports_methods_path`, `reports_irr_path`,
+`thesis_figure_path(run_dir, n)`).
 
 ## Module Map
 
@@ -250,7 +254,7 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 | `src/process/llm_segmentation.py` | LLM-assisted segmentation boundary refinement |
 | `src/process/speaker_anonymization.py` | Persistent speaker ID mapping across runs |
 | `src/process/speaker_filter.py` | Speaker inclusion/exclusion rules per classifier |
-| `src/process/output_paths.py` | Single source of truth for ALL output paths (incl. `db_path` → `qra.db`); overlay/manifest path helpers retained as legacy strings |
+| `src/process/output_paths.py` | Single source of truth for ALL output paths (incl. `db_path` → `qra.db`, `reports_results_path`, `reports_methods_path`, `reports_irr_path`, `reports_reliability_dir`, `reports_supplementary_dir`, `thesis_figure_path(run_dir,n)`) |
 | `src/process/output_index.py` | `00_index.txt` generation |
 | `src/process/cross_validation.py` | VAAMR × VCE code co-occurrence lift statistics |
 | `src/process/cue_blocks.py` | Canonical cue-block builder (run of therapist turns between two participant turns); unifies orchestrator/analysis/gnn implementations |
@@ -279,20 +283,22 @@ All report paths are resolved through `src/process/output_paths.py` (e.g. `repor
 | `src/process/irr_tui.py` | `qra irr` interactive menu (import / run / view / list) |
 | `src/analysis/irr_analysis.py` | IRR orchestrator: Human↔Human, Human↔LLM (consensus + per-model), Human↔GNN (held-out + distillation); per-item details; `maybe_run_irr` change-gated regen |
 | `src/analysis/irr_stats.py` | IRR statistics via proven libraries — Cohen κ (scikit-learn), Fleiss κ (statsmodels), Krippendorff α (`krippendorff`) |
-| `src/analysis/reports/irr_report.py` | `06_reports/06b_irr_report.txt` (headline κ table, dual GNN axes + gate read, discrepancies) |
+| `src/analysis/reports/irr_report.py` | `06_reports/01_reliability/irr_report.txt` (headline κ table, dual GNN axes + gate read, discrepancies) → `reports_irr_path` |
 | `src/analysis/reports/irr_items.py` | Per-test-set line-by-line dossier (text + human/LLM reasonings + GNN held-out + LLM↔GNN) |
 | `src/analysis/irr_figures.py` | IRR confusion matrices + rater-agreement heatmap |
 | `src/analysis/purer_analysis.py` | PURER × VAAMR cue-block influence analysis |
 | `src/analysis/purer_figures.py` | PURER × VAAMR lift heatmap and figures |
 | `src/analysis/reports/` | Detailed text report generators (session, stage, transition, cue response, longitudinal, summaries) |
-| `src/analysis/reports/executive_summary.py` | Deterministic `00_executive_summary.txt` program-improvement brief |
-| `src/analysis/reports/reports_guide.py` | `00_READ_ME.txt` (report map) + `07_methods_appendix.txt` (how metrics are computed) |
+| `src/analysis/reports/results_brief.py` | `generate_results_brief(output_dir, df, framework, df_all=None)` → `06_reports/00_RESULTS.txt` (publication-core results brief; step 13) |
+| `src/analysis/reports/methods_report.py` | `generate_methods_report(output_dir)` → `06_reports/08_methods.txt` ([M#] registry + caveats; step 13) |
+| `src/analysis/reports/stat_format.py` | `methods_entries()` registry + formatters (`fmt_est_ci`, `fmt_kappa`, `fmt_p`, `landis_koch`, `m_ref`) — canonical scientific notation shared by all reports |
+| `src/analysis/thesis_figures.py` | `generate_thesis_figures(df, df_all, framework, output_dir)` → `06_reports/00_fig{1,2,3}_*.png` (step 13) |
 | `src/analysis/efficacy.py` | Descriptive progression summary (ordinal-safe) + `efficacy_summary.json`; convergent-validity outcome linkage |
 | `src/analysis/mechanism.py` | Signed Δprogression mechanism + bidirectional avoidance-barrier report |
 | **`src/gnn_layer/` (top level)** | **Discovery + construct-validation + mechanism work-streams** — DEFAULT ON, run on raw embeddings (no trained model), hypothesis-generating, never causal. Orchestrated by `runner.run_gnn_analysis` (classifier gated OFF by default; discovery always). |
-| `src/gnn_layer/discriminant.py` | **H6 discriminant validity** — supervised probe (above chance) vs content-similarity C&S (≈chance) on the *same* Qwen embeddings, both axes + paired Δκ CI; geometry (content-PC stage recovery, kNN stage homophily, community×stage ARI). `06_gnn/discriminant_validity.txt` |
-| `src/gnn_layer/transition.py` | **Mechanism rebuild** — dyadic FROM→CUE→TO learned response model `TO_mixture≈f(FROM_mixture, FROM_stage, pooled raw cue)`, NO kNN; earns-its-place grouped-CV (cue vs FROM-only) + learned counterfactual + triangulation vs observed Δprog. `06_gnn/transition_model.txt` |
-| `src/gnn_layer/confound.py` | **Confound localization** — signed divergence (observed − learned counterfactual) per (from_stage×move) with participant-clustered CIs; maps where the elicitation/responsiveness confound (§9.4) most distorts the observed table. `06_gnn/confound_localization.txt` |
+| `src/gnn_layer/discriminant.py` | **H6 discriminant validity** — supervised probe (above chance) vs content-similarity C&S (≈chance) on the *same* Qwen embeddings, both axes + paired Δκ CI; geometry (content-PC stage recovery, kNN stage homophily, community×stage ARI). `07_gnn/discriminant_validity.txt` |
+| `src/gnn_layer/transition.py` | **Mechanism rebuild** — dyadic FROM→CUE→TO learned response model `TO_mixture≈f(FROM_mixture, FROM_stage, pooled raw cue)`, NO kNN; earns-its-place grouped-CV (cue vs FROM-only) + learned counterfactual + triangulation vs observed Δprog. `07_gnn/transition_model.txt` |
+| `src/gnn_layer/confound.py` | **Confound localization** — signed divergence (observed − learned counterfactual) per (from_stage×move) with participant-clustered CIs; maps where the elicitation/responsiveness confound (§9.4) most distorts the observed table. `07_gnn/confound_localization.txt` |
 | `src/gnn_layer/communities.py` | **Track D + dyadic routines** — subtext-similarity graph (τ≈0.6 for Qwen), Louvain+agglomerative ARI, participant-bootstrap stability selection, community↔stage/Δprog, atypical exemplars, therapist→participant dyadic routines. `communities.txt`, `dyadic_routines.txt` |
 | `src/gnn_layer/{motifs,coupling}.py` | Cue-motif discovery + latent coupling factors (on raw pooled cue embeddings) |
 | `src/gnn_layer/cue_features.py` | Shared, model-free cue-block builder + mean-pool (used by discovery AND `analysis/mechanism`, `language_atlas`, `mindfulbert`) |

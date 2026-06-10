@@ -287,7 +287,7 @@ python qra.py irr report -o ./data/output/   # regenerate the report from a fres
 python qra.py irr list   -o ./data/output/   # list imported test-sets   (bare `qra irr` = TUI)
 ```
 
-Computes three families — **Human↔Human** (the reference ceiling), **Human↔LLM** (consensus + each model), and **Human↔GNN** (held-out validity vs in-sample distillation, never conflated). Report: `06_reports/06b_irr_report.txt`; data + figures under `04_validation/irr/`. Human codes are kept as ground truth — machine labels are pulled live, so re-running after re-classifying or retraining re-measures against the same human anchor without re-importing.
+Computes three families — **Human↔Human** (the reference ceiling), **Human↔LLM** (consensus + each model), and **Human↔GNN** (held-out validity vs in-sample distillation, never conflated). Report: `06_reports/01_reliability/irr_report.txt`; data + figures under `04_validation/irr/`. Human codes are kept as ground truth — machine labels are pulled live, so re-running after re-classifying or retraining re-measures against the same human anchor without re-importing.
 
 - **Interpretation.** Human↔Human is the ceiling: a machine substrate cannot be more reliable than the humans are with each other. On Cohorts 1–2 that ceiling is *moderate* (Krippendorff α ≈ 0.47–0.52) and the LLM consensus matches it (κ ≈ 0.54) — read "human-level" accordingly (methodology §5.4–5.5).
 - **Content guard.** `qra irr run` re-checks every test-set segment's content hash against what the humans coded and **refuses** if any has drifted (e.g. after a re-segmentation). Re-import the affected worksheet(s), or pass `--allow-drift` to score anyway (the report flags the drift). `qra analyze` regenerates IRR automatically when labels or coded content change.
@@ -373,7 +373,7 @@ drift** (e.g. if a segment's text changed since the worksheet was frozen) rather
 
 | Path | Contents |
 |------|----------|
-| `06_reports/06b_irr_report.txt` | The single human-facing report: headline κ table, per-family sections, both GNN axes + gate read, ranked discrepancies |
+| `06_reports/01_reliability/irr_report.txt` | The single human-facing report: headline κ table, per-family sections, both GNN axes + gate read, ranked discrepancies |
 | `04_validation/irr/irr_results.json` | All κ/α/agreement stats + Ns per family/test-set |
 | `04_validation/irr/irr_pairwise.csv` | One row per rater-pair and per human↔machine / GNN-axis comparison |
 | `04_validation/irr/irr_discrepancies.csv` | Every item where human consensus ≠ LLM and/or ≠ GNN |
@@ -537,7 +537,7 @@ The menu adapts to detected project state. Available actions:
 | **8 — Refresh Validation Artifacts** | Re-emit human forms, coded transcripts, and AI answer keys without re-classifying |
 | **9 — Edit Configuration** | Change LM Studio URL, models, `n_runs`; toggle codebook / PURER / **GNN layer** / **GNN-authoritative labels**; open `qra_config.json` in `$EDITOR` |
 | **10 — Edit Speaker Anonymization Key** | Launch the anonymization editor (rename/merge/relabel speakers, cascade across all artifacts) |
-| **11 — Classify (Graph Consensus, LLM-Free)** | Label new data with the trained graph — recommended once `06_reports/06_gnn/validation.txt` reports the graph is ready; warns and asks for confirmation otherwise |
+| **11 — Classify (Graph Consensus, LLM-Free)** | Label new data with the trained graph — recommended once `06_reports/07_gnn/validation.txt` reports the graph is ready; warns and asks for confirmation otherwise |
 
 ### Anonymization Editor (Open Project → option 10)
 A roster TUI listing every speaker as `anonymized_id ⟵ original name (role)`. Per-speaker actions: rename anonymized ID, rename raw name, change role (participant/therapist/staff), merge into another speaker, remove. Roster-level actions: walk through all speakers in sequence (`r`), add a speaker (`a`), toggle NLP name re-removal (`n`), **preview cascade as a dry-run** (`p`), and **apply changes & cascade** (`w`) — which writes a timestamped backup, rewrites frozen segment fields/IDs/tokens, remaps overlays and checkpoints, updates validation worksheets, and regenerates the master dataset and analysis. The same operations are scriptable via `qra edit-anonymization` flags (`--rename`, `--rename-raw`, `--set-role`, `--merge`, `--remove-names`, `--dry-run`, `--yes`).
@@ -1018,15 +1018,15 @@ Each row in `master_segments.csv` (and each segment row joined from `qra.db`) is
 | `03_analysis_data/gnn/subtext_community_transitions.csv` | Within-session community→community routine transitions (Track D) |
 | `02_meta/training_data/mindfulbert_dataset.jsonl` | MindfulBERT dataset: (cue language → observed Δprogression) + provenance (Track C) |
 | `02_meta/training_data/mindfulbert_datasheet.{json,txt}` | Dataset datasheet: provenance mix, gate status, augmentation ablation, caveats (Track C) |
-| `06_reports/01_outcomes/`, `02_mechanism/`, … | Tiered human-readable reports (superposition, mechanism, avoidance barrier, efficacy, language atlas, per-session/participant/stage) |
-| `06_reports/06_gnn/validation.txt` | **Reliability gate** — per-stage/per-move out-of-sample κ vs LLM consensus + human, with the "ready for LLM-free scaling? YES/NO" verdict |
-| `06_reports/06_gnn/emergent_motifs.txt` | Emergent cue motifs flagged for human review (Capability B) |
-| `06_reports/06_gnn/triangulation.txt` (+ `triangulation_independence.txt`) | GNN↔LLM↔human agreement and lift comparison (Capability C) |
-| `06_reports/06_gnn/construct_signal.txt` / `vce_contribution.txt` | Construct-signal ablation + VCE-on-VAAMR test (Capability D) |
-| `06_reports/06_gnn/coupling.txt` | Latent coupling factors and alliance naming (Capability E) |
-| `06_reports/06_gnn/transition_model.txt` (+ `confound_localization.txt`) | Dyadic transition-model counterfactual + triangulation vs observed Δprogression + confound map (Track B) |
-| `06_reports/06_gnn/communities.txt` | Subtext communities as routines, with stability selection (Track D) |
-| `06_reports/06_gnn/{scale_sim,label_propagation,precipitates_contribution}.txt` | Track A hardening reports (when those instruments are enabled) |
+| `06_reports/02_outcomes/`, `03_mechanism/`, … | Tiered human-readable reports (superposition, mechanism, avoidance barrier, efficacy, language atlas, per-session/participant/stage) |
+| `06_reports/07_gnn/validation.txt` | **Reliability gate** — per-stage/per-move out-of-sample κ vs LLM consensus + human, with the "ready for LLM-free scaling? YES/NO" verdict |
+| `06_reports/07_gnn/emergent_motifs.txt` | Emergent cue motifs flagged for human review (Capability B) |
+| `06_reports/07_gnn/triangulation.txt` (+ `triangulation_independence.txt`) | GNN↔LLM↔human agreement and lift comparison (Capability C) |
+| `06_reports/07_gnn/construct_signal.txt` / `vce_contribution.txt` | Construct-signal ablation + VCE-on-VAAMR test (Capability D) |
+| `06_reports/07_gnn/coupling.txt` | Latent coupling factors and alliance naming (Capability E) |
+| `06_reports/07_gnn/transition_model.txt` (+ `confound_localization.txt`) | Dyadic transition-model counterfactual + triangulation vs observed Δprogression + confound map (Track B) |
+| `06_reports/07_gnn/communities.txt` | Subtext communities as routines, with stability selection (Track D) |
+| `06_reports/07_gnn/{scale_sim,label_propagation,precipitates_contribution}.txt` | Track A hardening reports (when those instruments are enabled) |
 
 ### Validation Output Files
 

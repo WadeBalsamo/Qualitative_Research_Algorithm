@@ -550,7 +550,7 @@ def write_transitions_csv(trans: List[dict], output_dir: str) -> Optional[str]:
 
 
 def write_communities_report(rows, trans, graph_info, detect_info, output_dir: str) -> str:
-    """Human-readable D report → 06_reports/06_gnn/communities.txt."""
+    """Human-readable D report → 06_reports/07_gnn/communities.txt."""
     W = 78
     L = ["=" * W, "SUBTEXT COMMUNITIES AS ROUTINES (Track D)", "=" * W, ""]
     L.append("DISCOVERY / HYPOTHESIS-GENERATING. Segments that say the same kind of thing are")

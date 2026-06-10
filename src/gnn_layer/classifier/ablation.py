@@ -329,7 +329,7 @@ def precipitates_contribution(df_all, segment_embeddings: Dict[str, "object"], c
 
 
 def write_precipitates_contribution_report(result: dict, output_dir: str) -> str:
-    """Human-readable Track A1 precipitates-contribution report → 06_reports/06_gnn/."""
+    """Human-readable Track A1 precipitates-contribution report → 06_reports/07_gnn/."""
     import os
     from process import output_paths as _paths
 
@@ -381,7 +381,7 @@ def write_precipitates_contribution_report(result: dict, output_dir: str) -> str
 
 
 def write_anchor_contribution_report(result: dict, output_dir: str) -> str:
-    """Human-readable Path-B anchor-contribution report → 06_reports/06_gnn/."""
+    """Human-readable Path-B anchor-contribution report → 06_reports/07_gnn/."""
     import os
     from process import output_paths as _paths
 

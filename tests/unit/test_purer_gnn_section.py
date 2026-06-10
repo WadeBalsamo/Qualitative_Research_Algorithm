@@ -67,8 +67,9 @@ _MINIMAL_PURER_REPORT = textwrap.dedent("""\
 def _make_output_dir(tmp: str, with_motifs=True, with_factors=True,
                      with_purer_report=True) -> str:
     """Create a minimal output_dir structure inside tmp."""
+    from process import output_paths as _paths
     gnn_dir = os.path.join(tmp, '03_analysis_data', 'gnn')
-    reports_dir = os.path.join(tmp, '06_reports', '02_mechanism')
+    reports_dir = _paths.reports_mechanism_dir(tmp)
     os.makedirs(gnn_dir, exist_ok=True)
     os.makedirs(reports_dir, exist_ok=True)
 
@@ -102,10 +103,11 @@ class TestAppendGnnMotifSection(unittest.TestCase):
     # ── (b) Section header and top motif id appear in the report file ─────
 
     def test_section_header_in_report_file(self):
+        from process import output_paths as _paths
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = _make_output_dir(tmp)
             append_gnn_motif_section(output_dir)
-            report_path = os.path.join(tmp, '06_reports', '02_mechanism', 'purer.txt')
+            report_path = os.path.join(_paths.reports_mechanism_dir(tmp), 'purer.txt')
             with open(report_path, encoding='utf-8') as f:
                 content = f.read()
             self.assertIn(
@@ -116,10 +118,11 @@ class TestAppendGnnMotifSection(unittest.TestCase):
 
     def test_top_motif_id_in_report_file(self):
         """The highest-influence motif (id=0) must appear in the report."""
+        from process import output_paths as _paths
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = _make_output_dir(tmp)
             append_gnn_motif_section(output_dir)
-            report_path = os.path.join(tmp, '06_reports', '02_mechanism', 'purer.txt')
+            report_path = os.path.join(_paths.reports_mechanism_dir(tmp), 'purer.txt')
             with open(report_path, encoding='utf-8') as f:
                 content = f.read()
             # The top motif by influence is motif_id=0 with influence=0.8821
@@ -141,10 +144,11 @@ class TestAppendGnnMotifSection(unittest.TestCase):
 
     def test_section_appended_after_existing_content(self):
         """Original report content must be preserved; section appended at end."""
+        from process import output_paths as _paths
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = _make_output_dir(tmp)
             append_gnn_motif_section(output_dir)
-            report_path = os.path.join(tmp, '06_reports', '02_mechanism', 'purer.txt')
+            report_path = os.path.join(_paths.reports_mechanism_dir(tmp), 'purer.txt')
             with open(report_path, encoding='utf-8') as f:
                 content = f.read()
             # Original content still present

@@ -383,7 +383,7 @@ def generate_purer_report(
     df_all: Optional[pd.DataFrame] = None,
 ) -> Optional[str]:
     """
-    Write purer.txt to 06_reports/02_mechanism/.
+    Write purer.txt to 06_reports/03_mechanism/.
 
     Sections:
     0. Overall PURER construct distribution (corpus-wide)
@@ -416,6 +416,8 @@ def generate_purer_report(
 
     def stage_label(sid: int) -> str:
         return stage_names.get(sid, str(sid))
+
+    from .reports.stat_format import m_ref, provenance_header
 
     W = 72
 
@@ -482,6 +484,18 @@ def generate_purer_report(
     lines.append('═' * W)
     lines.append('PURER × VAMMR CUE-BLOCK INFLUENCE ANALYSIS')
     lines.append('═' * W)
+    # Compact provenance block
+    for hline in provenance_header(
+        ['purer_labels', 'lift'],
+        extra=(
+            "PURER labels are unvalidated (human IRR planned, not started). "
+            "All PURER-side claims are DIRECTIONAL. "
+            "For Δprogression effect sizes conditioned on from_stage, see "
+            "06_reports/03_mechanism/mechanism.txt (Section 1)."
+        ),
+    ):
+        lines.append(hline)
+    lines.append('')
 
     if overall_dist_lines:
         lines.extend(overall_dist_lines)
@@ -574,15 +588,17 @@ def generate_purer_report(
 
     # ── Section 3: Marginal lift matrix ───────────────────────────────────
     lines.append(_hr('─'))
-    lines.append('SECTION 3: MARGINAL LIFT MATRIX  (PURER → VAMMR to_stage)  [CONFOUNDED — REFERENCE ONLY]')
+    lines.append('SECTION 3: MARGINAL LIFT MATRIX  (PURER → VAMMR to_stage)  [CONFOUNDED — REFERENCE ONLY]  '
+                 + m_ref('lift'))
     lines.append(_hr('─'))
     lines.append(
         'Lift = P(to_stage | dominant_purer) / P(to_stage). '
         'Lift > 1.0 means the VAMMR to_stage appears more often after that '
         'therapist move than its base rate. Only mediated blocks included. '
-        'CONFOUNDED: this does NOT condition on from_stage, so a move’s apparent '
-        'lift partly reflects which stages it is deployed from. Treat the from-stage-'
-        'conditioned Δprogression in report_mechanism.txt as the headline; this is reference.'
+        'CONFOUNDED: does NOT condition on from_stage; a move\'s apparent lift '
+        'partly reflects which stages it is deployed from. '
+        'Headline effect sizes (from-stage-conditioned Δprogression) are in '
+        '06_reports/03_mechanism/mechanism.txt Section 1 — do not duplicate here.'
     )
     # Omnibus association test — is PURER associated with destination stage at all?
     at = influence.get('association_test') or {}
@@ -723,7 +739,7 @@ def generate_purer_report(
 def append_gnn_motif_section(output_dir: str) -> Optional[str]:
     """
     Read GNN cue_motifs.csv and coupling_factors.csv and append a concise
-    cross-reference section to 06_reports/report_purer_analysis.txt.
+    cross-reference section to 06_reports/03_mechanism/purer.txt.
 
     cue_motifs.csv columns (from gnn_layer/reports.py write_cue_motifs):
         motif_id, n_blocks, influence, mean_pred_forward,
@@ -733,7 +749,7 @@ def append_gnn_motif_section(output_dir: str) -> Optional[str]:
         factor, explained_variance_ratio, forward_corr,
         nearest_cf_ic, cf_ic_similarity, n_exemplars
 
-    generate_purer_report() opens report_purer_analysis.txt with mode 'w'
+    generate_purer_report() opens purer.txt with mode 'w'
     (overwrites on each analysis run). This function runs AFTER that step so it
     appends exactly once per run — no accumulation across re-runs.
 

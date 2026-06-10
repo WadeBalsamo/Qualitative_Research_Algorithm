@@ -44,6 +44,73 @@ from . import irr_stats
 ABSTAIN_CODE = irr_import.ABSTAIN_CODE
 CONSENSUS_RATER = irr_import.CONSENSUS_RATER
 
+# Nonparametric bootstrap settings for the headline coefficient CIs (Task 3).
+# Items (worksheet rows) are the resampling unit; percentile interval.
+BOOTSTRAP_REPS = 2000
+BOOTSTRAP_SEED = 20260610
+
+
+# ---------------------------------------------------------------------------
+# Nonparametric bootstrap 95% CIs for the headline coefficients
+# ---------------------------------------------------------------------------
+
+def _percentile_ci(stats: List[float]) -> Optional[dict]:
+    """Percentile 95% CI from a list of bootstrap replicate statistics (NaNs dropped)."""
+    import numpy as np
+    arr = np.asarray([s for s in stats if s is not None and s == s], dtype=float)
+    if arr.size < 2:
+        return None
+    return {'lo': float(np.percentile(arr, 2.5)),
+            'hi': float(np.percentile(arr, 97.5)),
+            'n_boot': int(arr.size)}
+
+
+def _bootstrap_alpha_ci(matrix: List[List[object]],
+                        reps: int = BOOTSTRAP_REPS,
+                        seed: int = BOOTSTRAP_SEED) -> Optional[dict]:
+    """Item-resampled percentile 95% CI for Krippendorff's α over a ratings matrix
+    (rows = items, cols = raters). Resamples whole item-rows with replacement."""
+    import numpy as np
+    if not matrix or len(matrix) < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    n = len(matrix)
+    stats: List[float] = []
+    for _ in range(reps):
+        idx = rng.integers(0, n, size=n)
+        boot = [matrix[i] for i in idx]
+        a = irr_stats.krippendorff_alpha(boot)
+        if a is not None:
+            stats.append(a)
+    ci = _percentile_ci(stats)
+    if ci is not None:
+        ci['point'] = irr_stats.krippendorff_alpha(matrix)
+    return ci
+
+
+def _bootstrap_kappa_ci(h: List[int], m: List[int],
+                        reps: int = BOOTSTRAP_REPS,
+                        seed: int = BOOTSTRAP_SEED) -> Optional[dict]:
+    """Item-resampled percentile 95% CI for Cohen's κ over aligned label lists.
+    Resamples (human, machine) item-pairs with replacement."""
+    import numpy as np
+    if not h or len(h) < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    h_arr = np.asarray(h)
+    m_arr = np.asarray(m)
+    n = len(h)
+    stats: List[float] = []
+    for _ in range(reps):
+        idx = rng.integers(0, n, size=n)
+        k = irr_stats.cohen_kappa(h_arr[idx].tolist(), m_arr[idx].tolist())
+        if k is not None:
+            stats.append(k)
+    ci = _percentile_ci(stats)
+    if ci is not None:
+        ci['point'] = irr_stats.cohen_kappa(h, m)
+    return ci
+
 
 def _label_name(id_to_short: Dict[int, str], code: Optional[int]) -> str:
     if code is None:
@@ -101,6 +168,7 @@ def _human_human_for_worksheet(
         'n_raters': len(roster),
         'n_items_scored': agree['n_items'],
         'krippendorff_alpha': irr_stats.krippendorff_alpha(matrix),
+        'alpha_ci': _bootstrap_alpha_ci(matrix),
         'fleiss_kappa': fleiss['kappa'],
         'fleiss_n_complete': fleiss['n_complete'],
         'percent_agreement_unanimous': agree['unanimous'],
@@ -205,11 +273,13 @@ def _agreement_block(consensus, by_id, id_to_short, *, machine_of) -> dict:
         'n_excluded_no_machine': n_excluded,
         'n_deferred': n_deferred,
         'cohen_kappa': irr_stats.cohen_kappa(overall_h, overall_m),
+        'kappa_ci': _bootstrap_kappa_ci(overall_h, overall_m),
         'percent_agreement': irr_stats.observed_agreement(overall_h, overall_m),
         'per_worksheet': {
             str(ws): {
                 'n': len(h),
                 'cohen_kappa': irr_stats.cohen_kappa(h, m),
+                'kappa_ci': _bootstrap_kappa_ci(h, m),
                 'percent_agreement': irr_stats.observed_agreement(h, m),
             }
             for ws, (h, m) in sorted(per_ws.items())
@@ -333,6 +403,7 @@ def _human_vs_llm_raters(
         out[rid] = {
             'n': len(h),
             'cohen_kappa': irr_stats.cohen_kappa(h, m),
+            'kappa_ci': _bootstrap_kappa_ci(h, m),
             'percent_agreement': irr_stats.observed_agreement(h, m),
         }
     return out

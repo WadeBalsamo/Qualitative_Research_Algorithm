@@ -44,7 +44,23 @@ def generate_session_summaries(
     """
     summaries = {}
 
+    # Reuse previously generated summaries (deterministic regeneration, no LLM
+    # round-trip); only sessions absent from the cache are summarized fresh.
+    json_dir = _paths.analysis_data_dir(output_dir)
+    json_path = os.path.join(json_dir, 'session_summaries.json')
+    cached = {}
+    if os.path.isfile(json_path):
+        try:
+            with open(json_path, encoding='utf-8') as f:
+                cached = json.load(f) or {}
+        except Exception:
+            cached = {}
+
     for sid in session_ids:
+        prior = cached.get(sid)
+        if prior and prior != '[no therapist segments]':
+            summaries[sid] = prior
+            continue
         raw = _collect_session_therapist_text(df_all, sid)
         if not raw:
             summaries[sid] = '[no therapist segments]'
@@ -53,10 +69,7 @@ def generate_session_summaries(
             summaries[sid] = text
 
     # ── Write JSON ────────────────────────────────────────────────────────────
-    json_dir = _paths.analysis_data_dir(output_dir)
     os.makedirs(json_dir, exist_ok=True)
-
-    json_path = os.path.join(json_dir, 'session_summaries.json')
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(summaries, f, indent=2, ensure_ascii=False)
 

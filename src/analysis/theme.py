@@ -371,9 +371,9 @@ def generate_codebook_text_report(
     # Pre-compute per-code DataFrames and lift against all stages
     stage_ids = sorted(framework.keys())
 
-    themes_dir = _paths.themes_dir(output_dir)
-    os.makedirs(themes_dir, exist_ok=True)
-    out_path = os.path.join(themes_dir, 'codebook_exemplars.txt')
+    supp_dir = _paths.reports_supplementary_dir(output_dir)
+    os.makedirs(supp_dir, exist_ok=True)
+    out_path = os.path.join(supp_dir, 'codebook_exemplars.txt')
 
     def _wrap(text, width=72, indent='  ', subsequent='  ') -> list:
         return textwrap.wrap(str(text or ''), width=width,
