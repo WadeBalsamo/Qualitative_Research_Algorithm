@@ -15,7 +15,7 @@ the LLM-consensus co-occurrence lift, so they are NOT label-independent. They ar
 built only when ``include_vce_nodes`` is set, and exist for the ablation — never
 for the independence substrate.
 
-Critical guardrail (gnn-influence-to-execution.md, G2): anchors raise GNN<->LLM
+Critical guardrail (experiments/docs/design_decisions.md, G2): anchors raise GNN<->LLM
 agreement BY CONSTRUCTION — a segment near its own construct definition will tend
 to predict that construct. Their value must therefore be judged on the
 GNN<->HUMAN out-of-sample axis (see :func:`gnn_layer.ablation.anchor_contribution`),
