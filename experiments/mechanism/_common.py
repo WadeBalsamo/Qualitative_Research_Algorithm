@@ -2,7 +2,7 @@
 experiments/mechanism/_common.py
 ================================
 Shared, defensive helpers for the corroboration experiments E3–E9
-(masterplan.md §4). Mirrors the direct-file-load pattern of
+(planning doc, now docs/ROADMAP.md). Mirrors the direct-file-load pattern of
 run_interaction_model.py (E1+E2) so we NEVER import the heavy
 src/{process,analysis,gnn_layer} packages (their __init__ pulls
 sentence_transformers/transformers, pinned to numpy<2, which would crash).
