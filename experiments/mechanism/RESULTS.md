@@ -62,7 +62,7 @@ under-identified — the defensible small-n instrument.
 
 > **Why isolated:** bambi/pymc/pytensor need `numpy>=2.0`; the pipeline's `transformers==4.42.4` needs
 > `numpy<2.0`. They cannot coexist. Production therefore defaults to the frequentist estimator in-process and
-> runs the Bayesian arm in a dedicated `.venv_bayes` (see `masterplan.md` §3/§5).
+> runs the Bayesian arm in a dedicated `.venv_bayes` (see `docs/ROADMAP.md`, formerly `masterplan.md` §3/§5).
 
 ## E2 — confound sensitivity (E-values, VanderWeele–Ding)
 Per (FROM stage × move) cell, SMD of Δprogression vs the other moves at the same FROM stage → approx RR →
@@ -98,7 +98,7 @@ consequential honesty flags (E5, E6).**
 | **E6** H6 robustness | On **MiniLM-384** the probe−content-similarity Δκ **SIGN-FLIPS**: 5-class −0.048 (CI incl. 0), 6-class **−0.091 (CI excludes 0)** — opposite the shipped **Qwen** result (probe≫content, +0.17/+0.21). | **Honesty flag, not refutation.** Attributable to (a) MiniLM carrying less linearly-separable stage signal (so nonparametric kNN beats a linear probe = capacity, not topicality) and (b) the 6-class "No code" being strongly content-clustered (kNN homophily 0.30→0.36 — answers Q27/Q28: "No code" loads the *content* model). **H6's embedding-generality is UNCONFIRMED:** the faithful test is `src/gnn_layer/discriminant.py` (probe vs Correct-&-Smooth) re-run on Qwen *and* MiniLM — the Qwen endpoint (`http://10.0.0.58:1234`) failed to load at runtime ("Operation canceled"), so Q8 remains open. |
 
 **Cross-cutting verdict.** The campaign converges on "right instruments, honestly under-identified at n≈32" —
-the masterplan's predicted signature. Directional positives: **E3** (process ≫ content cue) and **E9** (group
+the planning doc's predicted signature (plan since merged into `docs/ROADMAP.md`). Directional positives: **E3** (process ≫ content cue) and **E9** (group
 slope CI excludes 0 + barrier rate-limiting). Honesty flags the manuscript must carry: **E5** (PURER ranking
 fragile → gate on validation) and **E6** (H6 not yet shown encoder-robust — run the faithful two-encoder
 `discriminant.py` test before claiming generality).

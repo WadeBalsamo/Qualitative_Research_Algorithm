@@ -1,7 +1,7 @@
 """
 experiments/mechanism/run_interaction_model.py
 ==============================================
-E1 + E2 of the mechanism campaign (masterplan.md §4).
+E1 + E2 of the mechanism campaign (planning doc, now docs/ROADMAP.md).
 
 THE QUESTION (H2 / methodology §7.6): does a therapist PURER move's effect on the
 NEXT participant VAAMR stage depend on the participant's FROM stage? That is an

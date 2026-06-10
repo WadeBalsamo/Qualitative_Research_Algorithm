@@ -246,7 +246,7 @@ Recorded, not auto-applied — see `scalable_classification_master_plan.md`:
 - **The winner** → `src/classification_tools/probe/probe_classifier.py` as a `qra probe train/status/classify`
   tier: per-rater ensemble, gated on a per-project human-band check, abstention-aware, written to a
   `probe_consensus` provenance tier **below** the LLM consensus. Ships **assistive, not autonomous**.
-- **The GNN** → keep as **mechanism/discovery only** (`docs/GNN_MASTER_PLAN.md`); remove its unused
+- **The GNN** → keep as **mechanism/discovery only** (`experiments/docs/graph_experiments.md`); remove its unused
   classifier-of-record surface.
 
 Manuscript write-ups: **`docs/methodology.md` §8.5** (GNN reliability) and **§8.6** (the distillation
