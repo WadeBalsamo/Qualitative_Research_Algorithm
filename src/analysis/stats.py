@@ -463,6 +463,102 @@ def likelihood_ratio_test(ll_full: float, ll_reduced: float, df_diff: int) -> Di
     return out
 
 
+def cluster_bootstrap_lr_test(df, outcome: str, fixed_reduced: str, fixed_full: str,
+                              group: str, n_boot: int = 500, seed: int = 42,
+                              distr: str = 'logit') -> Dict:
+    """Participant-cluster bootstrap of the ordered-logit likelihood-ratio statistic.
+
+    ``ordered_logit``'s in-sample LR p-value (``likelihood_ratio_test`` on the two ``llf``s)
+    ignores within-participant correlation — ``OrderedModel`` exposes no cluster-robust
+    covariance, so the χ² reference is anti-conservative for nested data (Gate 2). This
+    calibrates the p-value WITHOUT new dependencies by resampling whole participants
+    (clusters) with replacement, refitting BOTH the reduced and the full ordered logit on
+    each resample, and building the bootstrap distribution of ΔLR = 2·(llf_full − llf_reduced).
+
+    The cluster-bootstrap p-value is the fraction of resampled ΔLR statistics that are
+    ≥ the OBSERVED ΔLR (one-sided; LR statistics are non-negative under nesting), with
+    add-one smoothing. Because the resamples are drawn from the fitted data (not a refitted
+    null), this is a *pivot/percentile* calibration of how much ΔLR varies once the
+    repeated-measures clustering is respected — large observed ΔLR relative to that spread
+    ⇒ small p. Refits that fail (singular on a degenerate resample) are skipped; the result
+    degrades to ``status='cluster_robust_p_unavailable'`` (the caller must then report the
+    naive in-sample p ALONE, clearly labeled) rather than returning the naive p in disguise.
+
+    Returns ``{status, observed_lr, df, p_value, n_boot_ok, n_boot_requested, note}``.
+    Runtime: ~``n_boot`` pairs of ordered-logit fits; at n≈186 triples / ≤500 resamples this
+    is seconds, not minutes.
+    """
+    import numpy as _np
+    out = {'status': 'cluster_robust_p_unavailable', 'observed_lr': float('nan'),
+           'df': 0, 'p_value': float('nan'), 'n_boot_ok': 0,
+           'n_boot_requested': int(n_boot), 'note': ''}
+    OrderedModel, _ = _import_ordered_model()
+    if OrderedModel is None:
+        out['note'] = 'statsmodels OrderedModel unavailable'
+        return out
+    if group not in df.columns:
+        out['note'] = f'group column {group!r} absent'
+        return out
+
+    # Observed ΔLR on the full data.
+    red0 = ordered_logit(df, outcome, fixed_reduced, distr=distr)
+    full0 = ordered_logit(df, outcome, fixed_full, distr=distr)
+    if not red0 or not full0:
+        out['note'] = 'reduced/full ordered logit did not fit on the full data'
+        return out
+    df_diff = int(full0['n_params'] - red0['n_params'])
+    obs_lr = 2.0 * (float(full0['llf']) - float(red0['llf']))
+    out['observed_lr'] = float(obs_lr)
+    out['df'] = df_diff
+    if df_diff <= 0:
+        out['note'] = 'non-positive df between models'
+        return out
+
+    # Index rows by participant cluster.
+    pids = df[group].astype(object).to_numpy()
+    by_pid: Dict[object, List[int]] = {}
+    for i, p in enumerate(pids):
+        by_pid.setdefault(p, []).append(i)
+    keys = list(by_pid.keys())
+    if len(keys) < 2:
+        out['note'] = 'fewer than 2 participant clusters'
+        return out
+
+    rng = _np.random.default_rng(seed)
+    boot_lrs: List[float] = []
+    for _ in range(int(n_boot)):
+        chosen = rng.choice(len(keys), size=len(keys), replace=True)
+        idx: List[int] = []
+        for ci in chosen:
+            idx.extend(by_pid[keys[ci]])
+        d_b = df.iloc[idx]
+        # An outcome that collapsed to a single ordinal level cannot fit an ordered logit.
+        if d_b[outcome].nunique() < 2:
+            continue
+        rb = ordered_logit(d_b, outcome, fixed_reduced, distr=distr)
+        fb = ordered_logit(d_b, outcome, fixed_full, distr=distr)
+        if not rb or not fb:
+            continue
+        lr_b = 2.0 * (float(fb['llf']) - float(rb['llf']))
+        if lr_b == lr_b and math.isfinite(lr_b):
+            boot_lrs.append(float(lr_b))
+
+    if len(boot_lrs) < 20:                       # too few valid refits → do NOT fabricate a p
+        out['note'] = (f'only {len(boot_lrs)} of {n_boot} bootstrap refits succeeded '
+                       '(degenerate resamples); cluster-robust p not estimable')
+        return out
+
+    arr = _np.asarray(boot_lrs, dtype=float)
+    # One-sided: how often does the clustered-resample ΔLR reach the observed ΔLR?
+    count = int(_np.sum(arr >= obs_lr - 1e-12))
+    out['p_value'] = float((count + 1) / (len(arr) + 1))
+    out['n_boot_ok'] = int(len(arr))
+    out['status'] = 'ok'
+    out['note'] = ('participant-cluster bootstrap of ΔLR (refit reduced+full ordered logit '
+                   'on each resample); one-sided, add-one smoothed')
+    return out
+
+
 def mixedlm_interaction(df, outcome: str, fixed: str, group: str) -> Dict:
     """Fit ``outcome ~ fixed + (1|group)`` and summarise the INTERACTION terms.
 
@@ -535,10 +631,24 @@ def e_value(rr: float) -> float:
 
 
 def smd_to_risk_ratio(smd: float) -> float:
-    """Approximate risk ratio from a standardized mean difference (Chinn 2000; VanderWeele 2017).
+    """Approximate risk ratio from a standardized mean difference (Chinn 2000; VanderWeele & Ding 2017).
 
-    RR ≈ exp(0.91 · SMD). Used to put a continuous Δprogression cell contrast on the
-    risk-ratio scale so an E-value can be computed for it.
+    ``RR ≈ exp(0.91 · SMD)``. The constant is the logistic↔normal scaling: a standardized
+    mean difference d on a continuous outcome maps to a log-odds-ratio of ``d · π/√3``
+    (π/√3 ≈ 1.8138 is the SD of the standard logistic distribution; Chinn 2000,
+    *Statistics in Medicine* 19:3127–3131), and VanderWeele & Ding (2017,
+    *Ann Intern Med* 167:268–274) then approximate the risk ratio by the SQUARE ROOT of
+    the odds ratio: ``log RR ≈ 0.5 · log OR = 0.5 · (π/√3) · d ≈ 0.91 · d``. So 0.91 ≈
+    π/(2√3). This puts a continuous Δprogression cell contrast on the risk-ratio scale so
+    a VanderWeele–Ding E-value can be computed for it.
+
+    COMPARISON GROUP (the implicit 'exposed' vs 'unexposed' contrast per cell): the SMD is
+    computed as (this move at this FROM-stage) MINUS (all OTHER moves at the SAME FROM-stage)
+    on Δprogression. So 'exposed' = the cue block received THIS PURER move; 'unexposed' = it
+    received some other move; the FROM-stage is held fixed (it is the conditioning stratum).
+    The resulting RR/E-value therefore bound the association "did THIS move (vs the
+    stage-matched alternatives) shift the next participant stage", not "did this stage move
+    at all" — the same contrast the Rosenbaum Γ is computed on (sensitivity_bounds).
     """
     try:
         return float(math.exp(0.91 * float(smd)))

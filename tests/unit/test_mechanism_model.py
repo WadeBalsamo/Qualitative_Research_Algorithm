@@ -130,10 +130,14 @@ class TestEValueCiLimit(unittest.TestCase):
 # Interaction model — planted vs null
 # ---------------------------------------------------------------------------
 
+# Fast config: skip the (slow) cluster-bootstrap LR refits except where explicitly tested.
+_FAST = dict(lr_cluster_bootstrap_n_boot=0)
+
+
 class TestInteractionModelPlanted(unittest.TestCase):
     def setUp(self):
         self.D = MM.build_design_frame(_make_triples(planted=True))
-        self.adj = MM.fit_adjacency_interaction(self.D, MM.MechanismModelConfig())
+        self.adj = MM.fit_adjacency_interaction(self.D, MM.MechanismModelConfig(**_FAST))
 
     def test_ordinal_lr_detects_interaction(self):
         olr = self.adj['ordinal_lr']
@@ -156,11 +160,27 @@ class TestInteractionModelPlanted(unittest.TestCase):
         self.assertFalse(self.adj['bayesian']['ok'])
         self.assertEqual(self.adj['bayesian']['status'], 'not_requested')
 
+    def test_cluster_bootstrap_lr_p_populated_when_enabled(self):
+        # Gate 2: with the cluster-bootstrap enabled (small n_boot for speed) the ordinal_lr
+        # dict carries BOTH the naive in-sample p and a cluster-bootstrap p, clearly labeled.
+        adj = MM.fit_adjacency_interaction(
+            self.D, MM.MechanismModelConfig(lr_cluster_bootstrap_n_boot=40))
+        olr = adj['ordinal_lr']
+        self.assertEqual(olr['status'], 'ok')
+        self.assertIn('p_value_naive_label', olr)
+        self.assertIn('NOT cluster-robust', olr['p_value_naive_label'])
+        # Either a finite cluster-bootstrap p, or a clean 'unavailable' status — never silent.
+        self.assertIn('cluster_bootstrap_status', olr)
+        if olr['cluster_bootstrap_status'] == 'ok':
+            self.assertIsNotNone(olr['p_value_cluster_bootstrap'])
+            self.assertGreater(olr['p_value_cluster_bootstrap'], 0.0)
+            self.assertLessEqual(olr['p_value_cluster_bootstrap'], 1.0)
+
 
 class TestInteractionModelNull(unittest.TestCase):
     def setUp(self):
         self.D = MM.build_design_frame(_make_triples(planted=False))
-        self.adj = MM.fit_adjacency_interaction(self.D, MM.MechanismModelConfig())
+        self.adj = MM.fit_adjacency_interaction(self.D, MM.MechanismModelConfig(**_FAST))
 
     def test_ordinal_lr_not_significant(self):
         olr = self.adj['ordinal_lr']
@@ -178,7 +198,7 @@ class TestBayesianOptInDegrades(unittest.TestCase):
     def test_bayesian_arm_degrades_gracefully(self):
         # bambi requires numpy>=2.0 (conflicts with the pinned transformers) → absent here.
         D = MM.build_design_frame(_make_triples(planted=True))
-        out = MM.fit_adjacency_interaction(D, MM.MechanismModelConfig(estimator='bayesian'))
+        out = MM.fit_adjacency_interaction(D, MM.MechanismModelConfig(estimator='bayesian', **_FAST))
         bay = out['bayesian']
         self.assertFalse(bay['ok'])
         # Clean degradation, not a crash; the note points to the isolated-env workaround.
@@ -296,7 +316,7 @@ class TestRunMechanismModels(unittest.TestCase):
                  progression_coord=float(2 + 0.1 * s))
             for i in range(24) for s in range(1, 8)
         ])
-        res = MM.run_mechanism_models(blocks, pdf, tmp, MM.MechanismModelConfig())
+        res = MM.run_mechanism_models(blocks, pdf, tmp, MM.MechanismModelConfig(**_FAST))
         self.assertTrue(res['available'])
         # At least the sensitivity + CV CSVs are written for planted data.
         names = {os.path.basename(p) for p in res['files_written']}
@@ -365,7 +385,7 @@ class TestBackwardCompat(unittest.TestCase):
         self.assertIn(_LEGACY_SECTION1, txt)
 
     def test_enabled_leads_with_interaction(self):
-        txt = self._run(MM.MechanismModelConfig(enabled=True))
+        txt = self._run(MM.MechanismModelConfig(enabled=True, **_FAST))
         self.assertIn(_PRIMARY_SENTINEL, txt)
         self.assertIn('DESCRIPTIVE COMPANION', txt)        # the additive table is demoted
         self.assertNotIn(_LEGACY_SECTION1, txt)            # legacy header replaced
