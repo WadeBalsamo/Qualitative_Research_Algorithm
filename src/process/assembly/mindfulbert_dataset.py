@@ -21,7 +21,7 @@ Every example carries per-example **provenance + confidence** (label source tier
 flag, gate verdict). The augmentation channel is kept only if a held-out ablation (C4) shows
 it improves a lightweight progression-prediction proxy by more than ``augmentation_min_gain``
 — otherwise it is dropped. A datasheet (C5) records the provenance mix, gate status, the
-augmentation ablation result, and the n≈32 / observational / non-causal caveats.
+augmentation ablation result, and the n≈20 / observational / non-causal caveats.
 
 Output: ``02_meta/training_data/mindfulbert_dataset.jsonl`` + ``mindfulbert_datasheet.{json,txt}``.
 
@@ -444,7 +444,7 @@ def _write_datasheet(examples, datasheet: dict, output_dir: str) -> str:
     L.append("-" * W)
     L.append("  CAVEATS")
     L.append("-" * W)
-    L.append("    • n≈32, single-arm, unblinded, observational. Labels are ASSOCIATIONAL, not")
+    L.append("    • n≈20, single-arm, unblinded, observational. Labels are ASSOCIATIONAL, not")
     L.append("      causal — the elicitation confound (PURER inquiry elicits the language VAAMR")
     L.append("      scores) is not removed by this dataset (methodology §9.2/§9.4).")
     L.append("    • The augmentation channel is MODEL-COUNTERFACTUAL SENSITIVITY, not ground truth;")
@@ -494,7 +494,7 @@ def build_mindfulbert_dataset(df_all, output_dir: str, config=None,
     # Sourced from the dyadic transition model (gnn_layer/transition.py), NOT the retired
     # classifier-counterfactual, so it is gated on the transition instrument having run
     # (transition_per_move.csv present) rather than on the classifier gate. Retained in the
-    # export ONLY when the C4 held-out ablation clears augmentation_min_gain — at n≈32 the
+    # export ONLY when the C4 held-out ablation clears augmentation_min_gain — at n≈20 the
     # transition cue is under-identified, so this honestly tends to drop the channel.
     aug_meta = {'enabled': bool(getattr(config, 'augmentation_enabled', False)),
                 'n_augmented': 0, 'retained': False, 'ablation': {}}

@@ -23,14 +23,14 @@ regressor stays small at n≈160 blocks.
 
 What it buys:
   • an *earns-its-place* check — does adding the cue improve held-out TO prediction over a
-    FROM-only baseline, under participant-grouped CV? (If not, that is the honest n≈32
+    FROM-only baseline, under participant-grouped CV? (If not, that is the honest n≈20
     under-identification result, consistent with H2 — reported, not hidden.)
   • a counterfactual that reads a genuine learned response: swap the block's cue to each PURER
     move's centroid (vs a neutral baseline) and read the shift in predicted TO E[stage], per move
     and per (from_stage × move), with participant-clustered bootstrap CIs.
   • triangulation against the observed Δprogression (analysis/mechanism.py) — the LEAD signal.
 
-Sensitivity analysis of a model, NOT causation (n≈32 observational + the elicitation confound,
+Sensitivity analysis of a model, NOT causation (n≈20 observational + the elicitation confound,
 §9.4). Every output is hypothesis-generating. torch + sklearn + numpy; degrades gracefully.
 """
 
@@ -437,7 +437,7 @@ def write_transition_report(cv: dict, cf_result: dict, tri: Optional[dict],
                             output_dir: str) -> str:
     W = 78
     L = ["=" * W, "DYADIC FROM→CUE→TO TRANSITION MODEL (mechanism instrument)", "=" * W, ""]
-    L.append("HYPOTHESIS-GENERATING. n≈32 participants, observational; sensitivity analysis of a")
+    L.append("HYPOTHESIS-GENERATING. n≈20 participants, observational; sensitivity analysis of a")
     L.append("learned model, NOT causation (elicitation confound §9.4). A small regressor predicts")
     L.append("the TO participant's VAAMR mixture from (FROM_mixture, FROM_stage, pooled cue")
     L.append("embedding) over cue-block triples — directed FROM→CUE→TO structure, NO kNN (H6:")
@@ -461,7 +461,7 @@ def write_transition_report(cv: dict, cf_result: dict, tri: Optional[dict],
             L.append("    signal for the next participant state beyond FROM alone (a lead, not proof).")
         else:
             L.append("  → the cue does NOT improve held-out prediction at this scale: the transition")
-            L.append("    is under-identified at n≈32 (consistent with H2). The counterfactual below")
+            L.append("    is under-identified at n≈20 (consistent with H2). The counterfactual below")
             L.append("    is therefore exploratory only — observed Δprogression (mechanism.py) LEADS.")
     L.append("")
     L.append("-" * W)
@@ -497,7 +497,7 @@ def write_transition_report(cv: dict, cf_result: dict, tri: Optional[dict],
             L.append(f"  sign agreement on the {tri['n_fdr_cells']} FDR-significant observed cells = "
                      f"{_f(tri.get('sign_agreement_fdr'))}")
         else:
-            L.append("  (no FDR-significant observed cells at n≈32 — convergence is under-powered;")
+            L.append("  (no FDR-significant observed cells at n≈20 — convergence is under-powered;")
             L.append("   a divergence is the elicitation-confound signature, not a refutation.)")
     L.append("")
     L.append("-" * W)

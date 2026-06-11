@@ -200,7 +200,16 @@ class LLMClient:
         message = choice.get('message', {})
         result_text = message.get('content') or ''
 
-        if result_text.strip():
+        def _has_json_fields(s: str) -> bool:
+            """True if ``s`` carries a non-empty JSON object (a ``{...}`` with a key)."""
+            a, b = s.find('{'), s.rfind('}')
+            return a != -1 and b > a and ':' in s[a:b]
+
+        # A non-empty ``content`` that actually carries JSON fields is the answer.
+        # Reasoning models occasionally emit a bare ``{}`` stub in ``content`` while
+        # the real answer lands in ``reasoning_content`` — treat that stub as
+        # unusable and fall through to the reasoning-salvage path below.
+        if result_text.strip() and _has_json_fields(result_text):
             return result_text, False
 
         finish_reason = choice.get('finish_reason', '')

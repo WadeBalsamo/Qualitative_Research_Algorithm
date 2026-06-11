@@ -55,6 +55,42 @@ def filter_participant_segments(segments: List[Segment]) -> List[Segment]:
     return [s for s in segments if s.speaker == 'participant']
 
 
+# Transient empty/unparseable responses are recoverable.  Under LM Studio
+# model-rotation + context pressure a capable model intermittently returns a
+# bare ``{}`` (no content, no reasoning) for a long prompt; a re-request of the
+# SAME prompt almost always yields valid JSON (verified empirically against the
+# PURER cue prompt).  We therefore retry a *parse failure* — a successful HTTP
+# call whose ``parse_response`` returns ``None`` — a bounded number of times
+# before recording a permanent ``None``.  (Network/HTTP errors are already
+# retried inside ``LLMClient.request``; this covers the parse layer, which was
+# the cause of the all-NULL PURER overlay incident.)
+_PARSE_RETRY_ATTEMPTS = 3
+
+
+def _request_and_parse(client, prompt, parse_response, seg_id, run_idx,
+                       attempts: int = _PARSE_RETRY_ATTEMPTS):
+    """Request + parse with bounded retries on a parse failure.
+
+    Returns the parsed ballot, or ``None`` if every attempt failed to parse.
+    """
+    parsed = None
+    for attempt in range(1, attempts + 1):
+        try:
+            result_text, _ = client.request(prompt)
+            if result_text is not None:
+                parsed = parse_response(result_text)
+        except Exception as e:
+            print(f"  Error on {seg_id}, run {run_idx} "
+                  f"(attempt {attempt}/{attempts}): {e}")
+            parsed = None
+        if parsed is not None:
+            return parsed
+        if attempt < attempts:
+            print(f"  Unparseable response for {seg_id}, run {run_idx} "
+                  f"(attempt {attempt}/{attempts}) — retrying")
+    return parsed
+
+
 def classify_segments(
     segments: List[Segment],
     client: LLMClient,
@@ -69,6 +105,8 @@ def classify_segments(
     model_tag: Optional[str] = None,
     serialize_result: Optional[Callable[[Any], Any]] = None,
     per_run_models: Optional[List[str]] = None,
+    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    checkpoint_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Shared classification loop for N LLM runs per segment.
@@ -110,6 +148,19 @@ def classify_segments(
         — so each model is loaded only once per pass rather than reloaded for
         every segment.  Early-exit optimisation is disabled (all raters always
         run).
+    on_progress : callable({seg_id: ballot|None}) or None
+        Optional callback invoked right after every checkpoint save with the
+        per-rater cells accumulated *since the last call* (``{segment_id: parsed
+        ballot | None}``; ``None`` is a parse failure → an ERROR ballot).  Lets a
+        caller (the M3 run executor) flush durable ballots mid-sweep without
+        ``classification_tools`` importing ``process.db``.  Also called once more
+        at sweep end.  No-op when None (the legacy inline path passes nothing).
+    checkpoint_path : str or None
+        When given (the M3 run executor's per-run mode), this EXACT path is used
+        for both resume-read and every model-first checkpoint write — a stable,
+        deterministic ``{prefix}_run{run_id:04d}_runs.json`` with no timestamp, so
+        ``resume_from`` always matches the file the prior attempt wrote (no glob
+        races).  When None the legacy timestamped filename is used.
 
     Returns
     -------
@@ -157,6 +208,8 @@ def classify_segments(
             timestamp=timestamp,
             status_path=status_path,
             serialize_result=serialize_result,
+            on_progress=on_progress,
+            checkpoint_path=checkpoint_path,
         )
 
     # --- Single-model (segment-first) path below ---
@@ -171,46 +224,52 @@ def classify_segments(
     ok_count = 0
     error_count = 0
 
-    for i, segment in enumerate(segments):
-        if segment.segment_id in results:
-            continue
+    # Crash-safety: a try/finally guarantees a checkpoint write even on an
+    # abnormal exit (KeyboardInterrupt, unrecoverable error) so the trailing
+    # (< save_interval) cells of an in-flight sweep are not lost — the run
+    # resumes from the checkpoint instead of re-fetching completed segments.
+    try:
+        for i, segment in enumerate(segments):
+            if segment.segment_id in results:
+                continue
 
-        # Print progress for every segment so the terminal stays alive
-        pct = f" ({error_count}/{ok_count + error_count} errors)" if (ok_count + error_count) > 0 else ""
-        snippet = segment.text.replace('\n', ' ')
-        if len(segment.text) > 80:
-            snippet += "..."
-        print(f"  [{i + 1}/{total}] {segment.segment_id}{pct}")
-        print(f"           \"{snippet}\"")
+            # Print progress for every segment so the terminal stays alive
+            pct = f" ({error_count}/{ok_count + error_count} errors)" if (ok_count + error_count) > 0 else ""
+            snippet = segment.text.replace('\n', ' ')
+            if len(segment.text) > 80:
+                snippet += "..."
+            print(f"  [{i + 1}/{total}] {segment.segment_id}{pct}")
+            print(f"           \"{snippet}\"")
 
-        # Preserve slot positions: run_results[k] is the ballot from rater k,
-        # or None when that run failed to produce a parseable response.
-        # All n_runs always execute — no early-exit — so every rater gets a
-        # chance to cast a ballot. Early-exit would bias IRR estimates.
-        run_results: List[Any] = [None] * n_runs
-        for run in range(n_runs):
-            prompt = build_prompt(segment, run, segments, i)
-            try:
-                result_text, _ = client.request(prompt)
-                if result_text is not None:
-                    parsed = parse_response(result_text)
-                    run_results[run] = parsed
-            except Exception as e:
-                print(f"  Error on {segment.segment_id}, run {run}: {e}")
+            # Preserve slot positions: run_results[k] is the ballot from rater k,
+            # or None when that run failed to produce a parseable response.
+            # All n_runs always execute — no early-exit — so every rater gets a
+            # chance to cast a ballot. Early-exit would bias IRR estimates.
+            run_results: List[Any] = [None] * n_runs
+            for run in range(n_runs):
+                prompt = build_prompt(segment, run, segments, i)
+                run_results[run] = _request_and_parse(
+                    client, prompt, parse_response, segment.segment_id, run)
 
-        if any(r is not None for r in run_results):
-            ok_count += 1
-        else:
-            error_count += 1
+            if any(r is not None for r in run_results):
+                ok_count += 1
+            else:
+                error_count += 1
 
-        merged = merge_runs(run_results)
-        results[segment.segment_id] = merged
+            merged = merge_runs(run_results)
+            results[segment.segment_id] = merged
 
-        # Write live status entry
-        if status_path:
-            _write_status_entry(status_path, segment, i, total, merged, run_results)
+            # Write live status entry
+            if status_path:
+                _write_status_entry(status_path, segment, i, total, merged, run_results)
 
-        if output_dir and i % save_interval == 0:
+            if output_dir and i % save_interval == 0:
+                _save_checkpoint(
+                    results, output_dir, file_prefix, model_tag,
+                    timestamp, serialize_result,
+                )
+    finally:
+        if output_dir:
             _save_checkpoint(
                 results, output_dir, file_prefix, model_tag,
                 timestamp, serialize_result,
@@ -249,6 +308,8 @@ def _classify_segments_model_first(
     timestamp: str,
     status_path: Optional[str],
     serialize_result: Optional[Callable[[Any], Any]],
+    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    checkpoint_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Model-first classification: classify all segments with model 0, then model 1,
@@ -257,73 +318,114 @@ def _classify_segments_model_first(
     Intermediate per-run results are checkpointed to ``*_runs.json`` after each
     full sweep.  The final merged checkpoint is written in the same format as the
     single-model path.
+
+    ``on_progress`` (when given) is invoked right after every checkpoint save
+    with the per-rater ballots produced *since the last call* (``{seg_id:
+    parsed|None}`` for the current run).  A ``try/finally`` guarantees a
+    checkpoint save (and a final flush) even on an abnormal exit, so an
+    interrupted sweep never loses up to ``save_interval - 1`` trailing cells.
     """
     total = len(segments)
     original_model = client.config.model
 
+    def _save():
+        """Persist the per-run checkpoint (deterministic path in executor mode)."""
+        if not output_dir:
+            return
+        _save_runs_checkpoint(
+            run_results, completed_runs, n_runs, per_run_models,
+            output_dir, file_prefix, model_tag, timestamp,
+            checkpoint_path=checkpoint_path,
+        )
+
     # -- Resume --
     run_results: Dict[str, Dict[str, Any]] = {}   # seg_id → {run_idx_str → parsed}
     completed_runs: Set[int] = set()
-    if resume_from and os.path.exists(resume_from):
-        run_results, completed_runs = _load_runs_checkpoint(resume_from, n_runs)
+    # In executor mode the resume source is the deterministic per-run checkpoint
+    # (matches exactly what _save writes); otherwise the caller's resume_from.
+    _resume_src = checkpoint_path if checkpoint_path else resume_from
+    if _resume_src and os.path.exists(_resume_src):
+        run_results, completed_runs = _load_runs_checkpoint(_resume_src, n_runs)
         if completed_runs:
             print(f"  Resumed: runs {sorted(completed_runs)} already complete")
 
+    # Track which (seg_id, run_idx) cells on_progress has already seen so each
+    # callback gets only the delta since the previous save.  Cells already in the
+    # resumed checkpoint are considered already-flushed (the executor upserted
+    # them on the prior attempt).
+    flushed: Set[tuple] = set()
+    if on_progress is not None:
+        for sid, by_run in run_results.items():
+            for r_key in by_run:
+                flushed.add((sid, r_key))
+
+    def _flush_progress(run_idx: int) -> None:
+        """Emit ballots for run_idx produced since the last flush, then mark them."""
+        if on_progress is None:
+            return
+        r_key = str(run_idx)
+        delta: Dict[str, Any] = {}
+        for sid, by_run in run_results.items():
+            if r_key in by_run and (sid, r_key) not in flushed:
+                delta[sid] = by_run[r_key]
+                flushed.add((sid, r_key))
+        if delta:
+            on_progress(delta)
+
     # -- Sweep phase: one full pass per model --
-    for run_idx, model in enumerate(per_run_models):
-        if run_idx in completed_runs:
-            print(f"  Run {run_idx + 1}/{n_runs} ({model}): already complete, skipping")
-            continue
+    try:
+        for run_idx, model in enumerate(per_run_models):
+            if run_idx in completed_runs:
+                print(f"  Run {run_idx + 1}/{n_runs} ({model}): already complete, skipping")
+                continue
 
-        client.config.model = model
-        print(f"  Run {run_idx + 1}/{n_runs}: {model}")
-        if client.config.backend == 'lmstudio' and not client.check_loaded_model(model):
-            print(
-                f"\n  *** MODEL MISMATCH WARNING ***\n"
-                f"  Requested : {model}\n"
-                f"  LMStudio does not appear to have this model loaded.\n"
-                f"  Load '{model}' in LMStudio, then recover with:\n"
-                f"    qra reclassify-run --output-dir <output_dir> --run {run_idx + 1} --model {model}\n"
-                f"  Continuing — results for this run will use whatever LMStudio has loaded.\n"
-            )
-
-        for i, segment in enumerate(segments):
-            seg_id = segment.segment_id
-            if str(run_idx) in run_results.get(seg_id, {}):
-                continue   # already classified in a prior attempt
-
-            prompt = build_prompt(segment, run_idx, segments, i)
-            parsed = None
-            try:
-                result_text, _ = client.request(prompt)
-                if result_text is not None:
-                    parsed = parse_response(result_text)
-            except Exception as e:
-                print(f"  Error on {seg_id}, run {run_idx}: {e}")
-
-            run_results.setdefault(seg_id, {})[str(run_idx)] = parsed
-
-            snippet = segment.text#[:60].replace('\n', ' ')
-            print(f"  [Run {run_idx + 1}/{n_runs} | Seg {i + 1}/{total}] {seg_id}: \"{snippet}...\"")
-            # print the result of this run for the current segment, if parseable
-            if parsed is not None:
-                print(f"    → Parsed result: {parsed}")
-            else:
-                print(f"    → No parseable result")
-            if output_dir and i % save_interval == 0:
-                _save_runs_checkpoint(
-                    run_results, completed_runs, n_runs, per_run_models,
-                    output_dir, file_prefix, model_tag, timestamp,
+            client.config.model = model
+            print(f"  Run {run_idx + 1}/{n_runs}: {model}")
+            if client.config.backend == 'lmstudio' and not client.check_loaded_model(model):
+                print(
+                    f"\n  *** MODEL MISMATCH WARNING ***\n"
+                    f"  Requested : {model}\n"
+                    f"  LMStudio does not appear to have this model loaded.\n"
+                    f"  Load '{model}' in LMStudio, then recover with:\n"
+                    f"    qra reclassify-run --output-dir <output_dir> --run {run_idx + 1} --model {model}\n"
+                    f"  Continuing — results for this run will use whatever LMStudio has loaded.\n"
                 )
 
-        completed_runs.add(run_idx)
-        if output_dir:
-            _save_runs_checkpoint(
-                run_results, completed_runs, n_runs, per_run_models,
-                output_dir, file_prefix, model_tag, timestamp,
-            )
+            for i, segment in enumerate(segments):
+                seg_id = segment.segment_id
+                if str(run_idx) in run_results.get(seg_id, {}):
+                    continue   # already classified in a prior attempt
 
-    client.config.model = original_model
+                prompt = build_prompt(segment, run_idx, segments, i)
+                parsed = _request_and_parse(
+                    client, prompt, parse_response, seg_id, run_idx)
+
+                run_results.setdefault(seg_id, {})[str(run_idx)] = parsed
+
+                snippet = segment.text#[:60].replace('\n', ' ')
+                print(f"  [Run {run_idx + 1}/{n_runs} | Seg {i + 1}/{total}] {seg_id}: \"{snippet}...\"")
+                # print the result of this run for the current segment, if parseable
+                if parsed is not None:
+                    print(f"    → Parsed result: {parsed}")
+                else:
+                    print(f"    → No parseable result")
+                if output_dir and i % save_interval == 0:
+                    _save()
+                    _flush_progress(run_idx)
+
+            completed_runs.add(run_idx)
+            _save()
+            _flush_progress(run_idx)
+    finally:
+        # Crash-safety: ALWAYS persist whatever has been classified so an
+        # abnormal exit (KeyboardInterrupt, network failure) is resumable from
+        # the checkpoint rather than discarding the trailing (< save_interval)
+        # cells of the in-flight sweep.  Flush them to the executor too.
+        _save()
+        if on_progress is not None:
+            for run_idx in range(n_runs):
+                _flush_progress(run_idx)
+        client.config.model = original_model
 
     # -- Merge phase --
     # Preserve per-rater slot alignment: slot k always corresponds to
@@ -433,12 +535,22 @@ def _save_runs_checkpoint(
     file_prefix: str,
     model_tag: Optional[str],
     timestamp: str,
+    checkpoint_path: Optional[str] = None,
 ) -> None:
-    """Write per-run intermediate results for the model-first path."""
-    checkpoint_dir = os.path.join(output_dir, 'checkpoints')
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    tag = f"_{model_tag}" if model_tag else ''
-    path = os.path.join(checkpoint_dir, f'{file_prefix}{tag}_{timestamp}_runs.json')
+    """Write per-run intermediate results for the model-first path.
+
+    ``checkpoint_path``, when given, is the exact destination (executor per-run
+    mode); otherwise a timestamped filename under ``output_dir/checkpoints/`` is
+    used (legacy inline behavior).
+    """
+    if checkpoint_path is not None:
+        path = checkpoint_path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    else:
+        checkpoint_dir = os.path.join(output_dir, 'checkpoints')
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        tag = f"_{model_tag}" if model_tag else ''
+        path = os.path.join(checkpoint_dir, f'{file_prefix}{tag}_{timestamp}_runs.json')
     payload = {
         "_meta": {
             "format": "model_first_v1",

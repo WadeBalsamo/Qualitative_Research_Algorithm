@@ -24,6 +24,7 @@ from classification_tools.classification_loop import filter_participant_segments
 from classification_tools.majority_vote import vote_single_label, vote_multi_label
 from constructs.theme_schema import ThemeFramework
 from constructs.config import ThemeClassificationConfig
+from constructs.purer import PURER_TIE_BREAK_ORDER
 from constructs.codebook.codebook_schema import Codebook, CodeAssignment
 from classification_tools.codebook_multilabel.config import LLMCodebookConfig
 
@@ -169,6 +170,52 @@ def _build_context_block(
 
 
 # ---------------------------------------------------------------------------
+# Shared merge construction (the equivalence keystone)
+# ---------------------------------------------------------------------------
+
+def build_merge_result(
+    parsed_runs: List[Optional[Dict]],
+    rater_ids: List[str],
+    *,
+    n_runs: int,
+    secondary_weight: float = 0.6,
+    presence_threshold: float = 0.5,
+    vote_mode: str = 'majority',
+    tie_break_order: Optional[List[int]] = None,
+) -> Dict[str, Any]:
+    """Build one merge-result dict from a slot-aligned list of per-rater ballots.
+
+    This is the single source of truth for both the *inline* classification path
+    (the ``merge_runs`` closures in ``classify_segments_zero_shot`` /
+    ``classify_purer_cue_units``) and the *rebuild-from-ballots* path
+    (``process.consensus_rebuild``).  Identical ballots therefore produce an
+    identical consensus by construction.
+
+    ``parsed_runs`` is padded with ``None`` (and truncated) to exactly
+    ``n_runs`` so slot ``k`` lines up with ``rater_ids[k]``; a ``None`` slot is a
+    hard parse failure (ERROR ballot).  The returned dict is the unified shape
+    the response parsers consume::
+
+        {'rater_ids': [...], 'rater_votes': [...], 'consensus': {...}}
+    """
+    padded = list(parsed_runs) + [None] * (n_runs - len(parsed_runs))
+    padded = padded[:n_runs]
+    consensus = vote_single_label(
+        padded,
+        rater_ids=rater_ids,
+        secondary_weight=secondary_weight,
+        presence_threshold=presence_threshold,
+        vote_mode=vote_mode,
+        tie_break_order=tie_break_order,
+    )
+    return {
+        'rater_ids': rater_ids,
+        'rater_votes': consensus['rater_votes'],
+        'consensus': consensus,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Cue-unit PURER classification
 # ---------------------------------------------------------------------------
 
@@ -178,6 +225,8 @@ def classify_purer_cue_units(
     config: 'ThemeClassificationConfig',
     resume_from: Optional[str] = None,
     process_logger=None,
+    on_progress=None,
+    checkpoint_path: Optional[str] = None,
 ) -> Tuple[Dict, Dict]:
     """
     Classify PURER cue units — one classification per therapist cue block.
@@ -213,6 +262,17 @@ def classify_purer_cue_units(
     use_per_run_models = (
         len(per_run_models) == config.n_runs and len(per_run_models) >= 2
     )
+
+    # M3 run executor: a single-rater PURER run (n_runs=1, per_run_models=[M])
+    # still needs the model-first ``*_runs.json`` checkpoint + ``on_progress``
+    # ballot flush.  Force model-first for that one rater when on_progress is set.
+    force_model_first_single = (
+        on_progress is not None
+        and len(per_run_models) == config.n_runs
+        and len(per_run_models) >= 1
+    )
+    if force_model_first_single:
+        use_per_run_models = True
 
     if not use_per_run_models and config.n_runs > 1:
         # Degrade to single-run rather than crashing when per_run_models is absent.
@@ -271,20 +331,20 @@ def classify_purer_cue_units(
     def parse_response(result_text: str) -> Optional[Dict]:
         return _parse_single_run(result_text, name_to_id)
 
+    # PURER votes in monotone 'coded_plurality' mode by default; fall back to the
+    # documented move precedence when the config supplies no explicit tie-break.
+    purer_vote_mode = getattr(config, 'vote_mode', 'majority')
+    purer_tie_break_order = getattr(config, 'tie_break_order', None) or PURER_TIE_BREAK_ORDER
+
     def merge_runs(parsed_runs: List[Optional[Dict]]) -> Dict:
-        padded = list(parsed_runs) + [None] * (config.n_runs - len(parsed_runs))
-        padded = padded[:config.n_runs]
-        consensus = vote_single_label(
-            padded,
-            rater_ids=rater_ids,
+        return build_merge_result(
+            parsed_runs, rater_ids,
+            n_runs=config.n_runs,
             secondary_weight=getattr(config, 'evidence_secondary_weight', 0.6),
             presence_threshold=getattr(config, 'evidence_presence_threshold', 0.5),
+            vote_mode=purer_vote_mode,
+            tie_break_order=purer_tie_break_order,
         )
-        return {
-            'rater_ids': rater_ids,
-            'rater_votes': consensus['rater_votes'],
-            'consensus': consensus,
-        }
 
     raw_results = classify_segments(
         segments=target_segments,
@@ -299,6 +359,8 @@ def classify_purer_cue_units(
         file_prefix='purer_cue_results',
         model_tag=model_clean,
         per_run_models=per_run_models if use_per_run_models else None,
+        on_progress=on_progress,
+        checkpoint_path=checkpoint_path,
     )
 
     metadata_all: Dict[str, Any] = {}
@@ -524,6 +586,8 @@ def classify_segments_zero_shot(
     resume_from: Optional[str] = None,
     process_logger=None,
     utterance_role: str = 'participant',
+    on_progress=None,
+    checkpoint_path: Optional[str] = None,
 ) -> Tuple[Dict, Dict]:
     """
     Zero-shot classification of transcript segments using a ThemeFramework.
@@ -566,6 +630,18 @@ def classify_segments_zero_shot(
     use_per_run_models = (
         len(per_run_models) == config.n_runs and len(per_run_models) >= 2
     )
+
+    # The M3 run executor sweeps one run at a time (n_runs=1, per_run_models=[M])
+    # but still needs the model-first path's ``*_runs.json`` checkpoint + the
+    # ``on_progress`` ballot flush.  When an on_progress hook is supplied and the
+    # single model lines up with n_runs, force model-first for that one rater.
+    force_model_first_single = (
+        on_progress is not None
+        and len(per_run_models) == config.n_runs
+        and len(per_run_models) >= 1
+    )
+    if force_model_first_single:
+        use_per_run_models = True
 
     if not use_per_run_models and config.n_runs > 1:
         raise ValueError(
@@ -648,19 +724,14 @@ def classify_segments_zero_shot(
     def merge_runs(parsed_runs: List[Optional[Dict]]) -> Dict:
         # classify_segments pads/truncates parsed_runs to n_runs. Each
         # slot lines up with rater_ids by index.
-        padded = list(parsed_runs) + [None] * (config.n_runs - len(parsed_runs))
-        padded = padded[:config.n_runs]
-        consensus = vote_single_label(
-            padded,
-            rater_ids=rater_ids,
+        return build_merge_result(
+            parsed_runs, rater_ids,
+            n_runs=config.n_runs,
             secondary_weight=getattr(config, 'evidence_secondary_weight', 0.6),
             presence_threshold=getattr(config, 'evidence_presence_threshold', 0.5),
+            vote_mode=getattr(config, 'vote_mode', 'majority'),
+            tie_break_order=getattr(config, 'tie_break_order', None),
         )
-        return {
-            'rater_ids': rater_ids,
-            'rater_votes': consensus['rater_votes'],
-            'consensus': consensus,
-        }
 
     raw_results = classify_segments(
         segments=target_segments,
@@ -675,6 +746,8 @@ def classify_segments_zero_shot(
         file_prefix='llm_results',
         model_tag=model_clean,
         per_run_models=per_run_models if use_per_run_models else None,
+        on_progress=on_progress,
+        checkpoint_path=checkpoint_path,
     )
 
     seg_by_id = {s.segment_id: s for s in target_segments}

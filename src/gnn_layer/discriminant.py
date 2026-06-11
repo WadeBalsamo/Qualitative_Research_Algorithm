@@ -35,7 +35,7 @@ Reuses the reliability harness (``experiments/gnn_reliability``) for folds / pro
 / two-axis scoring, ``gnn_layer.communities`` for the community partition, and ``analysis.stats`` for
 the CIs / Cramér's V / permutation — nothing statistical is re-derived here.
 
-NO causal claims; n≈32 observational; every output is hypothesis-generating.
+NO causal claims; n≈20 observational; every output is hypothesis-generating.
 numpy + sklearn + scipy (all already dependencies); degrades gracefully (logged) if the Qwen
 embedding cache / endpoint or the harness is unavailable.
 """
@@ -552,7 +552,7 @@ def write_pca_coords_csv(coords: dict, output_dir: str) -> Optional[str]:
 def write_discriminant_report(result: dict, output_dir: str) -> str:
     W = 78
     L = ["=" * W, "H6 — DISCRIMINANT VALIDITY: VAAMR IS DEVELOPMENTAL, NOT TOPICAL", "=" * W, ""]
-    L.append("HYPOTHESIS-GENERATING / CONSTRUCT VALIDITY. n≈32 participants, observational.")
+    L.append("HYPOTHESIS-GENERATING / CONSTRUCT VALIDITY. n≈20 participants, observational.")
     L.append("Claim: VAAMR stage is recoverable by direct supervision yet poorly carried by what")
     L.append("makes segments *similar* (topic, body region, affect). On the SAME Qwen embeddings a")
     L.append("supervised probe reaches the human band while a content-similarity model lands far")

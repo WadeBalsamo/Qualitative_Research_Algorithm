@@ -579,6 +579,15 @@ def machine_signature(output_dir: str) -> str:
     # Coded segment content: drift here means IRR would score text the humans never saw,
     # so a change must force regeneration (and surface the drift banner).
     parts.append(f"testset:{irr_import.testset_content_signature(output_dir)}")
+    # Run selection: changing which runs feed the theme consensus (e.g. `qra runs
+    # select`) rebuilds the overlay → the per-run κ table + the operative κ shift,
+    # so a new selection decision must force IRR regeneration too.
+    try:
+        from . import run_selection as _runsel
+        rec = _runsel.load_selection_record(output_dir, 'theme') or {}
+        parts.append(f"selection:{rec.get('decided_at', '')}")
+    except Exception:
+        parts.append("selection:")
     return hashlib.sha256('||'.join(parts).encode()).hexdigest()[:16]
 
 
@@ -711,6 +720,17 @@ def run_irr_analysis(output_dir: str, config=None, *, verbose: bool = True,
         'human_vs_gnn': human_vs_gnn,
         'n_discrepancies': len(discrepancies),
     }
+
+    # Per-run κ table (schema-v2 run registry): EVERY non-archived theme run vs
+    # the human consensus, with the *SELECTED* runs flagged from the selection
+    # record. Best-effort — empty pre-migration / on any error; never crash IRR.
+    try:
+        from . import run_selection as _runsel
+        results['runs_kappa'] = _runsel.per_run_kappa(output_dir, 'theme')
+        results['run_selection'] = _runsel.load_selection_record(output_dir, 'theme')
+    except Exception:
+        results['runs_kappa'] = {}
+        results['run_selection'] = None
 
     _write_outputs(output_dir, results, discrepancies, item_details)
     if verbose:

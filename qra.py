@@ -481,9 +481,12 @@ def _flatten_wizard_config(data: dict) -> dict:
         if isinstance(val, dict) and key not in ('pipeline', 'framework', 'codebook'):
             result[key] = val
 
-    # Copy top-level keys that are already flat
+    # Copy top-level keys that are already flat (scalars + top-level lists).
+    # model_roster is a LIST, not a dict, so the dict pass-through above misses it —
+    # carry it explicitly here so --roster can read config.model_roster.
     for key in ('resume_from', 'autoresearch_dir', 'run_purer_labeler',
-                'auto_analyze', 'speaker_anonymization_key_path'):
+                'auto_analyze', 'speaker_anonymization_key_path',
+                'model_roster'):
         if key in data and key not in result:
             result[key] = data[key]
 
@@ -1113,16 +1116,70 @@ def cmd_edit_anonymization(args):
               f"{stats['regenerated']['analysis_files']} analysis files")
 
 
+def _overlay_models_for_classify(config, overlay, output_dir):
+    """Resolve the per-run model roster for an overlay's classify shim.
+
+    theme -> theme_classification (per_run_models or [model]).
+    purer -> resolve VAAMR-inheritance first (model/per_run_models inherited from
+    theme when unset), then its per_run_models or [model].  Returns ``[]`` when no
+    model is configured (caller skips translation for that overlay).
+    """
+    if overlay == 'theme':
+        sub = config.theme_classification
+    else:
+        from process.orchestrator import _resolve_purer_framework_and_config
+        # Resolves inheritance INTO config.purer_classification (idempotent).
+        _resolve_purer_framework_and_config(config, output_dir)
+        sub = config.purer_classification
+    models = [str(m) for m in (getattr(sub, 'per_run_models', None) or []) if m]
+    if not models and getattr(sub, 'model', None):
+        models = [str(sub.model)]
+    return models
+
+
+def _get_or_create_runs_for_overlay(output_dir, overlay, models, config):
+    """Get-or-create one queued run per model (rater_label = raw model string).
+
+    Reuses an existing NON-archived row (incl. its checkpoint) when the rater
+    label already exists for the overlay; otherwise creates a queued run.  This
+    keeps κ-history continuity (the rater id is the raw model string).  Returns
+    the ordered list of run_ids.
+    """
+    from process import run_registry as _rr
+    sub = (config.theme_classification if overlay == 'theme'
+           else config.purer_classification)
+    backend = getattr(sub, 'backend', None)
+    temperature = getattr(sub, 'temperature', None)
+    existing = {r['rater_label']: r for r in _rr.list_runs(output_dir, overlay=overlay)}
+    run_ids = []
+    for m in models:
+        row = existing.get(m)
+        if row is not None and row['status'] != 'archived':
+            run_ids.append(row['run_id'])
+            continue
+        rid = _rr.create_run(
+            output_dir, overlay=overlay, model=m, rater_label=m,
+            backend=backend, temperature=temperature, note='classify shim',
+        )
+        run_ids.append(rid)
+    return run_ids
+
+
 def cmd_classify(args):
-    """qra classify — run classifier(s) on frozen segments and write overlays."""
+    """qra classify — run classifier(s) on frozen segments and write overlays.
+
+    VAAMR/PURER are routed through the schema-v2 run registry + executor (the
+    classify "shim"): the resolved per-run models become get-or-create runs and
+    ``run_executor.execute_queue`` sweeps them (durable ballots + selection-aware
+    consensus rebuild).  Codebook / cross-validation keep the legacy inline path.
+    ``--resume-from <explicit checkpoint>`` bypasses the shim entirely (legacy
+    inline end-to-end; ballots still captured post-hoc by the M1 hook).
+    """
     from process import segments_io as _segments_io
     from process.orchestrator import (
-        stage_classify_theme,
-        stage_classify_purer,
         stage_classify_codebook,
         stage_cross_validation,
     )
-    from process._freeze import FrozenArtifactError
 
     output_dir = args.output_dir
     what = getattr(args, 'what', 'all') or 'all'
@@ -1142,6 +1199,7 @@ def cmd_classify(args):
 
     config = _build_config(args)
     framework = _load_framework(getattr(args, 'framework', None))
+    explicit_resume = getattr(args, 'resume_from', None)
 
     # --zero-shot: per-invocation override scoped by --what.
     if getattr(args, 'zero_shot', False):
@@ -1157,44 +1215,89 @@ def cmd_classify(args):
 
     to_run = {what} if what != 'all' else {'vaamr', 'purer', 'codebook', 'cross-validation'}
 
-    # --fresh: clear checkpoints + overlay for each targeted framework so the
-    # classifier starts over instead of resuming from prior runs.
+    # --fresh: clear checkpoints + overlay + archive prior runs for each targeted
+    # framework so the classifier opens a new run lineage instead of resuming.
     if getattr(args, 'fresh', False):
         from process import reclassify_ops as _reclassify
         for w in sorted(to_run):
             r = _reclassify.reset_for_fresh(output_dir, w)
-            print(f"  Fresh: cleared {r['checkpoints_removed']} checkpoint(s) + overlay for {w}")
+            extra = f", archived {r['runs_archived']} run(s)" if r.get('runs_archived') else ''
+            print(f"  Fresh: cleared {r['checkpoints_removed']} checkpoint(s) + overlay "
+                  f"for {w}{extra}")
         config.resume_from = None
+        explicit_resume = None
 
-    # Load frozen segments once (raw); apply overlays selectively per stage below.
-    from process import classifications_io as _cio
-    segments = _segments_io.load_segments_for_stage(output_dir, apply=())
-    # Apply all existing overlays up-front so each stage sees the current on-disk state.
-    by_id = {s.segment_id: s for s in segments}
-    _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv'))
+    # ---- Escape hatch: an explicit legacy multi-run checkpoint bypasses the
+    # shim and runs the inline path end-to-end (ballots captured by the M1 hook).
+    if explicit_resume and ('vaamr' in to_run or 'purer' in to_run):
+        print("  --resume-from given: using the LEGACY inline classify path "
+              "(bypassing the run registry/executor). Ballots are still captured "
+              "post-hoc. Prefer `qra runs start` for new work.")
+        _classify_inline_legacy(args, config, framework, to_run, output_dir)
+        return
 
-    if 'vaamr' in to_run:
-        print("  Running VAAMR classifier...")
-        stage_classify_theme(config, framework, segments=segments, output_dir=output_dir)
-        print(f"  theme overlay written to qra.db ({len(segments)} segments)")
+    # ---- Shim: route VAAMR/PURER through the run registry + executor ----
+    from process.reclassify_ops import OVERLAY_FOR_WHAT
+    overlays_to_execute = []
+    for w in ('vaamr', 'purer'):
+        if w not in to_run:
+            continue
+        overlay = OVERLAY_FOR_WHAT[w]
+        models = _overlay_models_for_classify(config, overlay, output_dir)
+        if not models:
+            print(f"  {w}: no model configured — skipping.")
+            continue
+        run_ids = _get_or_create_runs_for_overlay(output_dir, overlay, models, config)
+        print(f"  {w}: queued/reused runs {run_ids} [{', '.join(models)}]")
+        overlays_to_execute.append(overlay)
 
-    if 'purer' in to_run:
-        print("  Running PURER classifier...")
-        stage_classify_purer(config, segments=segments, output_dir=output_dir)
-        print(f"  purer overlay written to qra.db")
+    if overlays_to_execute:
+        from process import run_executor as _rx
+        try:
+            summary = _rx.execute_queue(
+                output_dir, config, overlays=tuple(overlays_to_execute),
+                force=getattr(args, 'force', False),
+            )
+        except _rx.RunnerBusy as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        if summary.get('skipped_queued'):
+            print(f"  NOTE: runs left queued (pre-flight): {summary['skipped_queued']} "
+                  "— load the model(s) and re-run, or pass --force.")
+        if summary.get('stopped_early'):
+            print("  Stopped early (STOP_QRA_RUNS). Remove the sentinel and re-run to finish.")
 
-    if 'codebook' in to_run:
-        codebook = _load_codebook(getattr(args, 'codebook', None))
-        print("  Running codebook classifier...")
-        stage_classify_codebook(config, codebook, segments=segments, output_dir=output_dir)
-        print(f"  codebook overlay written to qra.db")
-
-    if 'cross-validation' in to_run:
-        print("  Running cross-validation...")
-        stage_cross_validation(config, framework, segments=segments, output_dir=output_dir)
-        print(f"  cross-validation overlay written to qra.db")
+    # ---- Codebook / cross-validation keep the inline path ----
+    if 'codebook' in to_run or 'cross-validation' in to_run:
+        from process import classifications_io as _cio
+        segments = _segments_io.load_segments_for_stage(output_dir, apply=())
+        by_id = {s.segment_id: s for s in segments}
+        _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv'))
+        if 'codebook' in to_run:
+            codebook = _load_codebook(getattr(args, 'codebook', None))
+            print("  Running codebook classifier...")
+            stage_classify_codebook(config, codebook, segments=segments, output_dir=output_dir)
+            print(f"  codebook overlay written to qra.db")
+        if 'cross-validation' in to_run:
+            print("  Running cross-validation...")
+            stage_cross_validation(config, framework, segments=segments, output_dir=output_dir)
+            print(f"  cross-validation overlay written to qra.db")
 
     print("\nClassification overlay(s) written.")
+
+    # ---- M4 Auto-repair hook (codebook + any other inline-path overlays) ----
+    # For VAAMR/PURER the hook runs inside execute_queue (before the rebuild);
+    # for codebook/CV the inline path runs here so we call it once before downstream.
+    _inline_overlays = tuple(
+        ov for ov, name in (('codebook', 'codebook'),)
+        if name in to_run
+    )
+    if _inline_overlays:
+        try:
+            from process.repair import maybe_auto_repair
+            maybe_auto_repair(output_dir, config, _inline_overlays)
+        except Exception:
+            pass
 
     if not getattr(args, 'no_downstream', False):
         print("\nRunning downstream pipeline...")
@@ -1203,21 +1306,73 @@ def cmd_classify(args):
         cmd_analyze(args)
 
 
+def _classify_inline_legacy(args, config, framework, to_run, output_dir):
+    """Legacy inline VAAMR/PURER classify (used by --resume-from escape hatch).
+
+    Mirrors the pre-shim behavior: load frozen segments, apply overlays, run the
+    theme/purer stages in-process (which capture ballots via the M1 hook), then
+    the downstream chain unless --no-downstream.
+    """
+    from process import segments_io as _segments_io, classifications_io as _cio
+    from process.orchestrator import stage_classify_theme, stage_classify_purer
+
+    segments = _segments_io.load_segments_for_stage(output_dir, apply=())
+    by_id = {s.segment_id: s for s in segments}
+    _cio.apply_overlays(output_dir, by_id, keys=('theme', 'purer', 'codebook', 'cv'))
+
+    if 'vaamr' in to_run:
+        print("  Running VAAMR classifier (inline)...")
+        stage_classify_theme(config, framework, segments=segments, output_dir=output_dir)
+    if 'purer' in to_run:
+        print("  Running PURER classifier (inline)...")
+        stage_classify_purer(config, segments=segments, output_dir=output_dir)
+
+    print("\nClassification overlay(s) written.")
+
+    # ---- M4 Auto-repair: fix errors BEFORE the downstream assemble/analyze ----
+    _legacy_overlays = tuple(
+        ov for w, ov in (('vaamr', 'theme'), ('purer', 'purer')) if w in to_run
+    )
+    if _legacy_overlays:
+        try:
+            from process.repair import maybe_auto_repair
+            maybe_auto_repair(output_dir, config, _legacy_overlays)
+        except KeyboardInterrupt:
+            raise
+        except Exception as _e:  # noqa: BLE001
+            print(f"  [auto-repair] hook failed: {_e} — continuing.")
+
+    if not getattr(args, 'no_downstream', False):
+        print("\nRunning downstream pipeline...")
+        cmd_assemble(args)
+        cmd_testset_refresh(args)
+        cmd_analyze(args)
+
+
+def cmd_status(args):
+    """qra status — print a per-stage pipeline health dashboard."""
+    from process.status_report import (
+        gather_status, format_status_text, format_status_json,
+    )
+    status = gather_status(args.output_dir)
+    if getattr(args, 'json', False):
+        print(format_status_json(status))
+    else:
+        print(format_status_text(status))
+
+
 def cmd_reclassify_run(args):
     """qra reclassify-run — redo a single classification run without re-processing the others."""
     import glob
     from classification_tools.classification_loop import patch_runs_checkpoint
-    from process.orchestrator import (
-        stage_classify_theme,
-        stage_assemble,
-        stage_validation_artifacts,
-    )
-    from analysis.runner import run_analysis
+    from process import reclassify_ops as _reclassify
 
     output_dir = args.output_dir
     run_number = args.run          # 1-indexed (user-facing)
     new_model = getattr(args, 'model', None)
     explicit_checkpoint = getattr(args, 'checkpoint', None)
+    what = getattr(args, 'what', 'vaamr') or 'vaamr'
+    errors_only = getattr(args, 'errors_only', False)
 
     # -- Load config -------------------------------------------------------
     config_path = getattr(args, 'config', None)
@@ -1234,12 +1389,16 @@ def cmd_reclassify_run(args):
         from process.config import PipelineConfig
         config = PipelineConfig()
 
-    tc = config.theme_classification
-    n_runs = tc.n_runs
-    run_idx = run_number - 1
+    # Per-framework sub-config + checkpoint prefix (prefix single-homed in reclassify_ops)
+    if what == 'purer':
+        sub = config.purer_classification
+    else:
+        sub = config.theme_classification
+    ckpt_prefix = _reclassify.checkpoint_prefix(what)
 
-    if not (1 <= run_number <= n_runs):
-        print(f"Error: --run must be between 1 and {n_runs} (got {run_number}).")
+    run_idx = run_number - 1
+    if run_number < 1:
+        print(f"Error: --run must be >= 1 (got {run_number}).")
         sys.exit(2)
 
     # -- Locate checkpoint -------------------------------------------------
@@ -1249,66 +1408,98 @@ def cmd_reclassify_run(args):
         checkpoints_dir = os.path.join(
             output_dir, '02_meta', 'auditable_logs', 'checkpoints'
         )
-        glob_pattern = os.path.join(checkpoints_dir, 'llm_results_*_runs.json')
+        glob_pattern = os.path.join(checkpoints_dir, f'{ckpt_prefix}_*_runs.json')
         candidates = sorted(glob.glob(glob_pattern))
         if not candidates:
             print(
-                f"Error: no *_runs.json checkpoint found in {checkpoints_dir}.\n"
+                f"Error: no {ckpt_prefix}_*_runs.json checkpoint found in {checkpoints_dir}.\n"
                 "  Pass --checkpoint <path> to specify one explicitly."
             )
             sys.exit(1)
         checkpoint_path = candidates[-1]  # latest by filename timestamp
 
+    # Authoritative run count comes from the checkpoint itself (PURER n_runs is
+    # often inherited from theme classification and not reflected on sub.n_runs).
+    try:
+        with open(checkpoint_path) as f:
+            _ckpt_meta = json.load(f).get('_meta', {})
+        n_runs = _ckpt_meta.get('n_runs') or sub.n_runs
+    except (OSError, json.JSONDecodeError):
+        n_runs = sub.n_runs
+    if not (1 <= run_number <= n_runs):
+        print(f"Error: --run must be between 1 and {n_runs} (got {run_number}).")
+        sys.exit(2)
+
     print(f"\nQRA RECLASSIFY-RUN")
+    print(f"  Framework    : {what.upper()}")
     print(f"  Output dir   : {output_dir}")
     print(f"  Checkpoint   : {os.path.basename(checkpoint_path)}")
     print(f"  Run          : {run_number}/{n_runs} (index {run_idx})")
+    print(f"  Mode         : {'errors-only (preserve valid ballots)' if errors_only else 'full run wipe'}")
     if new_model:
         print(f"  New model    : {new_model}")
     else:
-        current_model = (tc.per_run_models[run_idx]
-                         if run_idx < len(tc.per_run_models) else tc.model)
+        current_model = (sub.per_run_models[run_idx]
+                         if run_idx < len(sub.per_run_models or []) else sub.model)
         print(f"  Model        : {current_model} (unchanged)")
 
     # -- Patch checkpoint --------------------------------------------------
-    updated_per_run_models = patch_runs_checkpoint(
-        checkpoint_path, run_idx, new_model=new_model
-    )
+    if errors_only:
+        res = _reclassify.patch_run_errors_only(
+            checkpoint_path, run_idx, new_model=new_model
+        )
+        updated_per_run_models = res['per_run_models']
+        print(f"  Cleared {res['cleared_errors']} error entr(ies) for run {run_number}; "
+              f"preserved {res['preserved']} valid ballot(s).")
+    else:
+        updated_per_run_models = patch_runs_checkpoint(
+            checkpoint_path, run_idx, new_model=new_model
+        )
 
-    # Apply model update to config so classify stage uses the right model
-    if new_model and run_idx < len(tc.per_run_models):
-        tc.per_run_models[run_idx] = new_model
+    # Apply model update to config so the classify stage uses the right model
+    if new_model and sub.per_run_models and run_idx < len(sub.per_run_models):
+        sub.per_run_models[run_idx] = new_model
 
     # Tell the classifier to resume from this checkpoint (so other runs are skipped)
     config.resume_from = checkpoint_path
 
-    # -- Re-run theme classification (updates consensus + theme_labels.jsonl) --
+    if what == 'purer':
+        _reclassify_run_purer(config, output_dir, run_number,
+                              updated_per_run_models, run_idx, new_model)
+    else:
+        _reclassify_run_vaamr(config, output_dir, run_number,
+                              updated_per_run_models, run_idx, new_model)
+
+
+def _reclassify_run_vaamr(config, output_dir, run_number,
+                          updated_per_run_models, run_idx, new_model):
+    """VAAMR reclassify: re-run the theme stage, then re-assemble + refresh + analyze."""
+    from process.orchestrator import (
+        stage_classify_theme, stage_assemble, stage_validation_artifacts,
+    )
+    from analysis.runner import run_analysis
+
     framework = _load_framework(
         getattr(config, 'participant_framework', None) or 'vaamr'
     )
     print(f"\nStep 1/5 — Theme classification (run {run_number} only)...")
     stage_classify_theme(config, framework, output_dir=output_dir)
-    print(f"  theme_labels.jsonl updated.")
+    print(f"  theme overlay updated.")
 
-    # -- Re-assemble master dataset ----------------------------------------
     print("\nStep 2/5 — Assembling master dataset...")
     stage_assemble(config, output_dir=output_dir)
     print(f"  master_segments.csv updated.")
 
-    # -- Refresh testset AI answer keys + CV testsets ----------------------
     # create_missing=False so we only refresh existing artifacts, not create new ones
     print("\nStep 3/5 — Refreshing testset + CV answer keys...")
     try:
         stage_validation_artifacts(
-            config, framework,
-            output_dir=output_dir,
-            create_missing=False,
+            config, framework, output_dir=output_dir, create_missing=False,
         )
         print(f"  Testset and CV answer keys refreshed.")
     except Exception as e:
         print(f"  Warning: validation artifact refresh failed: {e}")
 
-    # -- Re-run analysis (figures, reports) --------------------------------
     print("\nStep 4/5 — Re-running analysis and figures...")
     try:
         result = run_analysis(output_dir, verbose=False)
@@ -1321,11 +1512,31 @@ def cmd_reclassify_run(args):
     except Exception as e:
         print(f"  Warning: analysis failed: {e}")
 
-    # -- Done --------------------------------------------------------------
     print(f"\nStep 5/5 — Complete.")
     print(f"  Run {run_number} re-classified with: "
           f"{updated_per_run_models[run_idx] if run_idx < len(updated_per_run_models) else new_model or 'unchanged model'}")
     print(f"  per_run_models: {updated_per_run_models}")
+
+
+def _reclassify_run_purer(config, output_dir, run_number,
+                          updated_per_run_models, run_idx, new_model):
+    """PURER reclassify: re-run the cue-block stage only.
+
+    PURER has no standalone downstream artifacts (no testset/CV refresh, no
+    master-dataset dependency that VAAMR-style reclassify needs to rebuild), so
+    this just re-runs the classification stage, which writes the purer overlay.
+    """
+    from process.orchestrator import stage_classify_purer
+
+    print(f"\nStep 1/2 — PURER classification (run {run_number} only)...")
+    stage_classify_purer(config, output_dir=output_dir)
+    print(f"  purer overlay updated in qra.db.")
+
+    print(f"\nStep 2/2 — Complete.")
+    print(f"  Run {run_number} re-classified with: "
+          f"{updated_per_run_models[run_idx] if run_idx < len(updated_per_run_models) else new_model or 'unchanged model'}")
+    print(f"  per_run_models: {updated_per_run_models}")
+    print(f"  Run `qra assemble -o {output_dir}` if you want master_segments rebuilt.")
 
 
 def _build_config_from_file(file_data: dict):
@@ -2128,6 +2339,607 @@ def cmd_migrate(args):
     print(f"Originals relocated to {os.path.join(output_dir, '_legacy_files')}/")
 
 
+def cmd_rebuild(args):
+    """qra rebuild — re-derive overlay consensus from the selected runs' ballots.
+
+    Re-votes the durable ``label_ballots`` of the *selected* runs through the
+    same merge function the inline classifier uses (no LLM calls), then writes
+    the overlay.  Does NOT chain downstream — run `qra assemble` (then `qra
+    analyze`) afterwards to fold the rebuilt labels into master_segments + reports.
+    """
+    from process import consensus_rebuild as _crebuild
+    from process import db as _db
+
+    output_dir = args.output_dir
+    if not _db.db_exists(output_dir):
+        print(f"Error: no qra.db found in {output_dir}.\n"
+              "  Run `qra ingest` + `qra classify` first.")
+        sys.exit(1)
+
+    what = getattr(args, 'what', 'all') or 'all'
+    valid = {'vaamr', 'purer', 'all'}
+    if what not in valid:
+        print(f"Error: --what must be one of {sorted(valid)}, got {what!r}")
+        sys.exit(2)
+
+    config = _build_config(args)
+
+    # vaamr is the VAAMR participant overlay -> 'theme'; purer -> 'purer'.
+    overlays = []
+    if what in ('vaamr', 'all'):
+        overlays.append('theme')
+    if what in ('purer', 'all'):
+        overlays.append('purer')
+
+    print(f"\nQRA REBUILD  --what {what}")
+    print(f"  Output: {output_dir}")
+
+    had_error = False
+    for overlay in overlays:
+        label = 'vaamr' if overlay == 'theme' else overlay
+        try:
+            stats = _crebuild.rebuild_overlay(output_dir, overlay, config)
+        except Exception as e:
+            print(f"  [{label}] rebuild failed: {e}")
+            had_error = True
+            continue
+        if stats.get('skipped'):
+            print(f"  [{label}] skipped: {stats.get('reason')}")
+            continue
+        print(
+            f"  [{label}] rebuilt {stats['n_units']} unit(s) from "
+            f"{len(stats['run_ids'])} selected run(s) "
+            f"[{', '.join(stats['models_used'])}]"
+        )
+        print(
+            f"           labeled={stats['n_labeled']}  abstain={stats['n_abstain']}  "
+            f"unlabeled={stats['n_unlabeled']}  changed={stats['n_changed']}"
+        )
+
+    if had_error:
+        sys.exit(1)
+
+    print("\nOverlay(s) rebuilt from ballots.")
+    print("  Next: `qra assemble -o <dir>` (then `qra analyze -o <dir>`) to "
+          "fold the rebuilt labels into master_segments + reports.")
+
+
+# =========================================================================
+# fix-errors (M4 — surgical error repair)
+# =========================================================================
+
+def cmd_fix_errors(args):
+    """qra fix-errors — detect and repair classification errors.
+
+    Dry-run by default shows what would be repaired without touching the DB.
+    Without --dry-run, patches per-run checkpoints to clear error cells, re-sweeps
+    the affected runs, and rebuilds consensus from the repaired ballots.  Chains
+    the standard downstream pipeline (assemble → testset refresh → analyze) unless
+    --no-downstream is given.
+
+    Never touches ``qra analyze`` (analysis stays read-only).
+    """
+    from process import db as _db
+    from process.repair import fix_errors
+
+    output_dir = args.output_dir
+    if not _db.db_exists(output_dir):
+        print(f"Error: no qra.db found in {output_dir}.\n"
+              "  Run `qra ingest` + `qra classify` first.")
+        sys.exit(1)
+
+    # --what vaamr|purer|codebook|all → tuple of overlay names.
+    what = getattr(args, 'what', 'all') or 'all'
+    _what_map = {'vaamr': ('theme',), 'purer': ('purer',),
+                 'codebook': ('codebook',), 'all': ('theme', 'purer', 'codebook')}
+    if what not in _what_map:
+        print(f"Error: --what must be one of {sorted(_what_map)}, got {what!r}.")
+        sys.exit(2)
+    overlays = _what_map[what]
+
+    # --run-id can be repeated or comma-separated.
+    run_ids_raw = getattr(args, 'run_id', None)
+    run_ids = None
+    if run_ids_raw:
+        ids_flat = []
+        for v in (run_ids_raw if isinstance(run_ids_raw, list) else [run_ids_raw]):
+            for tok in str(v).split(','):
+                tok = tok.strip()
+                if tok:
+                    try:
+                        ids_flat.append(int(tok))
+                    except ValueError:
+                        print(f"Error: invalid run-id {tok!r}.")
+                        sys.exit(2)
+        run_ids = ids_flat if ids_flat else None
+
+    max_passes = getattr(args, 'max_passes', None) or 2
+    dry_run = getattr(args, 'dry_run', False)
+    force = getattr(args, 'force', False)
+
+    config = _build_config(args)
+
+    print(f"\nQRA FIX-ERRORS  --what {what}"
+          + ("  [DRY-RUN]" if dry_run else ""))
+    print(f"  Output: {output_dir}")
+
+    result = fix_errors(
+        output_dir, config,
+        overlays=overlays,
+        run_ids=run_ids,
+        max_passes=max_passes,
+        dry_run=dry_run,
+        force=force,
+    )
+
+    if dry_run:
+        print("\n  Dry-run complete.  Re-run without --dry-run to repair.")
+        return
+
+    # Print summary.
+    for overlay, ov_data in result.get('overlays', {}).items():
+        print(
+            f"  [{overlay}] repaired={ov_data.get('repaired', 0)}  "
+            f"remaining={ov_data.get('remaining', 0)}  "
+            f"passes={ov_data.get('passes', 0)}"
+        )
+
+    any_repaired = any(v.get('repaired', 0) > 0 for v in result.get('overlays', {}).values())
+    if any_repaired and not getattr(args, 'no_downstream', False):
+        print("\nRunning downstream pipeline...")
+        cmd_assemble(args)
+        cmd_testset_refresh(args)
+        cmd_analyze(args)
+    elif not any_repaired:
+        print("  Nothing to repair (or all errors flagged for review).")
+
+
+# =========================================================================
+# runs subcommand group (schema-v2 run registry + executor)
+# =========================================================================
+
+def _runs_overlays_arg(args, default=('theme', 'purer')):
+    """Resolve --what (vaamr|purer|all) to a tuple of overlay names."""
+    from process.reclassify_ops import OVERLAY_FOR_WHAT
+    what = getattr(args, 'what', None)
+    if what in (None, 'all'):
+        return tuple(default)
+    return (OVERLAY_FOR_WHAT.get(what, what),)
+
+
+def _runs_downstream(args):
+    """Run the standard downstream chain after a runs sweep (unless --no-downstream)."""
+    if getattr(args, 'no_downstream', False):
+        return
+    print("\nRunning downstream pipeline...")
+    cmd_assemble(args)
+    cmd_testset_refresh(args)
+    cmd_analyze(args)
+
+
+def cmd_runs_queue(args):
+    """qra runs queue — register one (or many, via --roster) queued run(s)."""
+    from process import run_registry as _rr
+    from process import segments_io as _segments_io
+
+    output_dir = args.output_dir
+    if not _segments_io.list_segmented_sessions(output_dir):
+        print(f"Error: no frozen segments in {output_dir}. Run `qra ingest` first.")
+        sys.exit(1)
+
+    from process.reclassify_ops import OVERLAY_FOR_WHAT
+    _what = getattr(args, 'what', None)
+    overlay = OVERLAY_FOR_WHAT.get(_what, _what)
+    if overlay not in ('theme', 'purer'):
+        print("Error: `qra runs queue` requires --what vaamr|purer.")
+        sys.exit(2)
+
+    config = _build_config(args)
+
+    # --roster: queue every config.model_roster entry for this overlay.
+    if getattr(args, 'roster', False):
+        roster = getattr(config, 'model_roster', None) or []
+        if not roster:
+            print("No model_roster entries found in config. "
+                  "Add entries under 'model_roster' in qra_config.json "
+                  "or run 'qra setup' to configure one via the wizard.\n"
+                  "Queue a single run explicitly with --model for now.")
+            sys.exit(2)
+        created = []
+        for entry in roster:
+            fws = getattr(entry, 'frameworks', None) or ['vaamr', 'purer']
+            want = 'vaamr' if overlay == 'theme' else 'purer'
+            if want not in fws:
+                continue
+            rid = _rr.create_run(
+                output_dir, overlay=overlay, model=entry.model,
+                backend=getattr(entry, 'backend', None),
+                quantization=getattr(entry, 'quantization', None),
+                thinking=getattr(entry, 'thinking', None),
+                note=getattr(entry, 'note', None),
+                temperature=getattr(entry, 'temperature', None),
+                rater_label=getattr(entry, 'alias', None) or None,
+            )
+            created.append(rid)
+        print(f"Queued {len(created)} roster run(s) for {overlay}: {created}")
+        return
+
+    model = getattr(args, 'model', None)
+    if not model:
+        print("Error: --model is required (or use --roster).")
+        sys.exit(2)
+    rid = _rr.create_run(
+        output_dir, overlay=overlay, model=model,
+        backend=getattr(args, 'backend', None),
+        quantization=getattr(args, 'quant', None),
+        thinking=getattr(args, 'thinking', None),
+        note=getattr(args, 'note', None),
+        temperature=getattr(args, 'temperature', None),
+        rater_label=getattr(args, 'alias', None) or None,
+    )
+    row = _rr.get_run(output_dir, rid)
+    print(f"Queued run {rid} ({overlay}): rater_label={row['rater_label']!r} "
+          f"model={model!r}"
+          + (f" quant={args.quant}" if getattr(args, 'quant', None) else '')
+          + (f" thinking={args.thinking}" if getattr(args, 'thinking', None) else ''))
+    print(f"  Start it with: qra runs start -o {output_dir}")
+
+
+def _selection_kappa_lookup(output_dir, overlay):
+    """``{run_id: κ}`` from the persisted selection record (cheap; no recompute).
+
+    Surfaces the κ snapshot the last `qra runs select` stored, so `qra runs list`
+    can show per-run κ without re-pulling ballots/human codes. Empty when no
+    selection has been run."""
+    from analysis import run_selection as _runsel
+    rec = _runsel.load_selection_record(output_dir, overlay) or {}
+    out = {}
+    for rid, s in (rec.get('kappa_snapshot') or {}).items():
+        try:
+            out[int(rid)] = s.get('kappa')
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def cmd_runs_list(args):
+    """qra runs list — show registry runs with counters + selection (+ κ when stored)."""
+    from process import run_registry as _rr
+    output_dir = args.output_dir
+    overlays = _runs_overlays_arg(args)
+    rows_by_overlay = {ov: _rr.list_runs(output_dir, overlay=ov) for ov in overlays}
+
+    if getattr(args, 'json', False):
+        print(json.dumps(rows_by_overlay, indent=2, default=str))
+        return
+
+    any_rows = any(rows_by_overlay.values())
+    if not any_rows:
+        print("No registry runs found. Queue one with `qra runs queue` or run "
+              "`qra classify`.")
+        return
+
+    label = {'theme': 'VAAMR', 'purer': 'PURER'}
+    for ov in overlays:
+        rows = rows_by_overlay.get(ov) or []
+        if not rows:
+            continue
+        kappa_by_run = _selection_kappa_lookup(output_dir, ov)
+        print(f"\n{label.get(ov, ov)} runs")
+        print(f"  {'id':>3} {'label':<28} {'status':<22} {'sel':>3}  "
+              f"{'coded':>6}{'abst':>6}{'err':>5}{'total':>6}{'κ':>8}")
+        print("  " + "-" * 92)
+        for r in rows:
+            sel = '*' if r['selected'] else ''
+            kv = kappa_by_run.get(r['run_id'])
+            kshow = '' if kv is None else f"{kv:+.3f}"
+            print(f"  {r['run_id']:>3} {str(r['rater_label'])[:28]:<28} "
+                  f"{str(r['status']):<22} {sel:>3}  "
+                  f"{r['n_coded'] or 0:>6}{r['n_abstain'] or 0:>6}"
+                  f"{r['n_error'] or 0:>5}{r['n_total'] or 0:>6}{kshow:>8}")
+
+
+def cmd_runs_show(args):
+    """qra runs show — full detail for one run."""
+    from process import run_registry as _rr
+    run = _rr.get_run(args.output_dir, args.run_id)
+    if run is None:
+        print(f"No run with id {args.run_id}.")
+        sys.exit(1)
+    if getattr(args, 'json', False):
+        print(json.dumps(run, indent=2, default=str))
+        return
+    for k in ('run_id', 'overlay', 'rater_label', 'model', 'backend',
+              'quantization', 'thinking', 'temperature', 'note', 'status',
+              'selected', 'checkpoint_path', 'segmentation_params_hash',
+              'created_at', 'started_at', 'completed_at',
+              'n_coded', 'n_abstain', 'n_error', 'n_total'):
+        print(f"  {k:<24} {run.get(k)}")
+
+
+def cmd_runs_start(args):
+    """qra runs start — execute every queued / resumable run, then downstream."""
+    from process import run_executor as _rx
+    from process import segments_io as _segments_io
+
+    output_dir = args.output_dir
+    if not _segments_io.list_segmented_sessions(output_dir):
+        print(f"Error: no frozen segments in {output_dir}. Run `qra ingest` first.")
+        sys.exit(1)
+
+    config = _build_config(args)
+    overlays = _runs_overlays_arg(args)
+    retries = getattr(args, 'retries', None)
+
+    print(f"\nQRA RUNS START  overlays={list(overlays)}")
+    print(f"  Output: {output_dir}")
+    try:
+        summary = _rx.execute_queue(
+            output_dir, config, overlays=overlays,
+            retries=retries, force=getattr(args, 'force', False),
+        )
+    except _rx.RunnerBusy as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"\n  Runs processed: {summary['per_run']}")
+    if summary.get('skipped_queued'):
+        print(f"  Skipped (pre-flight): {summary['skipped_queued']} — load the model(s) "
+              "and re-run, or pass --force.")
+    if summary.get('stopped_early'):
+        print("  Stopped early (STOP_QRA_RUNS present). Remove it and re-run to finish.")
+    print(f"  Overlays rebuilt: {summary['overlays_rebuilt']}")
+
+    # Only chain downstream when something actually ran + rebuilt.
+    if summary['overlays_rebuilt']:
+        _runs_downstream(args)
+
+
+def _print_runs_kappa_table(kappa_by_run, selected_ids):
+    """Render the per-run κ table (same data the IRR report's all-runs section uses)."""
+    from analysis.reports.stat_format import fmt_kappa
+    if not kappa_by_run:
+        print("  (no per-run κ — no human IRR codes imported, or no ballot overlap)")
+        return
+    sel = {int(i) for i in (selected_ids or [])}
+
+    def sort_key(item):
+        rid, r = item
+        k = r.get('cohen_kappa')
+        return (k is None, -(k if k is not None else 0.0), -(r.get('n') or 0), int(rid))
+
+    print(f"  {'':1}{'id':>3} {'rater_label':<28}{'κ (Cohen)':>34}{'n':>5}  {'status':<22}")
+    print("  " + "-" * 96)
+    for rid, r in sorted(kappa_by_run.items(), key=sort_key):
+        marker = '*' if int(rid) in sel else ' '
+        label = str(r.get('rater_label') or '')[:28]
+        kshow = fmt_kappa(r.get('cohen_kappa'),
+                          (r.get('kappa_ci') or {}).get('lo'),
+                          (r.get('kappa_ci') or {}).get('hi'))
+        print(f"  {marker}{int(rid):>3} {label:<28}{kshow:>34}"
+              f"{(r.get('n') if r.get('n') is not None else '—'):>5}  "
+              f"{str(r.get('status') or '')[:22]:<22}")
+    print("  * = selected (feeds the operative consensus)")
+
+
+def cmd_runs_select(args):
+    """qra runs select — choose which runs feed an overlay's consensus, then rebuild.
+
+    --auto  → IRR-gated policy selection (theme: top-n by human-IRR κ; purer: all).
+    --ids   → explicit manual selection (recorded as strategy 'manual').
+    Prints the per-run κ table + the decision; rebuilds the overlay (and chains the
+    standard downstream pipeline) only when the selection actually CHANGED.
+    """
+    from process import run_registry as _rr
+    from process import consensus_rebuild as _crebuild
+    from analysis import run_selection as _runsel
+
+    from process.reclassify_ops import OVERLAY_FOR_WHAT
+    output_dir = args.output_dir
+    what = getattr(args, 'what', None)
+    if what not in ('vaamr', 'purer'):
+        print("Error: `qra runs select` requires --what vaamr|purer.")
+        sys.exit(2)
+    overlay = OVERLAY_FOR_WHAT[what]
+
+    auto = getattr(args, 'auto', False)
+    ids_raw = getattr(args, 'ids', None)
+    if auto and ids_raw:
+        print("Error: pass either --auto OR --ids, not both.")
+        sys.exit(2)
+    if not auto and not ids_raw:
+        print("Error: provide --auto (policy selection) or --ids 1,4,7 (manual).")
+        sys.exit(2)
+
+    config = _build_config(args)
+    prior = set(_rr.selected_runs(output_dir, overlay))
+
+    if auto:
+        record = _runsel.select_runs(output_dir, config, overlay)
+    else:
+        # Manual selection: validate ids against this overlay's registry, then
+        # route through select_runs(strategy='manual') so the κ table + manifest
+        # record are written identically to the --auto path.
+        try:
+            ids = [int(x) for x in str(ids_raw).split(',') if x.strip()]
+        except ValueError:
+            print(f"Error: --ids must be a comma-separated list of run ids, got {ids_raw!r}.")
+            sys.exit(2)
+        known = {r['run_id'] for r in _rr.list_runs(output_dir, overlay=overlay)}
+        bad = [i for i in ids if i not in known]
+        if bad:
+            print(f"Error: run id(s) {bad} are not {what} runs.")
+            sys.exit(2)
+
+        # Stash the manual ids onto a getattr-tolerant policy carrier so
+        # select_runs('manual') reads them. We override the resolved policy by
+        # passing them via a lightweight shim object on config.run_selection.
+        record = _runsel.select_runs(
+            output_dir, _ManualSelectionConfig(config, overlay, ids), overlay)
+
+    # Per-run κ table (recomputed cheaply from the record's snapshot for display).
+    snapshot = (record.get('kappa_snapshot') or {})
+    kappa_by_run = {
+        int(rid): {
+            'rater_label': s.get('rater_label'),
+            'cohen_kappa': s.get('kappa'),
+            'kappa_ci': s.get('ci'),
+            'n': s.get('n'),
+            'status': '',
+        }
+        for rid, s in snapshot.items()
+    }
+    # Enrich with live status for the table.
+    for r in _rr.list_runs(output_dir, overlay=overlay):
+        if r['run_id'] in kappa_by_run:
+            kappa_by_run[r['run_id']]['status'] = r['status']
+
+    print(f"\nQRA RUNS SELECT  --what {what}  ({'auto' if auto else 'manual'})")
+    _print_runs_kappa_table(kappa_by_run, record.get('selected_run_ids'))
+    print(f"\n  Selected {what} runs: {record.get('selected_run_ids')}")
+    print(f"  Decision: {record.get('rationale')}")
+    if record.get('fallback_used'):
+        print("  (FALLBACK path used — no κ was computable.)")
+
+    if record.get('skipped'):
+        print("  Selection skipped (no eligible runs). Overlay untouched.")
+        return
+
+    if not record.get('changed'):
+        print("  Selection unchanged from the prior set — no rebuild needed.")
+        return
+
+    stats = _crebuild.rebuild_overlay(output_dir, overlay, config)
+    if stats.get('skipped'):
+        print(f"  rebuild skipped: {stats.get('reason')}")
+    else:
+        print(f"  rebuilt {stats['n_units']} unit(s): labeled={stats['n_labeled']} "
+              f"abstain={stats['n_abstain']} unlabeled={stats['n_unlabeled']} "
+              f"changed={stats['n_changed']}")
+        _runs_downstream(args)
+
+
+class _ManualSelectionConfig:
+    """Wrap a PipelineConfig so ``run_selection.select_runs`` reads a 'manual'
+    strategy with explicit ids for one overlay (delegating everything else)."""
+
+    def __init__(self, config, overlay, ids):
+        self._config = config
+        fw = 'vaamr' if overlay == 'theme' else 'purer'
+        self.run_selection = {fw: {'strategy': 'manual', 'ids': list(ids)}}
+
+    def __getattr__(self, name):
+        return getattr(self._config, name)
+
+
+def cmd_runs_archive(args):
+    """qra runs archive — mark a run archived (terminal; excluded from selection)."""
+    from process import run_registry as _rr
+    output_dir = args.output_dir
+    run = _rr.get_run(output_dir, args.run_id)
+    if run is None:
+        print(f"No run with id {args.run_id}.")
+        sys.exit(1)
+    _rr.update_run(output_dir, args.run_id, status='archived', selected=0)
+    print(f"Archived run {args.run_id} ({run['overlay']}, {run['rater_label']!r}). "
+          "Its ballots remain in qra.db for κ-history.")
+    print("  Run `qra runs rebuild` if it was selected (consensus no longer uses it).")
+
+
+def cmd_runs_sync_ballots(args):
+    """qra runs sync-ballots — reconcile the latest legacy checkpoints into ballots.
+
+    Reads the most-recent ``llm_results_*_runs.json`` / ``purer_cue_results_*_runs.json``
+    model-first checkpoint, gets-or-creates one run per per_run_models entry, and
+    upserts each rater's cells as ballots.  For projects whose ballots predate the
+    registry or were produced by an out-of-band run.
+    """
+    from process import run_registry as _rr
+    from process import output_paths as _paths
+    from process.reclassify_ops import checkpoint_prefix
+    from classification_tools.classification_loop import _load_runs_checkpoint
+    import glob as _glob
+
+    output_dir = args.output_dir
+    ckpt_dir = _paths.llm_checkpoints_dir(output_dir)
+    overlays = _runs_overlays_arg(args)
+
+    total = 0
+    for overlay in overlays:
+        cands = sorted(_glob.glob(os.path.join(ckpt_dir, f'{checkpoint_prefix(overlay)}_*_runs.json')))
+        if not cands:
+            continue
+        path = cands[-1]
+        try:
+            with open(path) as f:
+                meta = json.load(f).get('_meta', {})
+            n_runs = meta.get('n_runs') or len(meta.get('per_run_models', []))
+            per_run_models = meta.get('per_run_models', [])
+            run_results, _ = _load_runs_checkpoint(path, n_runs)
+        except Exception as e:
+            print(f"  {overlay}: could not read {os.path.basename(path)}: {e}")
+            continue
+        if not per_run_models:
+            print(f"  {overlay}: {os.path.basename(path)} has no per_run_models — skipping.")
+            continue
+
+        existing = {r['rater_label']: r['run_id']
+                    for r in _rr.list_runs(output_dir, overlay=overlay)}
+        run_id_by_idx = {}
+        for idx, model in enumerate(per_run_models):
+            if model in existing:
+                run_id_by_idx[idx] = existing[model]
+                _rr.update_run(output_dir, existing[model], status='completed', selected=1)
+            else:
+                rid = _rr.create_run(output_dir, overlay=overlay, model=model,
+                                     rater_label=model, note='sync-ballots')
+                _rr.update_run(output_dir, rid, status='completed', selected=1)
+                run_id_by_idx[idx] = rid
+
+        cells_by_run = {}
+        for seg_id, by_run in run_results.items():
+            for idx in range(n_runs):
+                cell = by_run.get(str(idx))
+                rid = run_id_by_idx.get(idx)
+                if rid is None:
+                    continue
+                cells_by_run.setdefault(rid, {})[seg_id] = cell
+        for rid, cells in cells_by_run.items():
+            n = _rr.upsert_ballots(output_dir, overlay, rid, cells)
+            _rr.refresh_counters(output_dir, rid)
+            total += n
+        print(f"  {overlay}: synced {len(cells_by_run)} run(s) from "
+              f"{os.path.basename(path)}.")
+
+    if total == 0:
+        print("No legacy checkpoints found to sync.")
+    else:
+        print(f"\nSynced {total} ballot(s). Run `qra runs rebuild` to re-derive consensus.")
+
+
+def cmd_runs(args, runs_parser):
+    """Dispatch the `qra runs` subcommand group."""
+    sub = getattr(args, 'runs_command', None)
+    if sub == 'queue':
+        cmd_runs_queue(args)
+    elif sub == 'list':
+        cmd_runs_list(args)
+    elif sub == 'show':
+        cmd_runs_show(args)
+    elif sub == 'start':
+        cmd_runs_start(args)
+    elif sub == 'select':
+        cmd_runs_select(args)
+    elif sub == 'archive':
+        cmd_runs_archive(args)
+    elif sub == 'rebuild':
+        cmd_rebuild(args)
+    elif sub == 'sync-ballots':
+        cmd_runs_sync_ballots(args)
+    else:
+        runs_parser.print_help()
+
+
 def _build_parser() -> tuple:
     """Build and return the top-level ArgumentParser (extracted for testability)."""
     parser = argparse.ArgumentParser(
@@ -2266,6 +3078,12 @@ Examples:
              'checkpoints and overlay before running (scope follows --what). '
              'Without this, classification resumes from existing checkpoints.',
     )
+    classify_parser.add_argument(
+        '--resume-from', dest='resume_from', default=None, metavar='CHECKPOINT',
+        help='Path to an existing cue-results checkpoint JSON to resume from '
+             '(skips already-classified units). Use to continue a crashed run '
+             'without re-doing completed segments.',
+    )
 
     # ---- assemble (Phase 3) ----
     assemble_parser = subparsers.add_parser(
@@ -2274,6 +3092,159 @@ Examples:
     )
     assemble_parser.add_argument('--output-dir', '-o', required=True)
     assemble_parser.add_argument('--config', '-c', default=None)
+
+    # ---- fix-errors (M4) ----
+    fix_errors_parser = subparsers.add_parser(
+        'fix-errors',
+        help='Detect and repair classification errors (ERROR ballot cells)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Detect parse-error ballot cells and surgically re-fetch only the\n'
+            'failing segments, preserving valid CODED/ABSTAIN ballots.  After\n'
+            'repair, consensus is rebuilt from the updated ballots and the\n'
+            'standard downstream chain (assemble → testset refresh → analyze)\n'
+            'runs unless --no-downstream is given.\n\n'
+            'Use --dry-run to inspect what would be repaired without any changes.\n'
+            'Split rows (genuine rater disagreement) are NEVER auto-repaired.\n'
+        ),
+    )
+    fix_errors_parser.add_argument('--output-dir', '-o', required=True,
+                                   help='Pipeline output directory')
+    fix_errors_parser.add_argument('--config', '-c', default=None,
+                                   help='Path to qra_config.json (auto-detected if omitted)')
+    fix_errors_parser.add_argument(
+        '--what', default='all',
+        choices=['vaamr', 'purer', 'codebook', 'all'],
+        help='Which overlay to repair (default: all)',
+    )
+    fix_errors_parser.add_argument(
+        '--run-id', dest='run_id', action='append', default=None,
+        metavar='N',
+        help='Restrict repair to this run id (repeatable; or comma-separated)',
+    )
+    fix_errors_parser.add_argument(
+        '--max-passes', type=int, default=2,
+        help='Maximum repair iterations per run (default: 2)',
+    )
+    fix_errors_parser.add_argument(
+        '--dry-run', action='store_true',
+        help='Print detection tables only; make no changes to qra.db or checkpoints',
+    )
+    fix_errors_parser.add_argument(
+        '--force', action='store_true',
+        help='Repair even dead raters (≥50%% error fraction)',
+    )
+    fix_errors_parser.add_argument(
+        '--no-downstream', action='store_true',
+        help='Skip automatic assemble → testset refresh → analyze after repair',
+    )
+
+    # ---- rebuild ----
+    rebuild_parser = subparsers.add_parser(
+        'rebuild',
+        help='Re-derive overlay consensus from the selected runs\' ballots (no LLM calls)',
+    )
+    rebuild_parser.add_argument('--output-dir', '-o', required=True)
+    rebuild_parser.add_argument('--config', '-c', default=None)
+    rebuild_parser.add_argument(
+        '--what',
+        default='all',
+        choices=['vaamr', 'purer', 'all'],
+        help='Which overlay to rebuild from ballots (default: all). '
+             'Run `qra assemble` (then `qra analyze`) afterwards.',
+    )
+
+    # ---- runs (schema-v2 run registry + executor) ----
+    runs_parser = subparsers.add_parser(
+        'runs',
+        help='Multi-model run registry: queue / list / show / start / select / '
+             'archive / rebuild / sync-ballots',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Manage classification RUNS (one model+quant+thinking sweep over a\n'
+            'framework).  Ballots are the durable source of truth; overlay\n'
+            'consensus is a derived view re-votable from any selected subset.\n\n'
+            '  runs queue    Register a queued run (or every config.model_roster\n'
+            '                entry with --roster).\n'
+            '  runs list     Status + per-rater coded/abstain/error counters.\n'
+            '  runs show     Full detail for one run.\n'
+            '  runs start    Execute every queued / resumable run (resumes from\n'
+            '                each run\'s own checkpoint), then assemble+analyze.\n'
+            '                Replaces the hand-rolled gemma watchdog.\n'
+            '  runs select   Choose which runs feed consensus (--auto IRR-gated | --ids), then rebuild.\n'
+            '  runs archive  Retire a run (terminal; excluded from selection).\n'
+            '  runs rebuild  Re-derive consensus from selected ballots (no LLM).\n'
+            '  runs sync-ballots  Reconcile legacy checkpoints into ballots.\n'
+        ),
+    )
+    runs_sub = runs_parser.add_subparsers(dest='runs_command')
+
+    _runs_queue = runs_sub.add_parser('queue', help='Register a queued run')
+    _runs_queue.add_argument('--output-dir', '-o', required=True)
+    _runs_queue.add_argument('--config', '-c', default=None)
+    _runs_queue.add_argument('--what', choices=['vaamr', 'purer'], default=None,
+                             help='Framework overlay for this run')
+    _runs_queue.add_argument('--model', default=None, help='Model id (rater_label)')
+    _runs_queue.add_argument('--quant', default=None, help='Quantization tag (free text)')
+    _runs_queue.add_argument('--thinking', choices=['on', 'off'], default=None,
+                             help="Reasoning tokens on/off (off => no_reasoning)")
+    _runs_queue.add_argument('--note', default=None, help='Free-text note')
+    _runs_queue.add_argument('--alias', default=None,
+                             help='Explicit rater_label (overrides the model-based default)')
+    _runs_queue.add_argument('--temperature', type=float, default=None)
+    _runs_queue.add_argument('--backend', default=None)
+    _runs_queue.add_argument('--roster', action='store_true',
+                             help='Queue every config.model_roster entry for this overlay '
+                                  '(roster support arrives in a later milestone)')
+
+    _runs_list = runs_sub.add_parser('list', help='List registry runs + counters')
+    _runs_list.add_argument('--output-dir', '-o', required=True)
+    _runs_list.add_argument('--config', '-c', default=None)
+    _runs_list.add_argument('--what', choices=['vaamr', 'purer', 'all'], default='all')
+    _runs_list.add_argument('--json', action='store_true')
+
+    _runs_show = runs_sub.add_parser('show', help='Show one run in full')
+    _runs_show.add_argument('--output-dir', '-o', required=True)
+    _runs_show.add_argument('--run-id', type=int, required=True)
+    _runs_show.add_argument('--json', action='store_true')
+
+    _runs_start = runs_sub.add_parser('start', help='Execute queued / resumable runs')
+    _runs_start.add_argument('--output-dir', '-o', required=True)
+    _runs_start.add_argument('--config', '-c', default=None)
+    _runs_start.add_argument('--what', choices=['vaamr', 'purer', 'all'], default='all')
+    _runs_start.add_argument('--retries', type=int, default=None,
+                             help='Max retry attempts per run on a sweep-level error')
+    _runs_start.add_argument('--no-downstream', action='store_true',
+                             help='Skip the automatic assemble + testset refresh + analyze')
+    _runs_start.add_argument('--force', action='store_true',
+                             help='Bypass the LM Studio model-mismatch pre-flight')
+
+    _runs_select = runs_sub.add_parser('select', help='Set selected runs + rebuild')
+    _runs_select.add_argument('--output-dir', '-o', required=True)
+    _runs_select.add_argument('--config', '-c', default=None)
+    _runs_select.add_argument('--what', choices=['vaamr', 'purer'], default=None)
+    _runs_select.add_argument('--ids', default=None,
+                              help='Comma-separated run ids to select (e.g. 1,4,7)')
+    _runs_select.add_argument('--auto', action='store_true',
+                              help='IRR-gated policy selection (theme: top-n by human-IRR κ; purer: all)')
+    _runs_select.add_argument('--no-downstream', action='store_true',
+                              help='Skip the automatic assemble + testset refresh + analyze after a changed selection')
+
+    _runs_archive = runs_sub.add_parser('archive', help='Archive (retire) a run')
+    _runs_archive.add_argument('--output-dir', '-o', required=True)
+    _runs_archive.add_argument('--run-id', type=int, required=True)
+
+    _runs_rebuild = runs_sub.add_parser(
+        'rebuild', help='Re-derive overlay consensus from selected ballots (alias of `qra rebuild`)')
+    _runs_rebuild.add_argument('--output-dir', '-o', required=True)
+    _runs_rebuild.add_argument('--config', '-c', default=None)
+    _runs_rebuild.add_argument('--what', default='all', choices=['vaamr', 'purer', 'all'])
+
+    _runs_sync = runs_sub.add_parser(
+        'sync-ballots', help='Reconcile latest legacy checkpoints into ballots')
+    _runs_sync.add_argument('--output-dir', '-o', required=True)
+    _runs_sync.add_argument('--config', '-c', default=None)
+    _runs_sync.add_argument('--what', choices=['vaamr', 'purer', 'all'], default='all')
 
     # ---- run ----
     run_parser = subparsers.add_parser(
@@ -2432,6 +3403,23 @@ Examples:
     _irr_list = irr_sub.add_parser('list', help='List imported IRR test-sets')
     _irr_list.add_argument('--output-dir', '-o', required=True)
 
+    # ---- status ----
+    status_parser = subparsers.add_parser(
+        'status',
+        help='Print a per-stage pipeline health dashboard (incl. per-rater ballot quality)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Summarizes what has run in a project and whether it succeeded.\n'
+            'Reads the latest *_runs.json checkpoints to show per-rater\n'
+            'CODED / ABSTAIN / ERROR counts — surfacing a dead rater that left\n'
+            'an overlay all-NULL despite a fresh manifest timestamp.\n'
+        ),
+    )
+    status_parser.add_argument('--output-dir', '-o', required=True,
+                               help='Pipeline output directory')
+    status_parser.add_argument('--json', action='store_true',
+                               help='Emit the status structure as JSON instead of a dashboard')
+
     # ---- reclassify-run ----
     reclassify_parser = subparsers.add_parser(
         'reclassify-run',
@@ -2455,6 +3443,12 @@ Examples:
                                         'from output-dir if omitted)')
     reclassify_parser.add_argument('--config', '-c', default=None,
                                    help='Path to qra_config.json (auto-detected if omitted)')
+    reclassify_parser.add_argument('--what', default='vaamr',
+                                   choices=['vaamr', 'purer'],
+                                   help='Which classifier checkpoint to patch (default: vaamr)')
+    reclassify_parser.add_argument('--errors-only', action='store_true',
+                                   help='Re-run only segments where the run produced a parse '
+                                        'error; preserve valid ABSTAIN and CODED ballots')
 
     # ---- apply-anonymization ----
     anon_parser = subparsers.add_parser(
@@ -2635,11 +3629,11 @@ Examples:
     migrate_parser.add_argument('--run', action='store_true',
                                 help='Perform the migration (default: non-destructive preview)')
 
-    return parser, testset_parser, cv_parser, gnn_parser
+    return parser, testset_parser, cv_parser, gnn_parser, runs_parser, fix_errors_parser
 
 
 def main():
-    parser, testset_parser, cv_parser, gnn_parser = _build_parser()
+    parser, testset_parser, cv_parser, gnn_parser, runs_parser, fix_errors_parser = _build_parser()
     args = parser.parse_args()
 
     if args.command is None:
@@ -2656,6 +3650,12 @@ def main():
             cmd_classify(args)
         elif args.command == 'assemble':
             cmd_assemble(args)
+        elif args.command == 'rebuild':
+            cmd_rebuild(args)
+        elif args.command == 'fix-errors':
+            cmd_fix_errors(args)
+        elif args.command == 'runs':
+            cmd_runs(args, runs_parser)
         elif args.command == 'run':
             cmd_run(args)
         elif args.command == 'add-data':
@@ -2714,6 +3714,8 @@ def main():
                 probe_parser.print_help()
         elif args.command == 'migrate':
             cmd_migrate(args)
+        elif args.command == 'status':
+            cmd_status(args)
         elif args.command == 'reclassify-run':
             cmd_reclassify_run(args)
         elif args.command == 'apply-anonymization':

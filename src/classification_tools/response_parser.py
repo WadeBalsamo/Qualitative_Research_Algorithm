@@ -140,6 +140,11 @@ def parse_all_results(
         elif agreement_level == 'split':
             error_ids[ErrorCategory.SPLIT].append(seg_id)
             counts['split'] += 1
+        elif agreement_level == 'plurality_coded':
+            # Plurality-resolved but null-primary (rare): treat as split/needs_review,
+            # NOT a malformed parse error.
+            error_ids[ErrorCategory.SPLIT].append(seg_id)
+            counts['split'] += 1
         elif agreement_level == 'none':
             error_ids[ErrorCategory.ALL_RATERS_FAILED].append(seg_id)
             counts['all_raters_failed'] += 1
@@ -262,6 +267,11 @@ def parse_purer_results(
             error_ids[ErrorCategory.ABSTAIN].append(seg_id)
             counts['abstained'] += 1
         elif agreement_level == 'split':
+            error_ids[ErrorCategory.SPLIT].append(seg_id)
+            counts['split'] += 1
+        elif agreement_level == 'plurality_coded':
+            # Plurality-resolved but null-primary (rare): treat as split/needs_review,
+            # NOT a malformed parse error.
             error_ids[ErrorCategory.SPLIT].append(seg_id)
             counts['split'] += 1
         elif agreement_level == 'none':

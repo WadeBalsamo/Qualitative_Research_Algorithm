@@ -528,7 +528,13 @@ def _merge_config_defaults(data: dict, defaults: dict) -> None:
     """Add missing keys from the flat PipelineConfig().to_json() ``defaults`` into
     the wizard-format ``data``.  Sub-config dicts merge into their top-level block;
     scalar PipelineConfig fields are nested under ``data['pipeline']`` (wizard
-    convention) unless already present at top level or under pipeline."""
+    convention) unless already present at top level or under pipeline.
+
+    Special case: ``model_roster`` is a top-level LIST default (not a dict), so it
+    lands at the top level as an empty list rather than under ``pipeline`` — the
+    scalar branch would nest it incorrectly.  Any other list-valued top-level
+    default follows the same rule.
+    """
     pipeline = data.setdefault('pipeline', {})
     for key, dval in defaults.items():
         if isinstance(dval, dict):
@@ -536,6 +542,10 @@ def _merge_config_defaults(data: dict, defaults: dict) -> None:
             if isinstance(existing, dict):
                 _deep_fill(existing, dval)
             elif key not in data:
+                data[key] = copy.deepcopy(dval)
+        elif isinstance(dval, list):
+            # Top-level lists (e.g. model_roster) live at the root, not under pipeline.
+            if key not in data:
                 data[key] = copy.deepcopy(dval)
         else:
             if key in data or key in pipeline:

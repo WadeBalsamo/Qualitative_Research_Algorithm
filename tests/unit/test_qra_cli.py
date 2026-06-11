@@ -235,8 +235,9 @@ class TestBuildParser(unittest.TestCase):
     def test_build_parser_returns_tuple(self):
         result = qra._build_parser()
         self.assertIsInstance(result, tuple)
-        # (parser, testset_parser, cv_parser, gnn_parser)
-        self.assertEqual(len(result), 4)
+        # (parser, testset_parser, cv_parser, gnn_parser, probe_parser, runs_parser)
+        # updated: grew with the probe and run-registry CLI groups
+        self.assertEqual(len(result), 6)
 
     def test_first_element_is_argument_parser(self):
         parser, *_ = qra._build_parser()

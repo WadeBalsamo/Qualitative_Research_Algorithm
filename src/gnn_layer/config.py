@@ -298,7 +298,7 @@ class GnnLayerConfig:
     # by TWO independent algorithms (Louvain + hierarchical) to separate real structure from
     # algorithm artifact (agreement = adjusted Rand index); community→community within-session
     # transitions model routines; participant-bootstrap STABILITY SELECTION suppresses/flags
-    # communities too fragile at n≈32; TF-IDF terms + exemplars + per-session prevalence name
+    # communities too fragile at n≈20; TF-IDF terms + exemplars + per-session prevalence name
     # them. Discovery / hypothesis-generating only. Independent of the gate. Default OFF.
     subtext_communities: bool = True
     # cosine-similarity edge threshold for the subtext graph. Calibrated for instruction-tuned

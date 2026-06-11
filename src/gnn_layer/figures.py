@@ -205,7 +205,7 @@ def plot_discriminant_validity(output_dir: str):
     else:
         ax.set_visible(False)
 
-    fig.suptitle('H6 — VAAMR is developmental, not topical (hypothesis-generating; n≈32)', fontsize=11)
+    fig.suptitle('H6 — VAAMR is developmental, not topical (hypothesis-generating; n≈20)', fontsize=11)
     fig.tight_layout()
     path = os.path.join(_figs_dir(output_dir), 'gnn_discriminant_validity.png')
     fig.savefig(path, dpi=140, bbox_inches='tight')
@@ -248,7 +248,7 @@ def plot_transition_influence(output_dir: str):
                         for n, s in zip(df['move_name'], support)], fontsize=8)
     ax.set_xlabel('learned ΔE[stage] if cue were this move (vs neutral)')
     ax.set_title('Transition model — learned counterfactual influence per PURER move\n'
-                 '(hypothesis-generating; directions not magnitudes; n≈32)')
+                 '(hypothesis-generating; directions not magnitudes; n≈20)')
     fig.tight_layout()
     path = os.path.join(_figs_dir(output_dir), 'gnn_transition_influence.png')
     fig.savefig(path, dpi=140, bbox_inches='tight')
@@ -296,7 +296,7 @@ def plot_confound_localization(output_dir: str):
                         color='black')
     ax.set_xlabel('therapist PURER move'); ax.set_ylabel('participant FROM stage')
     ax.set_title('Confound localization: observed − counterfactual Δprogression\n'
-                 '(red = observed > cue warrants; blue = observed < cue warrants; caveat map, n≈32)')
+                 '(red = observed > cue warrants; blue = observed < cue warrants; caveat map, n≈20)')
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label='signed divergence')
     fig.tight_layout()
     path = os.path.join(_figs_dir(output_dir), 'gnn_confound_localization.png')

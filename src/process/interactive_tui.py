@@ -478,6 +478,299 @@ def _action_classify_gnn(config, output_dir: str, framework, state: dict) -> Non
     _pause()
 
 
+def _action_classification_runs(config, output_dir: str) -> None:
+    """'Classification runs' submenu — list / queue / start / fix / select / rebuild."""
+    while True:
+        opts = [
+            ('List runs',
+             'Show all registry runs with status, error counts, κ vs human, and SELECTED markers.'),
+            ('Queue run',
+             'Register a new queued run: pick from the model roster or enter manually.'),
+            ('Start / resume queue',
+             'Execute all queued + stale-running runs. Ctrl-C or STOP_QRA_RUNS file to pause.'),
+            ('Fix errors',
+             'Detect ERROR ballots and re-sweep just those cells (auto-bounded, dry-run option).'),
+            ('Select runs (κ-gated)',
+             'Show per-run κ table and choose which runs feed consensus (auto or manual).'),
+            ('Rebuild consensus',
+             'Re-derive the overlay consensus from the currently-selected ballot set.'),
+        ]
+        choice = _menu('Classification Runs', opts)
+        if choice == 0:
+            return
+        try:
+            if choice == 1:
+                _runs_list(output_dir)
+            elif choice == 2:
+                _runs_queue(config, output_dir)
+            elif choice == 3:
+                _runs_start(config, output_dir)
+            elif choice == 4:
+                _runs_fix_errors(config, output_dir)
+            elif choice == 5:
+                _runs_select(config, output_dir)
+            elif choice == 6:
+                _runs_rebuild(config, output_dir)
+        except KeyboardInterrupt:
+            print()
+            _warn('Action interrupted.')
+            _pause()
+        except Exception as exc:
+            print()
+            _err(f'Error: {exc}')
+            import traceback
+            traceback.print_exc()
+            _pause()
+
+
+def _runs_list(output_dir: str) -> None:
+    """List all registry runs with status and κ."""
+    from . import run_registry as _rr
+    from analysis.run_selection import per_run_kappa, load_selection_record
+
+    _section('Classification Runs — List')
+    for overlay in ('theme', 'purer'):
+        runs = _rr.list_runs(output_dir, overlay=overlay)
+        if not runs:
+            _info(f'No {overlay} runs registered.')
+            print()
+            continue
+        label = 'VAAMR' if overlay == 'theme' else 'PURER'
+        print(f'  {label} ({overlay}) runs:')
+        # Try to load stored κ from selection record (cheap; no recompute)
+        sel_rec = load_selection_record(output_dir, overlay) or {}
+        kappa_snap = sel_rec.get('kappa_snapshot') or {}
+        for r in runs:
+            rid = r['run_id']
+            sel_mark = '* SELECTED' if r.get('selected') else '  '
+            status = r.get('status', '?')
+            n_err = r.get('n_error') or 0
+            err_tag = f'  DEAD?({n_err} err)' if n_err else ''
+            k_val = kappa_snap.get(str(rid)) or kappa_snap.get(rid)
+            k_str = f'κ={k_val:.3f}' if isinstance(k_val, (int, float)) else 'κ=n/a'
+            rl = r.get('rater_label', '?')
+            note = r.get('note') or ''
+            note_str = f'  [{note}]' if note else ''
+            print(f'    [{rid}] {sel_mark} {status:<28} {k_str}  {rl}{note_str}{err_tag}')
+        print()
+    _pause()
+
+
+def _runs_queue(config, output_dir: str) -> None:
+    """Queue a new run: roster pick or manual prompts."""
+    from . import run_registry as _rr
+
+    _section('Classification Runs — Queue')
+    roster = getattr(config, 'model_roster', None) or []
+    overlay_label = _ask('Framework (vaamr|purer)', 'vaamr').strip().lower()
+    overlay = 'theme' if overlay_label == 'vaamr' else overlay_label
+    if overlay not in ('theme', 'purer'):
+        _warn("Framework must be 'vaamr' or 'purer'.")
+        _pause()
+        return
+
+    model = None
+    quant = None
+    thinking = None
+    note = ''
+    alias = None
+
+    if roster:
+        fw_want = 'vaamr' if overlay == 'theme' else 'purer'
+        eligible = [e for e in roster
+                    if fw_want in (getattr(e, 'frameworks', None) or ['vaamr', 'purer'])]
+        if eligible:
+            print()
+            print('  Roster entries eligible for this overlay:')
+            for i, e in enumerate(eligible, 1):
+                m = getattr(e, 'model', '')
+                q = getattr(e, 'quantization', '') or ''
+                t = getattr(e, 'thinking', '') or ''
+                n_ = getattr(e, 'note', '') or ''
+                a = getattr(e, 'alias', '') or ''
+                parts = [m, q, f'think:{t}' if t else '', n_, f'alias:{a}' if a else '']
+                print(f'    [{i}] {", ".join(p for p in parts if p)}')
+            print(f'    [0] Enter manually')
+            print()
+            raw = input('  Pick a roster entry (0 = manual): ').strip()
+            try:
+                idx = int(raw)
+            except ValueError:
+                idx = 0
+            if 1 <= idx <= len(eligible):
+                entry = eligible[idx - 1]
+                model = getattr(entry, 'model', '')
+                quant = getattr(entry, 'quantization', None)
+                thinking = getattr(entry, 'thinking', None)
+                note = getattr(entry, 'note', '') or ''
+                alias = getattr(entry, 'alias', None)
+
+    if not model:
+        model = _ask('Model ID (e.g. qwen/qwen3-70b)', '').strip()
+        if not model:
+            _warn('No model specified — cancelled.')
+            _pause()
+            return
+        quant = _ask('Quantization (blank = none)', '').strip() or None
+        think_raw = _ask('Thinking on/off/blank', '').strip().lower()
+        thinking = think_raw if think_raw in ('on', 'off') else None
+        note = _ask('Note (blank = none)', '').strip()
+        alias = _ask('Alias / rater label (blank = auto)', '').strip() or None
+
+    rid = _rr.create_run(
+        output_dir, overlay=overlay, model=model,
+        quantization=quant, thinking=thinking,
+        note=note or None, rater_label=alias or None,
+    )
+    row = _rr.get_run(output_dir, rid)
+    print()
+    _ok(f"Queued {overlay} run {rid}: rater_label={row['rater_label']!r} model={model!r}")
+    _info("Start it with 'Start / resume queue' or: qra runs start -o <dir>")
+    _pause()
+
+
+def _runs_start(config, output_dir: str) -> None:
+    """Start / resume the run queue."""
+    from . import run_registry as _rr
+    from . import run_executor as _rx
+
+    _section('Classification Runs — Start / Resume Queue')
+    queued = [r for r in _rr.list_runs(output_dir)
+              if r.get('status') in ('queued', 'running')]
+    if not queued:
+        _info('No queued or running runs found. Queue a run first.')
+        _pause()
+        return
+    print(f'  {len(queued)} run(s) queued / in-progress.')
+    _info('Tip: create a file named STOP_QRA_RUNS in the project directory to pause gracefully.')
+    print()
+    if not _confirm('Start the run queue now?'):
+        return
+    try:
+        _rx.execute_queue(output_dir, config)
+    except _rx.RunnerBusy:
+        _warn('Another executor is already running for this project.')
+        _pause()
+        return
+    print()
+    _ok('Queue sweep complete.')
+    if _confirm('Run assemble + analyze now?', default=True):
+        from .orchestrator import stage_assemble
+        stage_assemble(config, output_dir=output_dir)
+        _ok('master_segments.csv rebuilt.')
+        from analysis.runner import run_analysis
+        run_analysis(output_dir)
+        _ok('Analysis complete.')
+    _pause()
+
+
+def _runs_fix_errors(config, output_dir: str) -> None:
+    """Detect errors and offer repair."""
+    from . import error_detection as _ed
+    from . import repair as _rep
+
+    _section('Classification Runs — Fix Errors')
+    for overlay in ('theme', 'purer'):
+        summary = _ed.detect_overlay_errors(output_dir, overlay)
+        s = summary.get('summary', {})
+        total = s.get('total', 0)
+        err = s.get('repairable_error', 0)
+        if total:
+            print(f'  {overlay}: {err} repairable / {total} segments')
+        else:
+            print(f'  {overlay}: no segments')
+    print()
+    dry = _confirm('Dry run only (no mutations)?', default=False)
+    if dry or _confirm('Run repair now?'):
+        result = _rep.fix_errors(
+            output_dir, config,
+            overlays=('theme', 'purer'),
+            dry_run=dry,
+        )
+        for ov, ov_r in result.get('overlays', {}).items():
+            rep = ov_r.get('repaired', 0)
+            rem = ov_r.get('remaining', 0)
+            print(f'  {ov}: repaired={rep}, remaining={rem}')
+    _pause()
+
+
+def _runs_select(config, output_dir: str) -> None:
+    """Show per-run κ and select runs for consensus."""
+    from analysis.run_selection import per_run_kappa, select_runs as _select_runs
+
+    _section('Classification Runs — Select Runs')
+    for overlay in ('theme', 'purer'):
+        kappa_map = per_run_kappa(output_dir, overlay)
+        if not kappa_map:
+            _info(f'No {overlay} runs with scoreable ballots.')
+            print()
+            continue
+        label = 'VAAMR' if overlay == 'theme' else 'PURER'
+        print(f'  {label} per-run κ:')
+        for rid, meta in sorted(kappa_map.items(),
+                                key=lambda x: (x[1].get('cohen_kappa') or -99), reverse=True):
+            k = meta.get('cohen_kappa')
+            k_str = f'{k:.3f}' if isinstance(k, (int, float)) else 'n/a '
+            sel = '* SELECTED' if meta.get('selected') else '          '
+            print(f'    [{rid}] {sel}  κ={k_str}  {meta.get("rater_label", "?")}')
+        print()
+
+    fw_raw = _ask('Select for which framework (vaamr|purer|all)', 'vaamr').strip().lower()
+    overlays = []
+    if fw_raw in ('vaamr', 'all'):
+        overlays.append('theme')
+    if fw_raw in ('purer', 'all'):
+        overlays.append('purer')
+    if not overlays:
+        _warn("Enter 'vaamr', 'purer', or 'all'.")
+        _pause()
+        return
+
+    for overlay in overlays:
+        mode_raw = _ask("Selection mode (auto|ids)", 'auto').strip().lower()
+        if mode_raw == 'ids':
+            ids_raw = _ask('Run IDs (comma-separated)', '').strip()
+            try:
+                ids = [int(x.strip()) for x in ids_raw.split(',') if x.strip()]
+            except ValueError:
+                _warn('Invalid IDs.')
+                _pause()
+                return
+            # Inject manual ids via run_selection: strategy='manual' + ids list
+            from analysis.run_selection import _policy_for as _rs_policy, _persist, per_run_kappa, _human_band, _eligible_runs
+            from process import run_registry as _rr
+            eligible, _ = _eligible_runs(output_dir, overlay)
+            eligible_ids_set = {r['run_id'] for r in eligible}
+            selected = [i for i in ids if i in eligible_ids_set]
+            rejected = [i for i in eligible_ids_set if i not in selected]
+            for rid in selected:
+                _rr.set_selected(output_dir, rid, True)
+            for rid in rejected:
+                _rr.set_selected(output_dir, rid, False)
+            _ok(f'{overlay}: manually selected run(s) {selected}.')
+        else:
+            _select_runs(output_dir, config, overlay)
+            _ok(f'{overlay}: selection updated.')
+
+    if _confirm('Rebuild consensus from selected runs now?', default=True):
+        _runs_rebuild(config, output_dir)
+    _pause()
+
+
+def _runs_rebuild(config, output_dir: str) -> None:
+    """Rebuild overlay consensus from selected ballots."""
+    from . import consensus_rebuild as _crebuild
+
+    _section('Classification Runs — Rebuild Consensus')
+    for overlay in ('theme', 'purer'):
+        try:
+            _crebuild.rebuild_overlay(output_dir, overlay, config)
+            _ok(f'{overlay} overlay rebuilt from selected ballots.')
+        except Exception as exc:
+            _warn(f'{overlay} rebuild failed: {exc}')
+    _pause()
+
+
 def _action_classify_purer(config, output_dir: str) -> None:
     import glob as _glob
     from . import output_paths as _paths
@@ -490,6 +783,10 @@ def _action_classify_purer(config, output_dir: str) -> None:
         '\n'
         'Classification is at the cue-block level; labels are propagated back\n'
         'to all constituent therapist segments after classification.\n'
+        '\n'
+        'NOTE: Multi-model runs now live under "Classification runs" in the main\n'
+        'menu — use that for queuing, starting, and selecting runs via κ-gating.\n'
+        'This action covers single-run quick classification and legacy reclassify.\n'
         '\n'
         'Writes: the PURER overlay in qra.db\n'
         'Participant VAAMR labels and frozen segments are NOT modified.'
@@ -1009,6 +1306,9 @@ def _action_edit_config(config_path: str) -> None:
         ('Toggle GNN layer', 'Enable or disable the GNN discovery + consensus-distillation layer.'),
         ('Toggle GNN authoritative labels', 'Make graph-consensus labels the label of record\n'
          '(recommended only after the reliability gate reports the graph is ready).'),
+        ('Change vote mode', 'Set majority|majority_coded|coded_plurality (applied to both VAAMR and PURER).'),
+        ('Change VAAMR run-selection N', 'Top-N runs by κ to select for consensus (default 3).'),
+        ('Toggle auto-repair', 'Enable or disable auto-repair of ERROR ballots after each run.'),
         ('Open config in $EDITOR', 'Open the raw JSON in your system editor.'),
     ]
     choice = _menu('Config Edits', opts)
@@ -1072,6 +1372,30 @@ def _action_edit_config(config_path: str) -> None:
         raw.setdefault('gnn_layer', {})['gnn_authoritative'] = new_val
         changed = True
     elif choice == 8:
+        cur_vm = (raw.get('theme_classification') or {}).get('vote_mode', 'majority')
+        vm = _ask('Vote mode (majority|majority_coded|coded_plurality)', cur_vm).strip()
+        if vm in ('majority', 'majority_coded', 'coded_plurality'):
+            raw.setdefault('theme_classification', {})['vote_mode'] = vm
+            raw.setdefault('purer_classification', {})['vote_mode'] = vm
+            changed = True
+        else:
+            _warn(f'Unrecognized vote mode {vm!r} — not saved.')
+    elif choice == 9:
+        cur_n = (raw.get('run_selection') or {}).get('vaamr', {}).get('n', 3)
+        n_raw = _ask('VAAMR top-N runs for consensus', str(cur_n))
+        try:
+            n = int(n_raw)
+            raw.setdefault('run_selection', {}).setdefault('vaamr', {})['n'] = n
+            raw['run_selection']['vaamr']['strategy'] = 'top_n_by_human_irr'
+            changed = True
+        except ValueError:
+            _warn(f'Not a number: {n_raw!r}')
+    elif choice == 10:
+        cur_ar = (raw.get('auto_repair') or {}).get('enabled', True)
+        new_ar = _confirm(f'Enable auto-repair? (currently {"ON" if cur_ar else "OFF"})', not cur_ar)
+        raw.setdefault('auto_repair', {})['enabled'] = new_ar
+        changed = True
+    elif choice == 11:
         editor = os.environ.get('EDITOR', 'nano')
         os.system(f'{editor} "{config_path}"')
         return
@@ -1562,11 +1886,16 @@ def _existing_project_flow() -> None:
              'Frozen segments and frozen testsets are untouched.',
              lambda: _action_add_data(output_dir, state['config_path'])),
             # -- Classify --
+            ('Classification runs',
+             'Queue, start, fix errors, select (κ-gated), and rebuild consensus for runs.\n'
+             'This is the primary interface for multi-model VAAMR + PURER classification.',
+             _need_segments(lambda: _action_classification_runs(config, output_dir))),
             ('Classify — VAAMR (participant stages)' + _tag(state['has_theme']),
              'LLM multi-run VAAMR classification. Zero-shot + re-run-from-scratch options.',
              _need_segments(lambda: _action_classify_theme(config, output_dir, framework))),
             ('Classify — PURER (therapist moves)' + _tag(state['has_purer']),
-             'LLM PURER cue-block classification with reclassify options.',
+             'LLM PURER cue-block classification (single-run quick path; see Classification runs\n'
+             'for multi-model, queued, κ-gated workflow).',
              _need_segments(lambda: _action_classify_purer(config, output_dir))),
             ('Classify — VCE codebook' + _tag(state['has_codebook']),
              'VCE phenomenology codebook (embedding + LLM) on participant segments.',

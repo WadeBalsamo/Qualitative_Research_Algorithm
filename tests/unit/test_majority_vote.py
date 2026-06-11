@@ -4,17 +4,21 @@ tests/unit/test_majority_vote.py
 Unit tests for classification_tools/majority_vote.py
 
 Covers:
-- vote_single_label: unanimous / majority / split / none (all-error) agreement levels
+- vote_single_label: unanimous / majority / plurality_coded / split / none agreement levels
+- The M0 denominator fix: ERROR ballots are excluded from the majority denominator
+  (``n_ballots``), so ``[CODED, ERROR, ERROR]`` is labeled at level 'majority'
 - ABSTAIN as a valid ballot, including unanimous ABSTAIN (high-confidence-unclassifiable)
-- Split between ABSTAIN and a stage produces split (not unanimous/majority)
+- Split between ABSTAIN and a stage produces split (not unanimous/majority) in 'majority' mode
 - All-error inputs produce needs_review=True, agreement_level='none'
 - Tie-break: CODED preferred over ABSTAIN; highest mean-confidence wins among tied stages
 - tie_broken_by_confidence flag set correctly
-- agreement_fraction computation
+- Vote modes 'majority' / 'majority_coded' / 'coded_plurality' truth tables
+- coded_plurality monotonicity property (adding a rater never unlabels a labeled segment)
 - Secondary-stage evidence pooling
 - vote_multi_label: strict-majority threshold and per-code rater-vote tracking
 """
 
+import itertools
 import os
 import sys
 import unittest
@@ -31,6 +35,10 @@ from classification_tools.majority_vote import (
     AGREEMENT_MAJORITY,
     AGREEMENT_SPLIT,
     AGREEMENT_NONE,
+    AGREEMENT_PLURALITY,
+    VOTE_MODE_MAJORITY,
+    VOTE_MODE_MAJORITY_CODED,
+    VOTE_MODE_CODED_PLURALITY,
 )
 
 
@@ -581,6 +589,263 @@ class TestVoteMultiLabel(unittest.TestCase):
             get_confidence=lambda x: x.conf,
         )
         self.assertEqual(len(result['assignments']), 1)
+
+
+# ---------------------------------------------------------------------------
+# M0 denominator fix: ERROR ballots excluded from the majority denominator
+# ---------------------------------------------------------------------------
+
+class TestErrorDenominatorFix(unittest.TestCase):
+
+    def test_coded_with_two_errors_is_majority_not_split(self):
+        """[CODED-P, ERROR, ERROR] → labeled P at level 'majority'.
+
+        Regression for the 2026-06-08 PURER gemma incident: ERROR ballots
+        must NOT count in the majority denominator. n_ballots=1 (the one
+        coded vote), so 1 > 1/2 → strict majority of valid ballots.
+        """
+        runs = [coded(0, 0.8), error_run(), error_run()]
+        result = vote_single_label(runs)
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertEqual(result['consensus_vote'], 0)
+        self.assertEqual(result['agreement_level'], AGREEMENT_MAJORITY)
+        self.assertEqual(result['n_ballots'], 1)
+        self.assertEqual(result['n_raters'], 3)
+        self.assertFalse(result['needs_review'])
+
+    def test_coded_with_none_errors_is_majority(self):
+        """Same fix with None (hard-failure) error ballots."""
+        runs = [coded(2, 0.7), None, None]
+        result = vote_single_label(runs)
+        self.assertEqual(result['primary_stage'], 2)
+        self.assertEqual(result['agreement_level'], AGREEMENT_MAJORITY)
+        self.assertEqual(result['n_ballots'], 1)
+
+    def test_unanimous_still_requires_all_raters(self):
+        """unanimous stays honest about errors: [P, ERROR] is majority, not unanimous."""
+        result = vote_single_label([coded(1, 0.9), error_run()])
+        self.assertEqual(result['agreement_level'], AGREEMENT_MAJORITY)
+        self.assertNotEqual(result['agreement_level'], AGREEMENT_UNANIMOUS)
+
+    def test_tie_broken_by_precedence_present_in_all_paths(self):
+        """Every return path carries the tie_broken_by_precedence key (default False)."""
+        for runs in ([None, None],                       # none path
+                     [coded(0), coded(0)],               # unanimous path
+                     [coded(0), coded(1)]):              # split path
+            result = vote_single_label(runs)
+            self.assertIn('tie_broken_by_precedence', result)
+            self.assertFalse(result['tie_broken_by_precedence'])
+
+
+# ---------------------------------------------------------------------------
+# vote_mode='majority' (default, conservative) truth table
+# ---------------------------------------------------------------------------
+
+class TestVoteModeMajority(unittest.TestCase):
+
+    def test_coded_vs_abstain_is_split_unlabeled(self):
+        """[P, ABSTAIN] → split / unlabeled in conservative majority mode."""
+        result = vote_single_label([coded(0, 0.8), abstain()])
+        self.assertEqual(result['agreement_level'], AGREEMENT_SPLIT)
+        self.assertIsNone(result['primary_stage'])
+        self.assertTrue(result['needs_review'])
+
+    def test_two_distinct_coded_is_split(self):
+        result = vote_single_label([coded(0), coded(1)])
+        self.assertEqual(result['agreement_level'], AGREEMENT_SPLIT)
+        self.assertIsNone(result['primary_stage'])
+
+    def test_two_of_three_coded_is_majority(self):
+        result = vote_single_label([coded(0), coded(0), coded(1)])
+        self.assertEqual(result['agreement_level'], AGREEMENT_MAJORITY)
+        self.assertEqual(result['primary_stage'], 0)
+
+    def test_all_abstain_is_abstain_consensus(self):
+        result = vote_single_label([abstain(), abstain(), abstain()])
+        self.assertEqual(result['agreement_level'], AGREEMENT_UNANIMOUS)
+        self.assertEqual(result['consensus_vote'], ABSTAIN)
+        self.assertIsNone(result['primary_stage'])
+
+    def test_coded_with_two_abstain_is_abstain_majority(self):
+        """[P, ABSTAIN, ABSTAIN] → ABSTAIN majority (2/3 valid ballots)."""
+        result = vote_single_label([coded(0), abstain(), abstain()])
+        self.assertEqual(result['agreement_level'], AGREEMENT_MAJORITY)
+        self.assertEqual(result['consensus_vote'], ABSTAIN)
+        self.assertIsNone(result['primary_stage'])
+
+
+# ---------------------------------------------------------------------------
+# vote_mode='majority_coded'
+# ---------------------------------------------------------------------------
+
+class TestVoteModeMajorityCoded(unittest.TestCase):
+
+    def test_coded_vs_abstain_is_plurality_coded(self):
+        """[P, ABSTAIN] → labeled P at level plurality_coded, needs_review."""
+        result = vote_single_label([coded(0, 0.8), abstain()],
+                                   vote_mode=VOTE_MODE_MAJORITY_CODED)
+        self.assertEqual(result['agreement_level'], AGREEMENT_PLURALITY)
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertTrue(result['needs_review'])
+
+    def test_two_coded_resolved_by_confidence(self):
+        """[P(0.4), U(0.9)] → U wins by mean confidence (deterministic)."""
+        result = vote_single_label([coded(0, 0.4), coded(1, 0.9)],
+                                   vote_mode=VOTE_MODE_MAJORITY_CODED)
+        self.assertEqual(result['agreement_level'], AGREEMENT_PLURALITY)
+        self.assertEqual(result['primary_stage'], 1)
+        self.assertTrue(result['tie_broken_by_confidence'])
+
+    def test_highest_conf_coded_wins_over_abstain(self):
+        """[P(0.9), U(0.4), ABSTAIN] → highest-conf coded (P) wins plurality_coded."""
+        result = vote_single_label([coded(0, 0.9), coded(1, 0.4), abstain()],
+                                   vote_mode=VOTE_MODE_MAJORITY_CODED)
+        self.assertEqual(result['agreement_level'], AGREEMENT_PLURALITY)
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertTrue(result['needs_review'])
+
+    def test_strict_majority_still_majority(self):
+        """A genuine majority is still 'majority' (not downgraded) in majority_coded."""
+        result = vote_single_label([coded(0), coded(0), coded(1)],
+                                   vote_mode=VOTE_MODE_MAJORITY_CODED)
+        self.assertEqual(result['agreement_level'], AGREEMENT_MAJORITY)
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertFalse(result['needs_review'])
+
+
+# ---------------------------------------------------------------------------
+# vote_mode='coded_plurality' (PURER's monotone mode)
+# ---------------------------------------------------------------------------
+
+_TBO = [0, 1, 2, 3, 4]
+
+
+class TestVoteModeCodedPlurality(unittest.TestCase):
+
+    def cp(self, runs, **kw):
+        kw.setdefault('tie_break_order', _TBO)
+        return vote_single_label(runs, vote_mode=VOTE_MODE_CODED_PLURALITY, **kw)
+
+    def test_coded_with_two_abstain_labels_coded(self):
+        """[P, ABSTAIN, ABSTAIN] → P plurality_coded (coded ballots decide)."""
+        result = self.cp([coded(0), abstain(), abstain()])
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertEqual(result['agreement_level'], AGREEMENT_PLURALITY)
+        self.assertTrue(result['needs_review'])
+
+    def test_all_abstain_is_abstain(self):
+        result = self.cp([abstain(), abstain(), abstain()])
+        self.assertEqual(result['consensus_vote'], ABSTAIN)
+        self.assertIsNone(result['primary_stage'])
+        self.assertFalse(result['needs_review'])
+
+    def test_all_error_is_none(self):
+        result = self.cp([error_run(), error_run(), error_run()])
+        self.assertEqual(result['agreement_level'], AGREEMENT_NONE)
+        self.assertIsNone(result['primary_stage'])
+        self.assertEqual(result['n_ballots'], 0)
+        self.assertTrue(result['needs_review'])
+
+    def test_equal_confidence_resolved_by_precedence(self):
+        """[P, U] equal confidence + tie_break_order=[0,1,..] → P via precedence."""
+        result = self.cp([coded(0, 0.8), coded(1, 0.8)])
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertTrue(result['tie_broken_by_precedence'])
+        self.assertFalse(result['tie_broken_by_confidence'])
+
+    def test_plurality_count_wins(self):
+        """[P, U, U] → U (plurality count, no tie-break needed)."""
+        result = self.cp([coded(0), coded(1), coded(1)])
+        self.assertEqual(result['primary_stage'], 1)
+        self.assertFalse(result['tie_broken_by_precedence'])
+
+    def test_coded_with_error_labels_coded(self):
+        """[P, ERROR] → P (the single coded ballot is the consensus)."""
+        result = self.cp([coded(0), error_run()])
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertEqual(result['agreement_level'], AGREEMENT_MAJORITY)
+
+    def test_unanimous_when_all_raters_coded_winner(self):
+        result = self.cp([coded(1), coded(1), coded(1)])
+        self.assertEqual(result['agreement_level'], AGREEMENT_UNANIMOUS)
+        self.assertEqual(result['primary_stage'], 1)
+        self.assertFalse(result['needs_review'])
+
+    def test_majority_over_all_valid_ballots(self):
+        """[P, P, ABSTAIN] → P at 'majority' (2/3 of ALL valid ballots incl. abstain)."""
+        result = self.cp([coded(0), coded(0), abstain()])
+        self.assertEqual(result['agreement_level'], AGREEMENT_MAJORITY)
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertFalse(result['needs_review'])
+
+    def test_hard_invariant_labeled_iff_coded_ballot(self):
+        """Hard invariant: primary_stage is not None ⟺ ≥1 valid CODED ballot."""
+        # ≥1 coded → labeled
+        for runs in ([coded(0)], [coded(0), abstain()], [coded(0), coded(1)],
+                     [coded(2), error_run(), abstain()]):
+            self.assertIsNotNone(self.cp(runs)['primary_stage'])
+        # zero coded → unlabeled
+        for runs in ([abstain()], [abstain(), abstain()], [error_run()],
+                     [abstain(), error_run()]):
+            self.assertIsNone(self.cp(runs)['primary_stage'])
+
+    def test_precedence_falls_back_to_lowest_id_without_order(self):
+        """No tie_break_order → equal-confidence tie resolves to lowest stage id."""
+        result = vote_single_label([coded(2, 0.8), coded(0, 0.8)],
+                                   vote_mode=VOTE_MODE_CODED_PLURALITY,
+                                   tie_break_order=None)
+        self.assertEqual(result['primary_stage'], 0)
+        self.assertFalse(result['tie_broken_by_precedence'])
+
+
+# ---------------------------------------------------------------------------
+# Monotonicity property (coded_plurality): adding a rater never unlabels.
+# ---------------------------------------------------------------------------
+
+class TestCodedPluralityMonotonicity(unittest.TestCase):
+
+    # Ballot alphabet: three coded stages, one abstain, one error.
+    _BALLOTS = {
+        'c0': lambda: coded(0, 0.8),
+        'c1': lambda: coded(1, 0.8),
+        'c2': lambda: coded(2, 0.8),
+        'ab': lambda: abstain(),
+        'er': lambda: error_run(),
+    }
+    _KEYS = list(_BALLOTS.keys())
+
+    def _labeled(self, combo_keys):
+        runs = [self._BALLOTS[k]() for k in combo_keys]
+        res = vote_single_label(runs, vote_mode=VOTE_MODE_CODED_PLURALITY,
+                                tie_break_order=_TBO)
+        return res['primary_stage'] is not None
+
+    def test_adding_a_rater_never_unlabels(self):
+        """For every combo (len 1..4) and every possible added ballot,
+        labeled(combo) implies labeled(combo + added)."""
+        checked = 0
+        for length in range(1, 5):
+            for combo in itertools.product(self._KEYS, repeat=length):
+                if not self._labeled(combo):
+                    continue
+                for added in self._KEYS:
+                    extended = combo + (added,)
+                    self.assertTrue(
+                        self._labeled(extended),
+                        msg=f'monotonicity violated: {combo} labeled but '
+                            f'{extended} unlabeled',
+                    )
+                    checked += 1
+        self.assertGreater(checked, 0)
+
+    def test_invariant_holds_across_alphabet(self):
+        """labeled ⟺ ≥1 coded ballot, for every combo in the alphabet."""
+        coded_keys = {'c0', 'c1', 'c2'}
+        for length in range(1, 5):
+            for combo in itertools.product(self._KEYS, repeat=length):
+                has_coded = any(k in coded_keys for k in combo)
+                self.assertEqual(self._labeled(combo), has_coded,
+                                 msg=f'invariant violated for {combo}')
 
 
 if __name__ == '__main__':

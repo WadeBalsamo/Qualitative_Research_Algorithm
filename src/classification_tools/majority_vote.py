@@ -17,7 +17,45 @@ of the parsed run dict:
 
 ABSTAIN is a real ballot and is counted alongside the coded theme IDs
 when determining the majority. ERROR ballots are excluded from the
-denominator.
+denominator (``n_ballots``) entirely — a rater that failed to parse never
+dilutes the vote of the raters that succeeded.
+
+Vote modes
+----------
+``vote_single_label`` supports three ``vote_mode`` policies. All three
+share the corrected denominator (``n_ballots`` = valid CODED+ABSTAIN
+ballots, ERROR excluded) and the same secondary-evidence pooling; they
+differ only in how a sub-majority / tie among the valid ballots resolves:
+
+    'majority'        (default, conservative)
+        A label is assigned only when one value holds a strict majority
+        of the valid ballots (``max_count > n_ballots / 2``). Anything
+        short of that — including ties broken by the CODED-preference /
+        confidence chain — collapses to ``split`` with ``winner=None``.
+        ``[CODED-P, ERROR, ERROR]`` → P (majority, 1/1); ``[P, ABSTAIN]``
+        → split / unlabeled.
+
+    'majority_coded'
+        Identical to 'majority' when a strict majority exists, but when
+        it does not the CODED-preference + mean-confidence tie-break
+        resolves a winner instead of nullifying it. That winner is
+        reported at agreement level ``plurality_coded`` with
+        ``needs_review=True``. ``[P, ABSTAIN]`` → P (plurality_coded).
+
+    'coded_plurality'  (PURER's monotone mode)
+        The primary is decided among the CODED ballots ONLY. ABSTAIN is
+        consensus only when there are zero valid CODED ballots and at
+        least one ABSTAIN; level ``none`` only when there are zero valid
+        ballots at all. The coded winner is the plurality count, broken
+        in order by mean confidence → ``tie_break_order`` (an explicit
+        stage-precedence list) → lowest stage id. Agreement level is
+        ``unanimous`` (every rater coded the winner), ``majority``
+        (> ``n_ballots`` / 2 of ALL valid ballots, abstains included),
+        else ``plurality_coded``.
+
+        **Hard invariant**: ``primary_stage is not None`` ⟺ at least one
+        valid CODED ballot exists. Adding a rater therefore never turns a
+        labeled segment unlabeled (monotonicity).
 
 Unified voting
 --------------
@@ -36,6 +74,11 @@ AGREEMENT_UNANIMOUS = 'unanimous'
 AGREEMENT_MAJORITY = 'majority'
 AGREEMENT_SPLIT = 'split'
 AGREEMENT_NONE = 'none'       # No ballots (all raters errored)
+AGREEMENT_PLURALITY = 'plurality_coded'   # Resolved among coded ballots without a strict majority
+
+VOTE_MODE_MAJORITY = 'majority'
+VOTE_MODE_MAJORITY_CODED = 'majority_coded'
+VOTE_MODE_CODED_PLURALITY = 'coded_plurality'
 
 
 def _vote_value(run: Optional[Dict]) -> Any:
@@ -109,6 +152,8 @@ def vote_single_label(
     rater_ids: Optional[List[str]] = None,
     secondary_weight: float = 0.6,
     presence_threshold: float = 0.5,
+    vote_mode: str = VOTE_MODE_MAJORITY,
+    tie_break_order: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """
     Aggregate N raters' single-label ballots into one consensus result.
@@ -123,24 +168,36 @@ def vote_single_label(
         Stable rater identifiers, same length as ``parsed_runs``. In the
         multi-model case these are model names; in the single-model
         case they are synthetic ``run_1``/``run_2``/...
+    secondary_weight, presence_threshold : float
+        Secondary-evidence pooling controls (see ``_evidence_secondary``).
+    vote_mode : str
+        ``'majority'`` (default, conservative), ``'majority_coded'``, or
+        ``'coded_plurality'`` (PURER's monotone mode). See module
+        docstring for the precise resolution of sub-majority ballots.
+    tie_break_order : list of int, optional
+        Stage-precedence list (highest precedence first) used only by
+        ``'coded_plurality'`` after the confidence tie-break is itself
+        tied. Stages not listed sort after listed ones; the final
+        fallback is the lowest stage id.
 
     Returns
     -------
     dict
         A consensus result with the following keys:
 
-            primary_stage        : int | None  (None when consensus is ABSTAIN or split)
-            primary_confidence   : float (mean of agreeing raters, 0 when no majority)
+            primary_stage        : int | None  (None when consensus is ABSTAIN or no label)
+            primary_confidence   : float (mean of agreeing raters, 0 when no label)
             secondary_stage      : int | None
             secondary_confidence : float | None
             justification        : str (first agreeing rater's rationale)
-            consensus_vote       : int | 'ABSTAIN' | None (None = split/no majority)
-            agreement_level      : 'unanimous' | 'majority' | 'split' | 'none'
+            consensus_vote       : int | 'ABSTAIN' | None (None = split/no label)
+            agreement_level      : 'unanimous' | 'majority' | 'plurality_coded' | 'split' | 'none'
             n_agree              : int
-            n_ballots            : int   (raters that produced a ballot)
+            n_ballots            : int   (raters that produced a CODED/ABSTAIN ballot)
             n_raters             : int   (len(parsed_runs))
             tie_broken_by_confidence : bool
-            needs_review         : bool  (True when split or no ballots)
+            tie_broken_by_precedence : bool  (coded_plurality only; tie_break_order used)
+            needs_review         : bool  (True when split, none, or plurality_coded)
             rater_votes          : list of per-rater dicts (see below)
 
         rater_votes entries::
@@ -213,47 +270,105 @@ def vote_single_label(
             'n_ballots': 0,
             'n_raters': n_raters,
             'tie_broken_by_confidence': False,
+            'tie_broken_by_precedence': False,
             'needs_review': True,
             'rater_votes': rater_votes,
         }
 
-    counts = Counter(b[1] for b in ballots)
-    max_count = counts.most_common(1)[0][1]
-    tied_values = [v for v, c in counts.items() if c == max_count]
+    def _avg_conf(val: Any) -> float:
+        confs = [c for _, v, c, _ in ballots if v == val and c is not None]
+        return sum(confs) / len(confs) if confs else 0.0
 
     tie_broken_by_confidence = False
-    if len(tied_values) > 1:
-        # Prefer CODED stages over ABSTAIN when tied (qualitative coding
-        # bias: we'd rather assign a label than drop the segment).
-        coded_tied = [v for v in tied_values if v != ABSTAIN]
-        candidates = coded_tied if coded_tied else tied_values
+    tie_broken_by_precedence = False
 
-        if len(candidates) > 1:
-            def avg_conf(val):
-                confs = [c for _, v, c, _ in ballots
-                         if v == val and c is not None]
-                return sum(confs) / len(confs) if confs else 0.0
-            winner = max(candidates, key=avg_conf)
-            tie_broken_by_confidence = True
+    if vote_mode == VOTE_MODE_CODED_PLURALITY:
+        # Monotone mode: the primary is decided among CODED ballots only.
+        # ABSTAIN is consensus only when no rater coded anything.
+        coded_ballots = [b for b in ballots if b[1] != ABSTAIN]
+        n_coded = len(coded_ballots)
+
+        if n_coded == 0:
+            # Every valid ballot is an ABSTAIN → ABSTAIN consensus.
+            winner = ABSTAIN
+            counts = Counter(b[1] for b in ballots)
+            max_count = counts[ABSTAIN]
         else:
-            winner = candidates[0]
-            tie_broken_by_confidence = coded_tied != tied_values
-    else:
-        winner = tied_values[0]
+            counts = Counter(b[1] for b in coded_ballots)
+            max_count = counts.most_common(1)[0][1]
+            tied = sorted(v for v, c in counts.items() if c == max_count)
+            if len(tied) == 1:
+                winner = tied[0]
+            else:
+                # Plurality tie → mean confidence → explicit precedence → lowest id.
+                best_conf = max(_avg_conf(v) for v in tied)
+                conf_tied = [v for v in tied if _avg_conf(v) == best_conf]
+                if len(conf_tied) == 1:
+                    winner = conf_tied[0]
+                    tie_broken_by_confidence = True
+                else:
+                    order = tie_break_order or []
+                    rank = {sid: i for i, sid in enumerate(order)}
+                    winner = min(
+                        conf_tied,
+                        key=lambda v: (rank.get(v, len(order)), v),
+                    )
+                    if any(v in rank for v in conf_tied):
+                        tie_broken_by_precedence = True
 
-    # Agreement level is defined over *raters*, not over ballots, so a
-    # unanimous result requires every rater (incl. errors) to have cast
-    # the winning ballot.
-    if max_count == n_raters and n_ballots == n_raters:
-        agreement_level = AGREEMENT_UNANIMOUS
-    elif max_count > n_raters / 2:
-        agreement_level = AGREEMENT_MAJORITY
+        # Agreement level over ALL raters (errors included for unanimity;
+        # abstains included in the majority denominator).
+        if winner != ABSTAIN and max_count == n_raters and n_ballots == n_raters:
+            agreement_level = AGREEMENT_UNANIMOUS
+        elif max_count > n_ballots / 2:
+            agreement_level = AGREEMENT_MAJORITY
+        elif winner == ABSTAIN:
+            # All-abstain that is not a strict majority of raters (errors
+            # present) is still a clean ABSTAIN consensus, not a split.
+            agreement_level = (AGREEMENT_UNANIMOUS
+                               if (max_count == n_raters and n_ballots == n_raters)
+                               else AGREEMENT_MAJORITY)
+        else:
+            agreement_level = AGREEMENT_PLURALITY
     else:
-        # No strict majority of raters — always split (even if the vote
-        # technically resolved by tie-break above, it isn't a majority).
-        agreement_level = AGREEMENT_SPLIT
-        winner = None
-        tie_broken_by_confidence = False
+        counts = Counter(b[1] for b in ballots)
+        max_count = counts.most_common(1)[0][1]
+        tied_values = [v for v, c in counts.items() if c == max_count]
+
+        if len(tied_values) > 1:
+            # Prefer CODED stages over ABSTAIN when tied (qualitative coding
+            # bias: we'd rather assign a label than drop the segment).
+            coded_tied = [v for v in tied_values if v != ABSTAIN]
+            candidates = coded_tied if coded_tied else tied_values
+
+            if len(candidates) > 1:
+                winner = max(candidates, key=_avg_conf)
+                tie_broken_by_confidence = True
+            else:
+                winner = candidates[0]
+                tie_broken_by_confidence = coded_tied != tied_values
+        else:
+            winner = tied_values[0]
+
+        # Agreement level is defined over *raters*, not over ballots, so a
+        # unanimous result requires every rater (incl. errors) to have cast
+        # the winning ballot. The MAJORITY threshold uses ``n_ballots`` (valid
+        # CODED+ABSTAIN ballots) as the denominator — ERROR ballots no longer
+        # dilute the vote of the raters that succeeded.
+        if max_count == n_raters and n_ballots == n_raters:
+            agreement_level = AGREEMENT_UNANIMOUS
+        elif max_count > n_ballots / 2:
+            agreement_level = AGREEMENT_MAJORITY
+        elif vote_mode == VOTE_MODE_MAJORITY_CODED and winner is not None and winner != ABSTAIN:
+            # majority_coded: keep the CODED-preference / confidence winner
+            # instead of nullifying it, flagged for review as a plurality.
+            agreement_level = AGREEMENT_PLURALITY
+        else:
+            # No strict majority of valid ballots — split (the conservative
+            # 'majority' mode nullifies any tie-break winner here).
+            agreement_level = AGREEMENT_SPLIT
+            winner = None
+            tie_broken_by_confidence = False
 
     # Confidence & justification from agreeing ballots.
     primary_confidence = 0.0
@@ -315,8 +430,9 @@ def vote_single_label(
         primary_stage_out = winner
         consensus_vote = winner
 
-    needs_review = (agreement_level == AGREEMENT_SPLIT
-                    or agreement_level == AGREEMENT_NONE)
+    needs_review = agreement_level in (
+        AGREEMENT_SPLIT, AGREEMENT_NONE, AGREEMENT_PLURALITY,
+    )
 
     return {
         'primary_stage': primary_stage_out,
@@ -332,6 +448,7 @@ def vote_single_label(
         'n_ballots': n_ballots,
         'n_raters': n_raters,
         'tie_broken_by_confidence': tie_broken_by_confidence,
+        'tie_broken_by_precedence': tie_broken_by_precedence,
         'needs_review': needs_review,
         'rater_votes': rater_votes,
     }

@@ -590,6 +590,7 @@ def apply_key_update(
         'n_segment_ids': len(segid_map),
         'sessions_rewritten': 0,
         'overlay_rows': 0,
+        'ballot_rows': 0,
         'checkpoint_keys': 0,
         'testset_txt_files': 0,
         'cv_item_rows': 0,
@@ -612,6 +613,11 @@ def apply_key_update(
     if segid_map:
         for key in ('theme', 'purer', 'codebook', 'cv'):
             stats['overlay_rows'] += _cio.remap_overlay_segment_ids(output_dir, key, segid_map)
+        # --- Durable ballots (segment_id PK + applies_to_json id lists) ---
+        # The overlay consensus is REBUILT from these on the next `qra runs rebuild`;
+        # if their segment_ids stayed stale the rebuild would null the remapped rows.
+        from . import run_registry as _rr
+        stats['ballot_rows'] += _rr.remap_ballot_segment_ids(output_dir, segid_map)
         # --- Classification checkpoints (segment_id dict keys) ---
         stats['checkpoint_keys'] += _remap_checkpoints(output_dir, segid_map)
 

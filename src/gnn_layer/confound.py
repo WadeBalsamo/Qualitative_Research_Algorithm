@@ -12,7 +12,7 @@ signal. This module maps that signed divergence per (from_stage × PURER move) c
 participant-clustered bootstrap CIs and ranks the most-confounded cells.
 
 This is a methodological instrument for *caveating* the mechanism tables, not evidence of an
-effect. n≈32 observational; nothing here is causal; every cell is hypothesis-generating. It reuses
+effect. n≈20 observational; nothing here is causal; every cell is hypothesis-generating. It reuses
 the WS-T transition counterfactual (handed in from the runner, or recomputed) and the observed
 Δprogression in the SAME E[stage] basis (so the divergence is apples-to-apples).
 """
@@ -104,7 +104,7 @@ def _f(v) -> str:
 def write_confound_report(cells: List[dict], output_dir: str) -> str:
     W = 78
     L = ["=" * W, "CONFOUND LOCALIZATION — where responsiveness distorts the observed signal", "=" * W, ""]
-    L.append("CAVEAT INSTRUMENT, NOT A CLAIM. n≈32 observational; nothing here is causal (§9.4).")
+    L.append("CAVEAT INSTRUMENT, NOT A CLAIM. n≈20 observational; nothing here is causal (§9.4).")
     L.append("Observed Δprogression conflates a move's influence with WHEN therapists deploy it")
     L.append("(responsiveness). The transition model's learned counterfactual estimates influence")
     L.append("INDEPENDENT of timing. Their signed divergence (observed − counterfactual) localizes")

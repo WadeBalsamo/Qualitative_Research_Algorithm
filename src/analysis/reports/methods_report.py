@@ -104,7 +104,7 @@ def generate_methods_report(output_dir) -> Optional[str]:
              "import pending). No real-world clinical claim can be made."),
             ("GNN consensus classifier",
              "REFUTED AT PILOT n",
-             "Grouped-CV κ≈0.05–0.14 < human band at n≈32; a probe ties/beats "
+             "Grouped-CV κ≈0.05–0.14 < human band at n≈20; a probe ties/beats "
              "it. DEFAULT OFF; re-adjudicable at Cohorts 3–4."),
         ]
         for name, status, note in rows:

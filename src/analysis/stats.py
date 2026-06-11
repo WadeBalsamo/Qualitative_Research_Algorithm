@@ -567,7 +567,7 @@ def mixedlm_interaction(df, outcome: str, fixed: str, group: str) -> Dict:
     FROM×move moderation that H2/§7.6 actually claims — and counts interaction contrasts
     (terms containing ``:``) whose 95% CI excludes 0. Gaussian Δprogression outcome.
 
-    Handles the singular / under-identified design (common at n≈32, where the full
+    Handles the singular / under-identified design (common at n≈20, where the full
     interaction is rank-deficient) GRACEFULLY: a failed fit or non-finite CIs are
     reported as ``singular=True`` rather than raising. Returns a dict with
     ``{n, n_interaction_terms, n_ci_excludes_0, examples, singular, method}`` (or an

@@ -25,7 +25,7 @@ import os
 import datetime
 from collections import Counter
 from dataclasses import asdict
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -215,6 +215,7 @@ def stage_classify_theme(
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
     only_session_ids: Optional[set] = None,
+    only_segment_ids: Optional[set] = None,
 ) -> List[Segment]:
     """
     Theme classification stage.
@@ -225,6 +226,8 @@ def stage_classify_theme(
 
     only_session_ids:  When set, classify only segments whose session_id is in this set
                        and merge results into the existing overlay (instead of full rewrite).
+    only_segment_ids:  When set, classify only segments whose segment_id is in this set.
+                       Composes with only_session_ids (intersection). Merge semantics used.
     """
     _od = _resolve_output_dir(output_dir, config)
     os.makedirs(_od, exist_ok=True)
@@ -234,22 +237,30 @@ def stage_classify_theme(
             _od, apply=('purer', 'codebook', 'cv'),
         )
 
-    if only_session_ids is not None:
+    # Build subset: intersection of both filters when both are given.
+    if only_session_ids is not None and only_segment_ids is not None:
+        subset = [s for s in segments
+                  if s.session_id in only_session_ids and s.segment_id in only_segment_ids]
+    elif only_session_ids is not None:
         subset = [s for s in segments if s.session_id in only_session_ids]
+    elif only_segment_ids is not None:
+        subset = [s for s in segments if s.segment_id in only_segment_ids]
     else:
         subset = segments
+
+    _incremental = (only_session_ids is not None or only_segment_ids is not None)
 
     if config is not None and framework is not None:
         _theme_llm_classify(config, framework, subset, _od, observer)
 
-    if only_session_ids is not None:
+    if _incremental:
         _cio.merge_theme_overlay(_od, subset)
     else:
         _cio.write_theme_overlay(_od, segments)
     entry = _build_classifier_manifest_entry(
         config, 'theme', framework=framework, n_segments=len(segments),
     )
-    if only_session_ids is not None:
+    if _incremental:
         entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         entry['n_new_segments'] = len(subset)
     _cio.update_classification_manifest(_od, key='theme', entry=entry)
@@ -264,6 +275,7 @@ def stage_classify_purer(
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
     only_session_ids: Optional[set] = None,
+    only_segment_ids: Optional[set] = None,
 ) -> List[Segment]:
     """
     PURER cue-unit classification stage.
@@ -273,6 +285,8 @@ def stage_classify_purer(
 
     only_session_ids:  When set, classify only segments whose session_id is in this set
                        and merge results into the existing overlay (instead of full rewrite).
+    only_segment_ids:  When set, classify only segments whose segment_id is in this set.
+                       Composes with only_session_ids (intersection). Merge semantics used.
     """
     _od = _resolve_output_dir(output_dir, config)
     os.makedirs(_od, exist_ok=True)
@@ -282,22 +296,30 @@ def stage_classify_purer(
             _od, apply=('theme', 'codebook', 'cv'),
         )
 
-    if only_session_ids is not None:
+    # Build subset: intersection of both filters when both are given.
+    if only_session_ids is not None and only_segment_ids is not None:
+        subset = [s for s in segments
+                  if s.session_id in only_session_ids and s.segment_id in only_segment_ids]
+    elif only_session_ids is not None:
         subset = [s for s in segments if s.session_id in only_session_ids]
+    elif only_segment_ids is not None:
+        subset = [s for s in segments if s.segment_id in only_segment_ids]
     else:
         subset = segments
+
+    _incremental = (only_session_ids is not None or only_segment_ids is not None)
 
     if config is not None:
         _purer_llm_classify(config, subset, _od, observer)
 
-    if only_session_ids is not None:
+    if _incremental:
         _cio.merge_purer_overlay(_od, subset)
     else:
         _cio.write_purer_overlay(_od, segments)
     entry = _build_classifier_manifest_entry(
         config, 'purer', n_segments=len(segments),
     )
-    if only_session_ids is not None:
+    if _incremental:
         entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         entry['n_new_segments'] = len(subset)
     _cio.update_classification_manifest(_od, key='purer', entry=entry)
@@ -313,6 +335,7 @@ def stage_classify_codebook(
     output_dir: Optional[str] = None,
     observer: Optional[PipelineObserver] = None,
     only_session_ids: Optional[set] = None,
+    only_segment_ids: Optional[set] = None,
 ) -> List[Segment]:
     """
     Codebook classification stage.
@@ -322,6 +345,8 @@ def stage_classify_codebook(
 
     only_session_ids:  When set, classify only segments whose session_id is in this set
                        and merge results into the existing overlay (instead of full rewrite).
+    only_segment_ids:  When set, classify only segments whose segment_id is in this set.
+                       Composes with only_session_ids (intersection). Merge semantics used.
     """
     _od = _resolve_output_dir(output_dir, config)
     os.makedirs(_od, exist_ok=True)
@@ -331,22 +356,30 @@ def stage_classify_codebook(
             _od, apply=('theme', 'purer', 'cv'),
         )
 
-    if only_session_ids is not None:
+    # Build subset: intersection of both filters when both are given.
+    if only_session_ids is not None and only_segment_ids is not None:
+        subset = [s for s in segments
+                  if s.session_id in only_session_ids and s.segment_id in only_segment_ids]
+    elif only_session_ids is not None:
         subset = [s for s in segments if s.session_id in only_session_ids]
+    elif only_segment_ids is not None:
+        subset = [s for s in segments if s.segment_id in only_segment_ids]
     else:
         subset = segments
+
+    _incremental = (only_session_ids is not None or only_segment_ids is not None)
 
     if config is not None and codebook is not None:
         _codebook_classify(config, codebook, subset, _od, observer)
 
-    if only_session_ids is not None:
+    if _incremental:
         _cio.merge_codebook_overlay(_od, subset)
     else:
         _cio.write_codebook_overlay(_od, segments)
     entry = _build_classifier_manifest_entry(
         config, 'codebook', codebook=codebook, n_segments=len(segments),
     )
-    if only_session_ids is not None:
+    if _incremental:
         entry['last_incremental_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         entry['n_new_segments'] = len(subset)
     _cio.update_classification_manifest(_od, key='codebook', entry=entry)
@@ -618,21 +651,34 @@ def resolve_pinned_classifier_config(
     if sub_attr is not None:
         sub = getattr(pinned, sub_attr, None)
         if sub is not None:
-            pinned_model = entry.get('model')
-            pinned_n_runs = entry.get('n_runs')
             pinned_temp = entry.get('temperature')
 
-            current_model = getattr(sub, 'model', None)
-            if pinned_model and current_model != pinned_model:
-                print(
-                    f"  [incremental] pinning {key} classifier model: "
-                    f"{pinned_model!r} (current config has {current_model!r})"
-                )
-                sub.model = pinned_model
+            # Rebuilt-from-ballots manifests carry the full per-run roster: pin the
+            # WHOLE roster (per_run_models + n_runs + model=slot0) so incremental
+            # classify re-runs the same multi-rater consensus.  Legacy entries (no
+            # per_run_models) keep the single-model pin path unchanged.
+            per_run_models = entry.get('per_run_models')
+            if isinstance(per_run_models, list) and len(per_run_models) >= 1:
+                roster = list(per_run_models)
+                if getattr(sub, 'per_run_models', None) != roster:
+                    print(f"  [incremental] pinning {key} per-run roster: {roster}")
+                sub.per_run_models = roster
+                sub.n_runs = len(roster)
+                sub.model = roster[0]
+            else:
+                pinned_model = entry.get('model')
+                pinned_n_runs = entry.get('n_runs')
+                current_model = getattr(sub, 'model', None)
+                if pinned_model and current_model != pinned_model:
+                    print(
+                        f"  [incremental] pinning {key} classifier model: "
+                        f"{pinned_model!r} (current config has {current_model!r})"
+                    )
+                    sub.model = pinned_model
 
-            if pinned_n_runs is not None and getattr(sub, 'n_runs', None) != pinned_n_runs:
-                print(f"  [incremental] pinning {key} n_runs: {pinned_n_runs}")
-                sub.n_runs = pinned_n_runs
+                if pinned_n_runs is not None and getattr(sub, 'n_runs', None) != pinned_n_runs:
+                    print(f"  [incremental] pinning {key} n_runs: {pinned_n_runs}")
+                    sub.n_runs = pinned_n_runs
 
             if pinned_temp is not None and getattr(sub, 'temperature', None) != pinned_temp:
                 print(f"  [incremental] pinning {key} temperature: {pinned_temp}")
@@ -667,6 +713,300 @@ def resolve_pinned_classifier_config(
     return pinned
 
 
+def _rater_vote_to_parsed_cell(entry):
+    """Normalise one ``rater_votes`` entry to the canonical *parsed-run* ballot.
+
+    ``vote_single_label`` emits per-rater summaries keyed ``stage``/``confidence``;
+    the ballot store and the re-vote path (``build_merge_result`` ->
+    ``vote_single_label._vote_value``) read ``primary_stage``/``primary_confidence``.
+    Persisting the raw summary as-is therefore round-trips a CODED ballot with a
+    NULL primary on rebuild (the M1 capture gap).  This maps the summary shape to
+    the parsed-run shape so ``raw_json`` re-votes byte-identically; ``None`` and
+    ERROR entries pass straight through as hard parse failures.
+    """
+    if entry is None or not isinstance(entry, dict):
+        return entry
+    vote = entry.get('vote')
+    if vote == 'ERROR':
+        return None  # hard parse failure -> ERROR ballot (NULL raw_json)
+    # Already in parsed-run shape (has primary_stage): leave untouched.
+    if 'primary_stage' in entry:
+        return entry
+    return {
+        'vote': vote if vote is not None else (
+            'ABSTAIN' if entry.get('stage') is None else 'CODED'),
+        'primary_stage': entry.get('stage'),
+        'primary_confidence': entry.get('confidence'),
+        'secondary_stage': entry.get('secondary_stage'),
+        'secondary_confidence': entry.get('secondary_confidence'),
+        'justification': entry.get('justification', '') or '',
+        'evidence_phrase': entry.get('evidence_phrase', '') or '',
+    }
+
+
+def _persist_ballots_from_results(output_dir, overlay, segments_or_results, observer=None):
+    """Capture per-rater ballots into the schema-v2 run registry + label_ballots.
+
+    Belt-and-braces ballot durability for the *legacy inline* classify paths
+    (the M3 executor persists directly).  For each rater seen in the just-
+    classified units we get-or-create one overlay-scoped ``classification_runs``
+    row (born selected + completed, note='inline classify', rater_label = the
+    rater id) and upsert one ballot per (segment, rater).
+
+    ``segments_or_results`` is either:
+      * a list of ``Segment`` objects (overlay 'theme' -> read ``rater_ids`` /
+        ``rater_votes``; overlay 'purer' -> ``purer_rater_ids`` /
+        ``purer_rater_votes``), or
+      * a list of cue-unit capture records ``{'segment_ids': [...],
+        'rater_ids': [...], 'rater_votes': [...] | None}`` (PURER cue units;
+        ``rater_votes is None`` -> ERROR ballots; ``segment_ids`` are the
+        constituent ids and become each ballot's ``applies_to``).
+
+    Wrapped so a failure here NEVER breaks classification — ballots are an
+    additive durability layer over the existing overlay writes.
+    """
+    try:
+        from . import run_registry as _rr
+
+        if overlay == 'theme':
+            ids_attr, votes_attr = 'rater_ids', 'rater_votes'
+        elif overlay == 'purer':
+            ids_attr, votes_attr = 'purer_rater_ids', 'purer_rater_votes'
+        else:
+            return
+
+        # Normalise input into capture records: (segment_ids, rater_ids,
+        # rater_votes, applies_to).  Each record's rater_votes is a list aligned
+        # to rater_ids (entry None / missing -> ERROR ballot for that rater).
+        records = []
+        for item in (segments_or_results or []):
+            if isinstance(item, dict):
+                seg_ids = list(item.get('segment_ids') or [])
+                rater_ids = [str(r) for r in (item.get('rater_ids') or [])]
+                rater_votes = item.get('rater_votes')
+                applies_to = seg_ids if len(seg_ids) > 1 else None
+            else:
+                seg_id = getattr(item, 'segment_id', None)
+                if seg_id is None:
+                    continue
+                seg_ids = [seg_id]
+                rater_ids = [str(r) for r in (getattr(item, ids_attr, None) or [])]
+                rater_votes = getattr(item, votes_attr, None)
+                applies_to = None
+            if not rater_ids:
+                continue
+            records.append((seg_ids, rater_ids, rater_votes, applies_to))
+
+        if not records:
+            return
+
+        # Stable rater roster across all records (first-seen order) -> runs.
+        roster: List[str] = []
+        seen = set()
+        for _, rater_ids, _, _ in records:
+            for rid in rater_ids:
+                if rid not in seen:
+                    seen.add(rid)
+                    roster.append(rid)
+
+        run_id_by_rater: dict = {}
+        for rid in roster:
+            existing = {r['rater_label']: r['run_id']
+                        for r in _rr.list_runs(output_dir, overlay=overlay)}
+            if rid in existing:
+                run_id = existing[rid]
+                # Existing run: refresh status only — do NOT force selected=1, or a
+                # re-capture would silently re-select a run the user deselected
+                # (overriding `qra runs select`).
+                _rr.update_run(output_dir, run_id, status='completed')
+            else:
+                run_id = _rr.create_run(
+                    output_dir, overlay=overlay, model=rid, rater_label=rid,
+                    note='inline classify',
+                )
+                # New runs are born selected (the inline path's consensus = all raters).
+                _rr.update_run(output_dir, run_id, status='completed', selected=1)
+            run_id_by_rater[rid] = run_id
+
+        # cells_by_run[run_id] -> {segment_id: cell}, applies_by_run likewise.
+        cells_by_run: Dict[int, Dict[str, Optional[dict]]] = {}
+        applies_by_run: Dict[int, Dict[str, list]] = {}
+        for seg_ids, rater_ids, rater_votes, applies_to in records:
+            votes = rater_votes if isinstance(rater_votes, list) else None
+            vote_by_rater: dict = {}
+            if votes is not None:
+                # Align to rater_ids by position, then index any leftover by
+                # the entry's own 'rater' field.
+                for i, rid in enumerate(rater_ids):
+                    vote_by_rater[rid] = _rater_vote_to_parsed_cell(
+                        votes[i] if i < len(votes) else None)
+                for entry in votes:
+                    if isinstance(entry, dict):
+                        er = entry.get('rater')
+                        if er is not None and str(er) in run_id_by_rater:
+                            vote_by_rater[str(er)] = _rater_vote_to_parsed_cell(entry)
+            for rid in rater_ids:
+                run_id = run_id_by_rater.get(rid)
+                if run_id is None:
+                    continue
+                cell = vote_by_rater.get(rid)  # None -> ERROR ballot
+                for seg_id in seg_ids:
+                    cells_by_run.setdefault(run_id, {})[seg_id] = cell
+                    if applies_to:
+                        applies_by_run.setdefault(run_id, {})[seg_id] = applies_to
+
+        for run_id, cells in cells_by_run.items():
+            _rr.upsert_ballots(output_dir, overlay, run_id, cells,
+                               applies_to=applies_by_run.get(run_id))
+            _rr.refresh_counters(output_dir, run_id)
+    except Exception as exc:  # pragma: no cover - durability must never break classify
+        print(
+            f"\n  *** [ballots] WARNING: ballot capture FAILED for overlay "
+            f"{overlay!r}: {exc}\n"
+            f"  *** ballots are now STALE for this overlay — run "
+            f"`qra runs sync-ballots -o <dir>` before any rebuild/selection.\n"
+            f"  *** (the overlay itself was written; only the durable ballot cache "
+            f"is behind.)"
+        )
+
+
+def _load_classify_targets(config, output_dir, overlay):
+    """Load the speaker-filtered segments an overlay's sweep classifies.
+
+    Mirrors what the inline classify paths feed the LLM, so the M3 run executor
+    sweeps the *same* units (byte-compatible prompts/checkpoints):
+
+      * ``overlay == 'theme'``  -> frozen participant segments (the speaker
+        filter the VAAMR stage applies), with PURER/codebook/cv overlays applied
+        as read-only context (matching ``stage_classify_theme``'s load).
+      * ``overlay == 'purer'``  -> all frozen segments with the THEME overlay
+        applied (turn-mode PURER reads ``primary_stage`` to anchor cue blocks);
+        cue-unit construction + therapist filtering happen downstream in
+        :func:`build_purer_turn_cue_units`.
+
+    Returns the list of ``Segment`` objects.
+    """
+    if overlay == 'theme':
+        segments = segments_io.load_segments_for_stage(
+            output_dir, apply=('purer', 'codebook', 'cv'),
+        )
+        from .speaker_filter import apply_speaker_filter as _apply_sf
+        return _apply_sf(segments, config.speaker_filter)
+    if overlay == 'purer':
+        return segments_io.load_segments_for_stage(
+            output_dir, apply=('theme', 'codebook', 'cv'),
+        )
+    raise ValueError(f"_load_classify_targets: unsupported overlay {overlay!r}")
+
+
+def _resolve_purer_framework_and_config(config, output_dir):
+    """Resolve the PURER framework + a classification sub-config with the same
+    VAAMR-inheritance the inline ``_purer_llm_classify`` applies (model/backend/
+    per_run_models inherited from theme when unset; orchestrator.py:929-944).
+
+    Returns ``(purer_framework, purer_cfg)``.  Mutates ``config.purer_classification``
+    in place exactly as the inline path does (so a follow-on inline run is
+    unaffected), then the executor overrides model/n_runs per run on top.
+    """
+    from constructs.registry import load as _registry_load
+    _therapist_fw_name = getattr(config, 'therapist_framework', 'purer')
+    purer_framework = _registry_load(_therapist_fw_name or 'purer')
+    purer_cfg = config.purer_classification
+    purer_cfg.output_dir = _paths.auditable_logs_dir(output_dir)
+
+    tc = config.theme_classification
+    _default_model = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct'
+    if not purer_cfg.model or purer_cfg.model == _default_model:
+        purer_cfg.model = tc.model
+        purer_cfg.backend = tc.backend
+        purer_cfg.api_key = tc.api_key
+        purer_cfg.lmstudio_base_url = getattr(tc, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1')
+        purer_cfg.temperature = tc.temperature
+    if not getattr(purer_cfg, 'per_run_models', None):
+        inherited = list(getattr(tc, 'per_run_models', []))
+        if inherited:
+            purer_cfg.per_run_models = inherited
+            purer_cfg.n_runs = len(inherited)
+        else:
+            purer_cfg.n_runs = 1
+    return purer_framework, purer_cfg
+
+
+def build_purer_turn_cue_units(config, segments, output_dir):
+    """Build the turn-mode PURER cue units the executor sweeps.
+
+    Reuses the SAME canonical cue-block builder + per-turn exchange-context
+    formatter the inline ``_purer_llm_classify`` turn-mode pass uses, so the
+    prompts (and therefore the checkpoint cells) are byte-compatible.  Unlike the
+    inline path this is coverage-free and side-effect-light: it only constructs
+    units.  Each unit dict carries ``segment`` (the therapist Segment),
+    ``from_segment``/``to_segment``, ``context_block``, ``_constituents`` (the
+    therapist segment itself — turn mode is 1:1), and ``_session_id``.
+
+    Returns ``(cue_units, purer_framework, purer_cfg)``.  Raises ``ValueError``
+    when ``purer_cue.classification_unit != 'turn'`` (cue_block mode stays on the
+    legacy inline path in registry v1 — its consensus-driven bisection creates
+    run-dependent synthetic unit ids).
+    """
+    purer_cue = getattr(config, 'purer_cue', None)
+    classification_unit = getattr(purer_cue, 'classification_unit', 'turn')
+    if classification_unit != 'turn':
+        raise ValueError(
+            "build_purer_turn_cue_units supports classification_unit='turn' only; "
+            f"got purer_cue.classification_unit={classification_unit!r}."
+        )
+
+    purer_framework, purer_cfg = _resolve_purer_framework_and_config(config, output_dir)
+
+    ctx_window = getattr(purer_cfg, 'context_window_segments', 6)
+    max_ctx_words = getattr(purer_cue, 'max_context_words', 1000)
+
+    from .cue_blocks import cue_blocks_from_segments as _cue_blocks_from_segments
+    sorted_segs, _specs = _cue_blocks_from_segments(
+        segments, stage_attr='primary_stage', require_stage=True
+    )
+
+    from collections import defaultdict as _dd
+    _by_sess = _dd(list)
+    for _gidx, _s in enumerate(sorted_segs):
+        _by_sess[_s.session_id].append((_gidx, _s))
+    _W = max(1, int(ctx_window))
+    cue_units: list = []
+    for _sid, _items in _by_sess.items():
+        _n = len(_items)
+        for _pos in range(_n):
+            _gidx, _seg = _items[_pos]
+            if _seg.speaker != 'therapist' or not (_seg.text or '').strip():
+                continue
+            _from_item = None; _from_pos = -1
+            for _p in range(_pos - 1, -1, -1):
+                if _items[_p][1].speaker == 'participant':
+                    _from_item = _items[_p][1]; _from_pos = _p; break
+            _to_item = None; _to_pos = _n
+            for _q in range(_pos + 1, _n):
+                if _items[_q][1].speaker == 'participant':
+                    _to_item = _items[_q][1]; _to_pos = _q; break
+            _lo = max(_from_pos + 1, _pos - _W)
+            _hi = min(_to_pos, _pos + _W + 1)
+            _siblings = [_items[_k][1] for _k in range(_lo, _hi)
+                         if _items[_k][1].speaker == 'therapist'
+                         and (_items[_k][1].text or '').strip()]
+            _anchor = _items[_from_pos][0] if _from_pos >= 0 else _gidx
+            _turn_ctx = _build_turn_exchange_context(
+                _seg, _from_item, _to_item, _siblings, sorted_segs, _anchor,
+                window_size=ctx_window, max_words=max_ctx_words,
+            )
+            cue_units.append({
+                'segment': _seg,
+                'from_segment': _from_item,
+                'to_segment': _to_item,
+                'context_block': _turn_ctx,
+                '_constituents': [_seg],
+                '_session_id': _sid,
+            })
+    return cue_units, purer_framework, purer_cfg
+
+
 def _theme_llm_classify(config, framework, segments, output_dir, observer):
     """Run zero-shot LLM theme classification in-place on segments."""
     theme_config = config.theme_classification
@@ -691,6 +1031,10 @@ def _theme_llm_classify(config, framework, segments, output_dir, observer):
     # parse_all_results returns the updated list; splice back into segments
     segments[:] = updated
     plog.close_llm_log()
+
+    # Durable ballots: capture per-rater votes for the just-classified segments
+    # (the same Segment objects, now carrying rater_ids/rater_votes).
+    _persist_ballots_from_results(output_dir, 'theme', segments_to_classify, observer)
 
 
 def _build_turn_exchange_context(target_seg, from_item, to_item, sibling_items,
@@ -1171,6 +1515,46 @@ def _purer_llm_classify(config, segments, output_dir, observer):
             _add('unparseable_words', sub_words, cu['_session_id'])
 
     plog.close_llm_log()
+
+    # ---------------------------------------------------------------------------
+    # Durable ballots (capture at the cue-unit level; constituents are the
+    # applies_to).  Covers every attempted unit incl. ABSTAIN/parse failures
+    # (rater_votes None -> ERROR ballots) so the per-rater collapse that caused
+    # the 2026-06-08 incident is recorded, not silently dropped.
+    # ---------------------------------------------------------------------------
+    _roster = [str(m) for m in (getattr(purer_cfg, 'per_run_models', None) or [])]
+    _ballot_records = []
+    _seen_units = set()
+
+    def _record_unit(unit, result):
+        uid = unit['segment'].segment_id
+        if uid in _seen_units:
+            return
+        _seen_units.add(uid)
+        seg_ids = [c.segment_id for c in unit.get('_constituents') or []]
+        if not seg_ids:
+            return
+        rater_ids = None
+        rater_votes = None
+        if isinstance(result, dict):
+            rater_ids = [str(r) for r in (result.get('rater_ids') or [])]
+            rater_votes = result.get('rater_votes')
+        if not rater_ids:
+            rater_ids = list(_roster)  # failed/missing result -> ERROR ballots
+        if not rater_ids:
+            return
+        _ballot_records.append({
+            'segment_ids': seg_ids,
+            'rater_ids': rater_ids,
+            'rater_votes': rater_votes if isinstance(rater_votes, list) else None,
+        })
+
+    for cu in cue_units:
+        _record_unit(cu, initial_results.get(cu['segment'].segment_id))
+    for sid_k, (bisect_unit, bisect_result) in bisect_results.items():
+        _record_unit(bisect_unit, bisect_result)
+
+    _persist_ballots_from_results(output_dir, 'purer', _ballot_records, observer)
 
     # ---------------------------------------------------------------------------
     # Write coverage report (1e)
@@ -2174,6 +2558,30 @@ def run_full_pipeline(
             config, framework,
             segments=all_segments, output_dir=output_dir, observer=observer,
         )
+
+    # ------------------------------------------------------------------
+    # Auto-repair (M4): fix classification errors BEFORE assembly/analysis (the
+    # user's core mandate — auto-fix errors before downstream).  Mirrors the
+    # execute_queue hook shape (KeyboardInterrupt re-raises; other failures are
+    # printed and swallowed so the pipeline still assembles).  No-ops when
+    # config.auto_repair.enabled is False.  Repaired overlays are re-applied onto
+    # the in-memory segments so the fresh labels flow into Stage 6.
+    _repaired_overlays = []
+    if config.run_theme_labeler:
+        _repaired_overlays.append('theme')
+    if config.run_purer_labeler and _has_therapists:
+        _repaired_overlays.append('purer')
+    if _repaired_overlays:
+        try:
+            from . import repair as _repair
+            _rep = _repair.maybe_auto_repair(output_dir, config, tuple(_repaired_overlays))
+            if _rep:
+                _by_id = {s.segment_id: s for s in all_segments}
+                _cio.apply_overlays(output_dir, _by_id, keys=tuple(_repaired_overlays))
+        except KeyboardInterrupt:
+            raise
+        except Exception as _e:  # noqa: BLE001
+            print(f"  [auto-repair] hook failed: {_e} — continuing to assembly.")
 
     # ------------------------------------------------------------------
     # Stage 5: Preparing Human Validation Set

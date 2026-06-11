@@ -467,6 +467,28 @@ class TestResolvePinnedClassifierConfig(unittest.TestCase):
         # cv key has no sub_attr → returns current_config as-is
         self.assertIs(result, config)
 
+    def test_per_run_models_roster_pinned(self):
+        """A rebuilt-from-ballots manifest (per_run_models list) pins the WHOLE
+        roster: per_run_models + n_runs + model=slot0 (not a joined string)."""
+        from process import classifications_io as cio
+        from process.orchestrator import resolve_pinned_classifier_config
+        cio.update_classification_manifest(
+            self.tmpdir, key='theme',
+            entry={'model': 'mA', 'per_run_models': ['mA', 'mB', 'mC'],
+                   'rater_labels': ['mA', 'mB', 'mC'], 'n_runs': 3,
+                   'rebuilt_from_ballots': True, 'n_segments': 5},
+        )
+        config = self._make_config('single-model')
+        config.theme_classification.n_runs = 1
+        config.theme_classification.per_run_models = []
+        result = resolve_pinned_classifier_config(self.tmpdir, 'theme', config)
+        self.assertEqual(result.theme_classification.per_run_models, ['mA', 'mB', 'mC'])
+        self.assertEqual(result.theme_classification.n_runs, 3)
+        self.assertEqual(result.theme_classification.model, 'mA')
+        # Original config not mutated.
+        self.assertEqual(config.theme_classification.n_runs, 1)
+        self.assertEqual(config.theme_classification.per_run_models, [])
+
 
 # ---------------------------------------------------------------------------
 # TestClass 5: TestIncrementalManifestMarker

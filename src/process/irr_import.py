@@ -113,6 +113,9 @@ def _ballot_for_vote(kind: str, value: Optional[int]) -> Optional[dict]:
 _SOURCE_FROM_LEVEL = {
     'unanimous': 'unanimous',
     'majority': 'majority',
+    # plurality_coded is a resolved (labeled) consensus like majority — map it to
+    # the same source so _consensus_rows treats it as a real ground-truth row.
+    'plurality_coded': 'majority',
     'split': 'unresolved',
     'none': 'unresolved',
 }

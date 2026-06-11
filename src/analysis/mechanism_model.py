@@ -25,8 +25,8 @@ Plus a confound-sensitivity table (E-value / Rosenbaum Γ per cell), a PURER-lab
 robustness check (the cue labels are not yet human-validated), and a trajectory model
 that separates within- from between-session cue effects (consolidation vs momentary nudge).
 
-Everything is observational, n≈32 — hypothesis-generating, never causal. The honest
-expected outcome is "right instrument, under-identified at n≈32, bounded by sensitivity
+Everything is observational, n≈20 — hypothesis-generating, never causal. The honest
+expected outcome is "right instrument, under-identified at n≈20, bounded by sensitivity
 analysis." Heavy libs are lazy-imported with graceful degradation (mirrors
 ``stats._import_statsmodels``); reuses ``process.cue_blocks`` upstream and the
 ``analysis.stats`` helpers (e_value, rosenbaum_bounds, ordered_logit, mixedlm_interaction,
@@ -452,7 +452,7 @@ def sensitivity_bounds(blocks_df: pd.DataFrame, min_n: int = 4,
                 'rosenbaum_gamma': gamma.get('gamma_critical'),
             })
     # Surface the genuinely-robust cells first: CI-limit E-value desc, then |SMD| desc as a
-    # tiebreak. When every CI spans 0 (typical at n≈32) all CI-limit E-values tie at 1.0 and
+    # tiebreak. When every CI spans 0 (typical at n≈20) all CI-limit E-values tie at 1.0 and
     # the order degrades to |SMD| — the honest "nothing survives the interval" presentation.
     cells.sort(key=lambda c: (-(c['e_value_ci_limit'] or 0.0), -abs(c['smd'] or 0.0)))
     return {

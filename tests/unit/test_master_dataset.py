@@ -384,6 +384,44 @@ class TestConfidenceTiering(unittest.TestCase):
         self.assertEqual(tiers['pm'], 'medium')
         self.assertEqual(tiers['pl'], 'low')
 
+    def test_two_rater_unanimous_is_high(self):
+        """At n=2 selected runs, a unanimous 2/2 must reach 'high' (the fixed
+        high_consistency=3 would have made 'high' unreachable)."""
+        seg = _make_participant('p1', primary_stage=2,
+                                llm_run_consistency=2, llm_confidence_primary=0.9)
+        seg.rater_ids = ['mA', 'mB']  # 2 selected runs fed this segment
+        r = self._assemble(seg)
+        self.assertEqual(r.loc['p1', 'label_confidence_tier'], 'high')
+
+    def test_five_rater_three_agree_is_medium_not_high(self):
+        """At n=5, 3/5 agreement is a majority (medium), NOT unanimity — and a
+        unanimous 5/5 IS high (the fixed scale would wrongly call 3/5 high)."""
+        seg3 = _make_participant('p3', primary_stage=1,
+                                 llm_run_consistency=3, llm_confidence_primary=0.9)
+        seg3.rater_ids = ['mA', 'mB', 'mC', 'mD', 'mE']
+        seg5 = _make_participant('p5', primary_stage=1,
+                                 llm_run_consistency=5, llm_confidence_primary=0.9)
+        seg5.rater_ids = ['mA', 'mB', 'mC', 'mD', 'mE']
+        df = assemble_master_dataset([seg3, seg5], self.out)
+        tiers = dict(zip(df['segment_id'], df['label_confidence_tier']))
+        self.assertEqual(tiers['p3'], 'medium')
+        self.assertEqual(tiers['p5'], 'high')
+
+    def test_three_rater_behavior_unchanged(self):
+        """At n=3 (carrying rater_ids), behavior is byte-identical to the config
+        defaults: 3/3 high, 2/3 medium, 1/3 low."""
+        segs = []
+        for sid, cons, expect in (('p3h', 3, 'high'), ('p3m', 2, 'medium'),
+                                  ('p3l', 1, 'low')):
+            s = _make_participant(sid, primary_stage=2,
+                                  llm_run_consistency=cons, llm_confidence_primary=0.9)
+            s.rater_ids = ['mA', 'mB', 'mC']
+            segs.append((s, expect))
+        df = assemble_master_dataset([s for s, _ in segs], self.out)
+        tiers = dict(zip(df['segment_id'], df['label_confidence_tier']))
+        for s, expect in segs:
+            self.assertEqual(tiers[s.segment_id], expect)
+
 
 class TestCsvOutput(unittest.TestCase):
     """assemble_master_dataset writes a single CSV to output_path, and rows roundtrip."""

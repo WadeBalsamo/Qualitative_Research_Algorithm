@@ -20,6 +20,57 @@ from classification_tools.codebook_multilabel.config import (
 from gnn_layer.config import GnnLayerConfig
 from classification_tools.probe.probe_classifier import ProbeConfig
 
+# ---------------------------------------------------------------------------
+# Run-registry config dataclasses (M6)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ModelRosterEntry:
+    """One entry in the model roster used by ``qra runs queue --roster``."""
+    model: str = ''
+    backend: Optional[str] = None
+    quantization: Optional[str] = None
+    thinking: Optional[str] = None      # 'on' | 'off' | None (unknown)
+    note: str = ''
+    alias: Optional[str] = None
+    temperature: Optional[float] = None
+    frameworks: List[str] = field(default_factory=lambda: ['vaamr', 'purer'])
+
+
+@dataclass
+class RunSelectionSpec:
+    """Selection policy for one overlay (vaamr or purer)."""
+    strategy: str = 'top_n_by_human_irr'
+    n: Optional[int] = 3
+    min_kappa: Optional[float] = None
+
+
+@dataclass
+class RunSelectionConfig:
+    """Per-overlay run-selection policies."""
+    vaamr: RunSelectionSpec = field(
+        default_factory=lambda: RunSelectionSpec(strategy='top_n_by_human_irr', n=3)
+    )
+    purer: RunSelectionSpec = field(
+        default_factory=lambda: RunSelectionSpec(strategy='all', n=None)
+    )
+
+
+@dataclass
+class AutoRepairConfig:
+    """Settings for the auto-repair hook in ``run_executor.execute_queue``."""
+    enabled: bool = True
+    max_passes: int = 2
+    dead_rater_error_fraction: float = 0.5
+
+
+@dataclass
+class RunExecutionConfig:
+    """Tunable constants for the run executor."""
+    retries: int = 2
+    save_interval: int = 20
+
 # Keys that hold secrets and must never be written to config JSON
 _SECRET_KEYS = frozenset({'api_key'})
 
@@ -308,7 +359,10 @@ class PipelineConfig:
     speaker_filter: SpeakerFilterConfig = field(default_factory=SpeakerFilterConfig)
     theme_classification: ThemeClassificationConfig = field(default_factory=ThemeClassificationConfig)
     purer_classification: ThemeClassificationConfig = field(
-        default_factory=lambda: ThemeClassificationConfig(context_window_segments=6)
+        default_factory=lambda: ThemeClassificationConfig(
+            context_window_segments=6,
+            vote_mode='majority',  # empirically validated (vote_policy_comparison experiment, 2026-06-10)
+        )
     )
     codebook_embedding: EmbeddingClassifierConfig = field(default_factory=EmbeddingClassifierConfig)
     codebook_llm: LLMCodebookConfig = field(default_factory=LLMCodebookConfig)
@@ -346,6 +400,12 @@ class PipelineConfig:
     anonymize_transcript_text: bool = True
     anonymize_text_model: str = 'obi/deid_roberta_i2b2'
     anonymize_text_confidence_threshold: float = 0.6
+
+    # Run-registry settings (M6)
+    model_roster: List[ModelRosterEntry] = field(default_factory=list)
+    run_selection: RunSelectionConfig = field(default_factory=RunSelectionConfig)
+    auto_repair: AutoRepairConfig = field(default_factory=AutoRepairConfig)
+    run_execution: RunExecutionConfig = field(default_factory=RunExecutionConfig)
 
     # Post-pipeline results analysis
     auto_analyze: bool = True
@@ -407,6 +467,8 @@ class PipelineConfig:
             'efficacy': EfficacyConfig,
             'mechanism': MechanismModelConfig,
             'inter_rater_reliability': InterRaterReliabilityConfig,
+            'auto_repair': AutoRepairConfig,
+            'run_execution': RunExecutionConfig,
         }
 
         kwargs = {}
@@ -427,6 +489,10 @@ class PipelineConfig:
                 kwargs['test_sets'] = _parse_test_sets_config(value)
             elif key == 'content_validity' and isinstance(value, dict):
                 kwargs['content_validity'] = _parse_content_validity_config(value)
+            elif key == 'model_roster' and isinstance(value, list):
+                kwargs['model_roster'] = _parse_model_roster(value)
+            elif key == 'run_selection' and isinstance(value, dict):
+                kwargs['run_selection'] = _parse_run_selection_config(value)
             elif key in sub_config_map and isinstance(value, dict):
                 dc_cls = sub_config_map[key]
                 dc_fields = {f.name for f in fields(dc_cls)}
@@ -480,6 +546,43 @@ def _parse_content_validity_config(d: dict) -> ContentValidityConfig:
         vaamr=_parse_content_validity_spec(d.get('vaamr', {})) if d.get('vaamr') else ContentValiditySpec(enabled=True, name='cv_vaamr_v1'),
         purer=_parse_content_validity_spec(d.get('purer', {})) if d.get('purer') else ContentValiditySpec(name='cv_purer_v1'),
     )
+
+
+def _parse_model_roster(lst: list) -> List[ModelRosterEntry]:
+    """Parse a list of dicts into ModelRosterEntry objects.
+
+    Lenient: unknown keys are silently ignored; bad entries (non-dict or missing
+    'model') are skipped with a warning so an invalid entry never blocks startup.
+    """
+    import sys as _sys
+    result: List[ModelRosterEntry] = []
+    valid_fields = {f.name for f in fields(ModelRosterEntry)}
+    for i, item in enumerate(lst):
+        if not isinstance(item, dict):
+            print(f"  [config] model_roster[{i}] is not a dict — skipped.", file=_sys.stderr)
+            continue
+        if not item.get('model'):
+            print(f"  [config] model_roster[{i}] missing 'model' field — skipped.", file=_sys.stderr)
+            continue
+        filtered = {k: v for k, v in item.items() if k in valid_fields}
+        try:
+            result.append(ModelRosterEntry(**filtered))
+        except Exception as exc:
+            print(f"  [config] model_roster[{i}] bad entry ({exc}) — skipped.", file=_sys.stderr)
+    return result
+
+
+def _parse_run_selection_spec(d: dict) -> RunSelectionSpec:
+    spec_fields = {f.name for f in fields(RunSelectionSpec)}
+    return RunSelectionSpec(**{k: v for k, v in d.items() if k in spec_fields})
+
+
+def _parse_run_selection_config(d: dict) -> RunSelectionConfig:
+    vaamr_raw = d.get('vaamr', {})
+    purer_raw = d.get('purer', {})
+    vaamr = _parse_run_selection_spec(vaamr_raw) if isinstance(vaamr_raw, dict) else RunSelectionSpec()
+    purer = _parse_run_selection_spec(purer_raw) if isinstance(purer_raw, dict) else RunSelectionSpec(strategy='all', n=None)
+    return RunSelectionConfig(vaamr=vaamr, purer=purer)
 
 
 def _blank_secrets(d: dict):

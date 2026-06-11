@@ -454,6 +454,138 @@ class TestClassifySegmentsModelFirst(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# on_progress cadence + try/finally crash-safety (M3)
+# ---------------------------------------------------------------------------
+
+class TestOnProgressAndCrashSafety(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _config_attr(self):
+        class Cfg:
+            model = 'mA'
+            backend = 'fake'
+            models = ['mA']
+            temperature = 0.0
+            no_reasoning = False
+            process_logger = None
+        return Cfg()
+
+    def _coded_responder(self, prompt):
+        return {'vote': 'CODED', 'primary_stage': 1, 'primary_confidence': 0.8,
+                'secondary_stage': None, 'secondary_confidence': None,
+                'justification': 'j', 'evidence_phrase': ''}
+
+    def test_on_progress_called_at_save_points_with_delta_cells(self):
+        """on_progress receives only the cells produced since the previous call,
+        keyed by segment_id, and every segment is delivered exactly once."""
+        segs = [make_segment(f's{i}') for i in range(5)]
+        client = FakeLLMClient(config=self._config_attr(), responder=self._coded_responder)
+
+        from classification_tools.majority_vote import vote_single_label
+
+        def merge_runs(run_list):
+            return vote_single_label(run_list, rater_ids=['mA'])
+
+        seen_batches = []
+
+        def on_progress(cells):
+            seen_batches.append(dict(cells))
+
+        classify_segments(
+            segments=segs, client=client, n_runs=1,
+            build_prompt=lambda seg, run, all_segs, idx: seg.text,
+            parse_response=_identity_parse, merge_runs=merge_runs,
+            output_dir=self.tmp, save_interval=2,
+            file_prefix='prog_test', per_run_models=['mA'],
+            on_progress=on_progress,
+        )
+        # Every segment delivered exactly once, no duplicates across batches.
+        delivered = {}
+        for batch in seen_batches:
+            for sid, cell in batch.items():
+                self.assertNotIn(sid, delivered, f'{sid} flushed twice')
+                delivered[sid] = cell
+        self.assertEqual(set(delivered), {f's{i}' for i in range(5)})
+        # The delivered ballots are the parsed CODED dicts (not None).
+        for cell in delivered.values():
+            self.assertEqual(cell['vote'], 'CODED')
+        # save_interval=2 over 5 segs ⇒ at least one mid-sweep flush before the end.
+        self.assertGreaterEqual(len(seen_batches), 2)
+
+    def test_try_finally_saves_checkpoint_on_injected_exception(self):
+        """An exception mid-sweep still leaves a model_first_v1 checkpoint with the
+        cells classified so far (the crash-safety fix).
+
+        The exception is injected in ``build_prompt`` (outside _request_and_parse,
+        which absorbs request-level errors into None ballots) so the sweep itself
+        raises and the finally-block's save is what we assert."""
+        segs = [make_segment(f's{i}') for i in range(6)]
+
+        call_box = {'n': 0}
+
+        def exploding_build_prompt(seg, run, all_segs, idx):
+            call_box['n'] += 1
+            if call_box['n'] == 4:    # blow up partway through the sweep
+                raise RuntimeError('boom mid-sweep')
+            return seg.text
+
+        client = FakeLLMClient(config=self._config_attr(), responder=self._coded_responder)
+
+        from classification_tools.majority_vote import vote_single_label
+
+        def merge_runs(run_list):
+            return vote_single_label(run_list, rater_ids=['mA'])
+
+        ckpt = os.path.join(self.tmp, 'checkpoints', 'crash_run0001_runs.json')
+        with self.assertRaises(RuntimeError):
+            classify_segments(
+                segments=segs, client=client, n_runs=1,
+                build_prompt=exploding_build_prompt,
+                parse_response=_identity_parse, merge_runs=merge_runs,
+                output_dir=self.tmp, save_interval=20,  # no periodic save before crash
+                per_run_models=['mA'], checkpoint_path=ckpt,
+            )
+        # The finally-block wrote the checkpoint despite save_interval=20 and the
+        # crash on call 4 — the first 3 cells are durably recorded.
+        self.assertTrue(os.path.exists(ckpt))
+        with open(ckpt) as f:
+            data = json.load(f)
+        self.assertEqual(data['_meta']['format'], 'model_first_v1')
+        coded = [sid for sid, by_run in data['run_results'].items()
+                 if by_run.get('0') is not None]
+        self.assertGreaterEqual(len(coded), 3)
+
+    def test_single_model_try_finally_saves_on_exception(self):
+        """The single-model (segment-first) path also persists a checkpoint on an
+        abnormal exit (the ≤ save_interval-1 trailing-loss fix)."""
+        segs = [make_segment(f's{i}') for i in range(6)]
+        call_box = {'n': 0}
+
+        def exploding_build_prompt(seg, run, all_segs, idx):
+            call_box['n'] += 1
+            if call_box['n'] == 3:
+                raise RuntimeError('boom')
+            return seg.text
+
+        client = FakeLLMClient(config=self._config_attr(), responder=self._coded_responder)
+        with self.assertRaises(RuntimeError):
+            classify_segments(
+                segments=segs, client=client, n_runs=1,
+                build_prompt=exploding_build_prompt,
+                parse_response=_identity_parse, merge_runs=_make_merge(1),
+                output_dir=self.tmp, save_interval=20, file_prefix='sm_crash',
+            )
+        ckpt_dir = os.path.join(self.tmp, 'checkpoints')
+        self.assertTrue(os.path.isdir(ckpt_dir))
+        self.assertTrue(any('sm_crash' in f for f in os.listdir(ckpt_dir)))
+
+
+# ---------------------------------------------------------------------------
 # _save_checkpoint / _load_runs_checkpoint
 # ---------------------------------------------------------------------------
 

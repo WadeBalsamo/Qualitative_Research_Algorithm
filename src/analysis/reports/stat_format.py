@@ -244,6 +244,20 @@ METHODS = OrderedDict([
       "P(move | transition type) / P(move) over cue blocks — how over- or "
       "under-represented each therapist move is at forward, lateral, and "
       "backward participant transitions, relative to its base rate.")),
+    ('run_selection',
+     ("Run-selection provenance (registry-backed consensus)",
+      "Each LLM rater corresponds to one registry run in `classification_runs`. "
+      "Every raw ballot (vote, stage, confidence, justification) is durably stored "
+      "in `label_ballots` as the source of truth. The operative overlay consensus "
+      "is a derived re-vote over the SELECTED runs only. Selection policy for VAAMR: "
+      "top-N by highest Cohen κ vs the imported human-consensus codes on frozen IRR "
+      "testsets (N=3 by default; ties resolved by n desc / run_id asc; no κ computable "
+      "→ all eligible selected + loud warning). Selection policy for PURER: all eligible "
+      "runs (no human IRR codes exist yet). Vote mode 'majority' (empirically validated "
+      "2026-06-10 against Cohorts 1–2 human codes; see "
+      "experiments/vote_policy_comparison/RESULTS.md). The selection decision and κ "
+      "snapshot are persisted under the classification manifest key "
+      "'run_selection:<overlay>' for reproducibility.")),
 ])
 
 

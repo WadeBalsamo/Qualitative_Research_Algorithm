@@ -79,6 +79,7 @@ def generate_irr_report(results: dict, output_dir: str,
     _header(L, results)
     _drift_banner(L, results)
     _headline_table(L, results)
+    _all_runs_kappa(L, results)
     _interpretation(L, results)
     _per_stage_diagnostics(L, results)
     _per_testset_detail(L, results)
@@ -229,6 +230,84 @@ def _headline_table(L: List[str], results: dict) -> None:
     L.append("")
     L.append("  Bands: <0 poor · ≤.20 slight · ≤.40 fair · ≤.60 moderate ·")
     L.append("         ≤.80 substantial · >.80 almost perfect")
+    L.append("")
+
+
+# ---------------------------------------------------------------------------
+# 2b. All-runs κ table (schema-v2 run registry; IRR-gated selection)
+# ---------------------------------------------------------------------------
+
+def _all_runs_kappa(L: List[str], results: dict) -> None:
+    """Every non-archived registry run vs the human consensus, κ-sorted.
+
+    The selected runs (the operative consensus is voted from exactly these) are
+    flagged ``*SELECTED*`` from the persisted ``run_selection`` record. Unlike
+    the headline's per-LLM-rater table — which reflects the *cached* rater_votes
+    of the currently-selected runs — this lists ALL runs (including unselected /
+    queued / failed) so the IRR-gated choice is auditable. Skipped when there is
+    no registry (pre-migration projects)."""
+    runs_kappa = results.get('runs_kappa') or {}
+    if not runs_kappa:
+        return
+    L.append("=" * W)
+    L.append("ALL CLASSIFICATION RUNS — κ vs HUMAN CONSENSUS (IRR-gated selection)")
+    L.append("=" * W)
+    L.append("")
+
+    sel = results.get('run_selection') or {}
+    selected_ids = {str(i) for i in (sel.get('selected_run_ids') or [])}
+    # Fall back to each run's own `selected` flag when no selection record exists.
+    if not selected_ids:
+        selected_ids = {str(rid) for rid, r in runs_kappa.items() if r.get('selected')}
+
+    L.append("  Each run is one (model, quantization, thinking, note) sweep; its")
+    L.append("  durable ballots are scored against the human consensus. The SELECTED")
+    L.append("  runs are the ONLY ones feeding the operative consensus above.")
+    if sel.get('strategy'):
+        line = f"  Selection policy: {sel['strategy']}"
+        if sel.get('n') is not None and sel['strategy'] == 'top_n_by_human_irr':
+            line += f" (n={sel['n']}"
+            if sel.get('min_kappa') is not None:
+                line += f", min_kappa={sel['min_kappa']:+.3f}"
+            line += ")"
+        if sel.get('fallback_used'):
+            line += "  [FALLBACK: all eligible selected — no κ computable]"
+        L.append(line)
+    L.append("")
+
+    hdr = (f"  {'':1}{'rater_label':<30}{'κ':>8}{'95% CI':>18}{'n':>4}  "
+           f"{'quant':<8}{'think':<6}{'status':<22}{'note':<16}")
+    L.append(hdr)
+    L.append("  " + "-" * (W + 24))
+
+    def sort_key(item):
+        rid, r = item
+        k = r.get('cohen_kappa')
+        return (k is None, -(k if k is not None else 0.0), -(r.get('n') or 0), int(rid))
+
+    for rid, r in sorted(runs_kappa.items(), key=sort_key):
+        marker = '*' if str(rid) in selected_ids else ' '
+        label = str(r.get('rater_label') or '')[:30]
+        kv = _kfmt(r.get('cohen_kappa'))
+        ci = _ci_str(r.get('kappa_ci'))
+        n = r.get('n')
+        quant = str(r.get('quantization') or '')[:8]
+        think = str(r.get('thinking') or '')[:6]
+        status = str(r.get('status') or '')[:22]
+        note = str(r.get('note') or '')[:16]
+        L.append(f"  {marker}{label:<30}{kv:>8}{ci:>18}"
+                 f"{(n if n is not None else '—'):>4}  "
+                 f"{quant:<8}{think:<6}{status:<22}{note:<16}")
+
+    L.append("")
+    L.append("  * = SELECTED (feeds the operative consensus).")
+    band = _human_band(results)
+    if band:
+        L.append(f"  Human↔human band (the ceiling): Krippendorff α "
+                 f"{band[0]:+.3f} … {band[1]:+.3f} ({landis_koch(band[0])}"
+                 f"–{landis_koch(band[1])}). No run can beat it.")
+    if sel.get('rationale'):
+        L.append(f"  Decision: {sel['rationale']}")
     L.append("")
 
 

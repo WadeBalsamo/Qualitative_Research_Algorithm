@@ -16,7 +16,7 @@ latent cue dimensions. The genuinely-new ~60% the master plan points at is which
   D3  Models routines as community→community transitions WITHIN sessions ("X tends to precede Y").
   D4  STABILITY SELECTION: participant-bootstrap resampling estimates each community's
       co-membership stability; communities below ``community_stability_min`` are SUPPRESSED
-      from the findings (flagged, not silently dropped) — n≈32 makes raw communities fragile.
+      from the findings (flagged, not silently dropped) — n≈20 makes raw communities fragile.
   D5  Names the survivors with TF-IDF terms + exemplar quotes, and reports per-session
       prevalence + cross-cohort distribution (drift). Hypothesis-generating framing throughout.
 
@@ -474,7 +474,7 @@ def write_dyadic_report(routines: List[dict], name_rows: List[dict], output_dir:
     term = {r['community_id']: ', '.join(r.get('top_terms', [])[:4]) for r in name_rows}
     spk = {r['community_id']: r.get('dominant_speaker') for r in name_rows}
     L = ["=" * W, "DYADIC ROUTINES — therapist language → following participant language", "=" * W, ""]
-    L.append("HYPOTHESIS-GENERATING / NOT causal (n≈32, elicitation confound §9.4). A 'routine' is a")
+    L.append("HYPOTHESIS-GENERATING / NOT causal (n≈20, elicitation confound §9.4). A 'routine' is a")
     L.append("therapist-CUE community followed by the next participant community in the cue block.")
     L.append("Only routines between STABILITY-SELECTED communities are findings; each carries the")
     L.append("observed mean Δprogression of its blocks (participant-clustered CI) and a participant-")
@@ -487,7 +487,7 @@ def write_dyadic_report(routines: List[dict], name_rows: List[dict], output_dir:
     L.append(f"STABLE ROUTINES (reported): {len(stable)}")
     L.append("-" * W)
     if not stable:
-        L.append("  (none between stability-selected communities at n≈32 — treat all as exploratory.)")
+        L.append("  (none between stability-selected communities at n≈20 — treat all as exploratory.)")
     for r in stable[:25]:
         cc, tc = r['cue_community'], r['to_community']
         dp = (f"Δprog {r['mean_delta_prog']:+.3f} [{r['ci_lo']:+.3f}, {r['ci_hi']:+.3f}]"
@@ -557,7 +557,7 @@ def write_communities_report(rows, trans, graph_info, detect_info, output_dir: s
     L.append("linked into a cosine-similarity graph and partitioned into 'subtext communities'")
     L.append("— recurring language routines. Two independent algorithms must agree for a")
     L.append("community to count as structure, and each survivor passed participant-bootstrap")
-    L.append("STABILITY SELECTION. n≈32 makes these fragile: nothing below the stability floor")
+    L.append("STABILITY SELECTION. n≈20 makes these fragile: nothing below the stability floor")
     L.append("is reported as a finding. NOT causal; cross-cohort patterns are drift hypotheses.")
     L.append("")
     L.append(f"  subtext graph : {graph_info.get('n_nodes')} segments, "

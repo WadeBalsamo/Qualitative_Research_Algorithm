@@ -34,6 +34,11 @@ from .config import (
     ParticipantSummariesConfig,
     SuperpositionConfig,
     EfficacyConfig,
+    ModelRosterEntry,
+    RunSelectionConfig,
+    RunSelectionSpec,
+    AutoRepairConfig,
+    RunExecutionConfig,
 )
 from gnn_layer.config import GnnLayerConfig
 from .transcript_ingestion import scan_speakers
@@ -1118,6 +1123,98 @@ class SetupWizard:
         if _prompt_yes_no("Configure advanced classification settings?", False):
             self._step_8b_advanced_classification()
 
+        print()
+        if _prompt_yes_no("Configure model roster and run-registry settings?", False):
+            self._step_8c_run_registry()
+
+    def _step_8c_run_registry(self):
+        """Optional Step 8c: model roster, VAAMR run-selection, auto-repair."""
+        print()
+        print("--- Step 8c: Model Roster + Run-Registry Settings ---")
+        print()
+        print("    MODEL ROSTER")
+        print("    The roster lists models that can be queued with `qra runs queue --roster`")
+        print("    instead of typing --model each time.  Each entry can target one or both")
+        print("    frameworks (VAAMR / PURER) and carry quantization, thinking, and a note.")
+        print("    Skip this to leave the roster empty (you can add entries to the config JSON")
+        print("    manually, or re-run setup).")
+        print()
+
+        roster: List[dict] = []
+        while _prompt_yes_no("Add a roster entry?", False):
+            model = _prompt("  Model ID (e.g. qwen/qwen3-70b)", '')
+            if not model.strip():
+                print("    Skipped (empty model ID).")
+                break
+            quant = _prompt("  Quantization (e.g. Q4_K_M, blank = none)", '')
+            print("    Thinking mode: 'on', 'off', or blank (unknown/default).")
+            think_raw = _prompt_choice(
+                "  Thinking mode", ['on', 'off', ''], default='',
+            )
+            thinking = think_raw if think_raw in ('on', 'off') else None
+            note = _prompt("  Note (free text, blank = none)", '')
+            alias = _prompt("  Alias / rater label (blank = auto-compose)", '')
+            fw_raw = _prompt_choice(
+                "  Applies to which frameworks?", ['both', 'vaamr', 'purer'],
+                default='both',
+            )
+            frameworks = ['vaamr', 'purer'] if fw_raw == 'both' else [fw_raw]
+            entry: dict = {'model': model.strip(), 'frameworks': frameworks}
+            if quant.strip():
+                entry['quantization'] = quant.strip()
+            if thinking is not None:
+                entry['thinking'] = thinking
+            if note.strip():
+                entry['note'] = note.strip()
+            if alias.strip():
+                entry['alias'] = alias.strip()
+            roster.append(entry)
+            print(f"    Added: {model.strip()}")
+            print()
+
+        if roster:
+            self.config_data['model_roster'] = roster
+            print(f"    Roster: {len(roster)} model(s) configured.")
+        else:
+            self.config_data['model_roster'] = []
+            print("    No roster entries added.")
+
+        print()
+        print("    VAAMR RUN SELECTION")
+        print("    When multiple runs exist, the top-N by Cohen κ vs human consensus")
+        print("    are used to build the consensus overlay.  Default: top 3.")
+        print("    (PURER always uses all runs — no human codes to score against.)")
+        print()
+        n_select = _prompt_int("Top-N VAAMR runs to select by human κ (default 3)", 3)
+        self.config_data.setdefault('run_selection', {})
+        self.config_data['run_selection']['vaamr'] = {
+            'strategy': 'top_n_by_human_irr',
+            'n': n_select,
+        }
+        self.config_data['run_selection']['purer'] = {
+            'strategy': 'all',
+            'n': None,
+        }
+        print("    PURER: all runs (no human IRR codes to rank on).")
+
+        print()
+        print("    AUTO-REPAIR")
+        print("    When a run finishes, ERROR ballots can be auto-repaired before")
+        print("    analysis (re-sweeps only the failed cells, up to max_passes times).")
+        print("    Recommended: ON (max 2 passes).")
+        print()
+        ar_enabled = _prompt_yes_no("Enable auto-repair after each run?", True)
+        if ar_enabled:
+            ar_passes = _prompt_int("Max repair passes per run", 2)
+        else:
+            ar_passes = 2
+        self.config_data['auto_repair'] = {
+            'enabled': ar_enabled,
+            'max_passes': ar_passes,
+            'dead_rater_error_fraction': 0.5,
+        }
+        print()
+
     def _step_8b_advanced_classification(self):
         """Advanced: zero-shot toggle, exemplar count caps, evidence thresholds."""
         tc = self.config_data.setdefault('theme_classification', {})
@@ -1716,6 +1813,33 @@ def build_config_from_wizard_data(data: dict) -> PipelineConfig:
             **{k: v for k, v in data.get('efficacy', {}).items()
                if k in EfficacyConfig.__dataclass_fields__}
         ),
+        model_roster=_build_model_roster(data.get('model_roster', [])),
+        run_selection=_build_run_selection_config(data.get('run_selection', {})),
+        auto_repair=_build_auto_repair_config(data.get('auto_repair', {})),
     )
 
     return config
+
+
+def _build_model_roster(lst: list) -> list:
+    """Convert raw list-of-dicts into ModelRosterEntry objects (lenient)."""
+    from .config import _parse_model_roster
+    if not isinstance(lst, list):
+        return []
+    return _parse_model_roster(lst)
+
+
+def _build_run_selection_config(d: dict) -> RunSelectionConfig:
+    from .config import _parse_run_selection_config
+    if not isinstance(d, dict):
+        return RunSelectionConfig()
+    return _parse_run_selection_config(d)
+
+
+def _build_auto_repair_config(d: dict) -> AutoRepairConfig:
+    from dataclasses import fields as _dc_fields
+    if not isinstance(d, dict):
+        return AutoRepairConfig()
+    valid = {f.name for f in _dc_fields(AutoRepairConfig)}
+    filtered = {k: v for k, v in d.items() if k in valid}
+    return AutoRepairConfig(**filtered)

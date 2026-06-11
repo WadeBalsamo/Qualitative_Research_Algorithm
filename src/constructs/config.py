@@ -43,5 +43,11 @@ class ThemeClassificationConfig:
     # Evidence-based secondary vote reconciliation
     evidence_secondary_weight: float = 0.6  # Weight applied to secondary/dissenting votes
     evidence_presence_threshold: float = 0.5  # Min pooled evidence score for secondary label
+    # Consensus vote policy (majority_vote.vote_single_label): 'majority' (conservative,
+    # empirically validated default for both VAAMR and PURER — vote_policy_comparison 2026-06-10),
+    # 'majority_coded', or 'coded_plurality' (monotone).
+    vote_mode: str = 'majority'
+    # Stage-precedence tie-break for 'coded_plurality' (highest precedence first); None = lowest-id only
+    tie_break_order: Optional[List[int]] = None
     # Merging short segments: set to 0 to disable (e.g. for content-validity test runs)
     min_classifiable_words: int = 10

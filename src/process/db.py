@@ -45,7 +45,11 @@ from typing import Any, Iterator, Optional
 # Bump on any forward-incompatible schema change and add the migration in
 # ensure_schema() (forward-only ALTER TABLE / data migration keyed on the
 # stored value of _schema_meta['schema_version']).
-SCHEMA_VERSION = 1
+#
+# v2 (2026-06): run-centric classification — ``classification_runs`` registry +
+# durable ``label_ballots`` (the source of truth for re-votable consensus).
+# ``_migrate_1_to_2`` backfills both from the existing ``rater_votes`` caches.
+SCHEMA_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +304,68 @@ _SCHEMA_STATEMENTS = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_irr_codes_ws ON irr_human_codes (worksheet_n)",
     "CREATE INDEX IF NOT EXISTS idx_irr_codes_seg ON irr_human_codes (segment_id)",
+
+    # -- classification runs registry (schema v2) ----------------------------
+    #    One row per (model, quantization, thinking, temperature, note) sweep
+    #    over one framework's units.  ``rater_label`` is the unique display id
+    #    used as the rater id in ballots, kappa tables, and transcripts.
+    #    ``selected`` gates which runs feed the derived overlay consensus.
+    """
+    CREATE TABLE IF NOT EXISTS classification_runs (
+        run_id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        overlay                  TEXT    NOT NULL,            -- 'theme'|'purer'|'codebook'
+        rater_label              TEXT    NOT NULL,            -- unique display id; rater id downstream
+        model                    TEXT    NOT NULL,
+        backend                  TEXT,
+        quantization             TEXT,
+        thinking                 TEXT,                        -- 'on'|'off'|NULL
+        note                     TEXT,
+        temperature              REAL,
+        params_json              TEXT,                        -- JSON dict | NULL
+        segmentation_params_hash TEXT,                        -- staleness guard
+        status                   TEXT    NOT NULL DEFAULT 'queued',
+                                                              -- queued|running|completed|
+                                                              --   completed_with_errors|failed|archived
+        selected                 INTEGER NOT NULL DEFAULT 0,
+        checkpoint_path          TEXT,
+        created_at               TEXT    NOT NULL DEFAULT '',
+        started_at               TEXT,
+        completed_at             TEXT,
+        n_total                  INTEGER,
+        n_coded                  INTEGER,
+        n_abstain                INTEGER,
+        n_error                  INTEGER,
+        UNIQUE (overlay, rater_label)
+    )
+    """,
+
+    # -- per-(overlay, segment, run) ballots (schema v2) ---------------------
+    #    The durable source of truth: ``raw_json`` is the exact parsed ballot so
+    #    consensus can be re-voted byte-identically from any selected subset of
+    #    runs.  ``vote`` is 'CODED' | 'ABSTAIN' | 'ERROR' (ERROR rows carry NULL
+    #    stage/confidence and NULL raw_json).  ``applies_to_json`` records the
+    #    cue-unit -> constituent propagation for PURER.
+    """
+    CREATE TABLE IF NOT EXISTS label_ballots (
+        overlay              TEXT    NOT NULL,
+        segment_id           TEXT    NOT NULL,
+        run_id               INTEGER NOT NULL,
+        vote                 TEXT    NOT NULL,                -- 'CODED'|'ABSTAIN'|'ERROR'
+        stage                INTEGER,
+        confidence           REAL,
+        secondary_stage      INTEGER,
+        secondary_confidence REAL,
+        justification        TEXT,
+        applies_to_json      TEXT,                            -- cue-unit -> constituents (PURER) | NULL
+        raw_json             TEXT,                            -- exact parsed ballot | NULL (ERROR)
+        updated_at           TEXT    NOT NULL DEFAULT '',
+        PRIMARY KEY (overlay, segment_id, run_id),
+        FOREIGN KEY (run_id) REFERENCES classification_runs (run_id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_runs_overlay_status ON classification_runs (overlay, status)",
+    "CREATE INDEX IF NOT EXISTS idx_ballots_run         ON label_ballots (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ballots_overlay_seg ON label_ballots (overlay, segment_id)",
 )
 
 
@@ -314,7 +380,163 @@ class SchemaVersionError(RuntimeError):
 #   2. write ``def _migrate_1_to_2(conn): conn.execute("ALTER TABLE ...")``,
 #   3. register it (``_MIGRATIONS = {1: _migrate_1_to_2}``) and bump
 #      ``SCHEMA_VERSION`` above.
-_MIGRATIONS: dict = {}
+# Backfill spec: (overlay key, overlay table, rater-ids column, rater-votes column).
+# ``_migrate_1_to_2`` reconstructs the run registry + ballots from these caches.
+_V2_BACKFILL = (
+    ('theme', 'theme_labels', 'rater_ids', 'rater_votes'),
+    ('purer', 'purer_labels', 'purer_rater_ids', 'purer_rater_votes'),
+)
+
+
+def _now_iso() -> str:
+    """Current UTC time as an ISO-8601 string (timezone-aware)."""
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
+    """Backfill the v2 run registry + ballots from the legacy rater_votes caches.
+
+    The new ``classification_runs`` / ``label_ballots`` tables already exist by
+    the time this runs (``ensure_schema`` executes ``_SCHEMA_STATEMENTS`` before
+    any migration), so this is pure data backfill — no DDL.
+
+    For each overlay it:
+      * derives the rater roster in first-seen order (``rater_ids`` ordering
+        across rows, then any stragglers seen only in ``rater_votes``),
+      * creates one **born-selected, completed** run per rater
+        (``model``/``rater_label`` = the rater string), so the very first
+        consensus rebuild reproduces today's overlays,
+      * INSERTs (OR IGNORE) one ballot per segment's ``rater_votes`` entry, and
+      * refreshes the per-run CODED/ABSTAIN/ERROR/total counters.
+
+    Idempotent: re-running after a partial failure is a no-op for already
+    backfilled runs/ballots (get-or-create runs + INSERT OR IGNORE ballots).
+    """
+    now = _now_iso()
+    seg_hash = _read_segments_params_hash(conn)
+
+    for overlay, table, ids_col, votes_col in _V2_BACKFILL:
+        rows = conn.execute(
+            f"SELECT segment_id, {ids_col} AS ids, {votes_col} AS votes "
+            f"FROM {table} WHERE {votes_col} IS NOT NULL"
+        ).fetchall()
+
+        # --- rater roster in first-seen order --------------------------------
+        roster: list = []
+        seen = set()
+        # Pass 1: honour the stored rater_ids ordering (the slot order).
+        for r in rows:
+            for rid in (loads(r['ids']) or []):
+                rid = str(rid)
+                if rid not in seen:
+                    seen.add(rid)
+                    roster.append(rid)
+        # Pass 2: union any rater seen only in the votes' 'rater' keys.
+        for r in rows:
+            for entry in (loads(r['votes']) or []):
+                rid = entry.get('rater') if isinstance(entry, dict) else None
+                if rid is None:
+                    continue
+                rid = str(rid)
+                if rid not in seen:
+                    seen.add(rid)
+                    roster.append(rid)
+
+        if not roster:
+            continue
+
+        # --- one run per rater (get-or-create; born selected + completed) -----
+        run_ids: dict = {}
+        for rid in roster:
+            conn.execute(
+                "INSERT OR IGNORE INTO classification_runs "
+                "(overlay, rater_label, model, status, selected, note, "
+                " segmentation_params_hash, created_at, completed_at) "
+                "VALUES (?, ?, ?, 'completed', 1, 'backfilled from rater_votes', ?, ?, ?)",
+                (overlay, rid, rid, seg_hash, now, now),
+            )
+            row = conn.execute(
+                "SELECT run_id FROM classification_runs "
+                "WHERE overlay = ? AND rater_label = ?",
+                (overlay, rid),
+            ).fetchone()
+            run_ids[rid] = row['run_id']
+
+        # --- ballots from each segment's rater_votes entries -----------------
+        for r in rows:
+            seg_id = r['segment_id']
+            for entry in (loads(r['votes']) or []):
+                if not isinstance(entry, dict):
+                    continue
+                rid = entry.get('rater')
+                if rid is None:
+                    continue
+                run_id = run_ids.get(str(rid))
+                if run_id is None:
+                    continue
+                vote = entry.get('vote') or 'ERROR'
+                is_error = (vote == 'ERROR')
+                conn.execute(
+                    "INSERT OR IGNORE INTO label_ballots "
+                    "(overlay, segment_id, run_id, vote, stage, confidence, "
+                    " secondary_stage, secondary_confidence, justification, "
+                    " raw_json, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        overlay, seg_id, run_id, vote,
+                        entry.get('stage'),
+                        entry.get('confidence'),
+                        entry.get('secondary_stage'),
+                        entry.get('secondary_confidence'),
+                        entry.get('justification'),
+                        None if is_error else dumps(entry),
+                        now,
+                    ),
+                )
+
+        # --- per-run counters -------------------------------------------------
+        for run_id in run_ids.values():
+            _refresh_run_counters(conn, run_id)
+
+
+def _read_segments_params_hash(conn: sqlite3.Connection) -> Optional[str]:
+    """Single-value segmentation params_hash from any frozen segment, or None."""
+    try:
+        row = conn.execute("SELECT params_hash FROM segments LIMIT 1").fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None or row['params_hash'] in (None, ''):
+        return None
+    return row['params_hash']
+
+
+def _refresh_run_counters(conn: sqlite3.Connection, run_id: int) -> None:
+    """Recompute n_coded/n_abstain/n_error/n_total for one run from its ballots."""
+    row = conn.execute(
+        "SELECT "
+        "  SUM(vote = 'CODED')   AS coded, "
+        "  SUM(vote = 'ABSTAIN') AS abstain, "
+        "  SUM(vote = 'ERROR')   AS error, "
+        "  COUNT(*)              AS total "
+        "FROM label_ballots WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    conn.execute(
+        "UPDATE classification_runs "
+        "SET n_coded = ?, n_abstain = ?, n_error = ?, n_total = ? "
+        "WHERE run_id = ?",
+        (
+            int(row['coded'] or 0),
+            int(row['abstain'] or 0),
+            int(row['error'] or 0),
+            int(row['total'] or 0),
+            run_id,
+        ),
+    )
+
+
+_MIGRATIONS: dict = {1: _migrate_1_to_2}
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:

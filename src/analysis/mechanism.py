@@ -465,7 +465,7 @@ def _append_interaction_lead(L: List[str], mm: dict, framework: dict) -> None:
     L.append("  The central question (H2 / §7.6) is an INTERACTION: does a PURER move's effect")
     L.append("  on the next participant stage DEPEND on the FROM stage? The per-cell table (§1)")
     L.append("  and the main-effects mixed model (§5) do not estimate that term; this is the")
-    L.append("  re-centered estimator. Observational, n≈32 — bounded associations, not causal.")
+    L.append("  re-centered estimator. Observational, n≈20 — bounded associations, not causal.")
     L.append(f"  Design: {design.get('n', '?')} FROM→CUE→TO triples, "
              f"{design.get('n_participants', '?')} participants, "
              f"{design.get('n_with_move', '?')} with a defined cue move.")
@@ -502,7 +502,7 @@ def _append_interaction_lead(L: List[str], mm: dict, framework: dict) -> None:
             L.append(f"  (b) Gaussian mixed interaction Δprog ~ C(from)×C(move)+(1|participant): "
                      f"SINGULAR / under-identified fit")
             L.append(f"      ({g.get('n_interaction_terms', 0)} interaction terms; the design is "
-                     "rank-deficient at n≈32, so the")
+                     "rank-deficient at n≈20, so the")
             L.append("      count of CIs excluding 0 is NOT interpretable and is suppressed. "
                      "This is the")
             L.append("      expected small-n status — it MOTIVATES the regularized hierarchical "
@@ -579,7 +579,7 @@ def _append_interaction_lead(L: List[str], mm: dict, framework: dict) -> None:
     L.append("")
     L.append("  IDENTIFYING ASSUMPTION: sequential ignorability given (FROM stage, context).")
     L.append("  Therapists select moves IN RESPONSE TO participant state, so these are bounded")
-    L.append("  associations, not causal effects. Honest read at n≈32: right instrument,")
+    L.append("  associations, not causal effects. Honest read at n≈20: right instrument,")
     L.append("  under-identified, bounded by the sensitivity analysis above.")
     L.append("")
 

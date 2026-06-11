@@ -61,6 +61,10 @@ precedence has been useful:
        reinforcement before, reframe after), P is the substantive
        inquiry move.
 
+When a single label must be forced from co-occurring moves whose ballots
+are otherwise tied, ``PURER_TIE_BREAK_ORDER`` (below) encodes this
+precedence as an explicit highest-precedence-first ordering of move ids.
+
 ================================================================================
 EXEMPLAR SOURCING
 ================================================================================
@@ -82,6 +86,16 @@ from .markdown_loader import load_framework_md
 _PURER_MD = Path(__file__).resolve().parents[2] / "frameworks" / "PURER_FRAMEWORK.md"
 
 PURER_FRAMEWORK_VERSION = "3.0"
+
+# Highest-precedence-first ordering of PURER move ids, used as the final
+# deterministic tie-break when ``coded_plurality`` voting (majority_vote.py)
+# must force one label from co-occurring moves whose plurality count and mean
+# confidence are both tied. It encodes the precedence documented in the
+# CO-OCCURRENCE AND PRECEDENCE section above: Phenomenological first (the
+# framework's core elicitation move and a clean single-move category), then the
+# documented pairwise orders Utilization > Reframing > Education, with
+# Reinforcement (the affective wrapper) last. Move ids: P=0, U=1, R=2, E=3, R2=4.
+PURER_TIE_BREAK_ORDER: list[int] = [0, 1, 2, 3, 4]
 
 
 

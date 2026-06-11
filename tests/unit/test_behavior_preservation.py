@@ -510,6 +510,7 @@ class TestStageExecutionOrder(unittest.TestCase):
             patch('process.orchestrator.export_per_transcript_stats'),
             patch('process.orchestrator.export_cumulative_report'),
             patch('process.orchestrator.export_training_data'),
+            patch('process.repair.maybe_auto_repair', return_value=None) as mock_repair,
         ):
             # Set up mocks to return segments (include one therapist so PURER gate passes)
             from classification_tools.data_structures import Segment
@@ -550,6 +551,13 @@ class TestStageExecutionOrder(unittest.TestCase):
             mock_assemble.assert_not_called()
             # Verify validation artifacts were called (inside Stage 7)
             mock_val.assert_called_once()
+
+            # Auto-repair must run BEFORE assembly (the user's mandate: fix errors
+            # before analysis). theme + purer were classified this run, so the hook
+            # is called for both overlays.
+            mock_repair.assert_called_once()
+            _ar_args = mock_repair.call_args
+            self.assertEqual(set(_ar_args.args[2]), {'theme', 'purer'})
 
             # Stage order check: ingest must be called before theme
             # (Use assertGreater on call order)

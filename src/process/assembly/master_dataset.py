@@ -1,6 +1,7 @@
 """Assembles the master segment dataset from classified segments."""
 
 import json
+import math
 from typing import List, Dict, Optional
 
 import pandas as pd
@@ -119,16 +120,32 @@ def assemble_master_dataset(
             purer_final = None
             purer_final_source = None
 
-        # Compute confidence tier
+        # Compute confidence tier.
+        # ``llm_run_consistency`` is a COUNT of agreeing raters, so the 'high'
+        # (unanimity) and 'medium' (majority) thresholds must scale with how many
+        # runs actually fed this segment's consensus — the registry's selected-run
+        # count varies per overlay/run (e.g. n=2 top-pair, n=5 wide sweep), so a
+        # fixed high_consistency=3 would make 'high' unreachable at n=2 and demote
+        # a unanimous 5/5 at n=5. Derive the effective scale from this segment's
+        # own rater count; fall back to the config values (so n=3 is byte-identical
+        # to today's behavior).
+        n_raters_seg = len(getattr(seg, 'rater_ids', None) or [])
+        if n_raters_seg >= 1 and n_raters_seg != high_consistency:
+            high_eff = n_raters_seg                              # unanimity
+            medium_min_eff = max(2, math.ceil(n_raters_seg / 2))  # majority
+        else:
+            high_eff = high_consistency
+            medium_min_eff = medium_min_consistency
+
         if (
-            seg.llm_run_consistency == high_consistency
+            seg.llm_run_consistency == high_eff
             and seg.llm_confidence_primary is not None
             and seg.llm_confidence_primary > high_confidence
         ):
             confidence_tier = 'high'
         elif (
             seg.llm_run_consistency is not None
-            and seg.llm_run_consistency >= medium_min_consistency
+            and seg.llm_run_consistency >= medium_min_eff
             and seg.llm_confidence_primary is not None
             and seg.llm_confidence_primary > medium_min_confidence
         ):
