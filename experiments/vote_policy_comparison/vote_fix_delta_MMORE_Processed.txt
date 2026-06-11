@@ -1,0 +1,17 @@
+QRA VOTE-FIX DELTA REPORT
+Source: MMORE_Processed
+Timestamp: 2026-06-11T03:53:20.700011+00:00
+
+======================================================================
+OVERLAY: THEME
+n_rows_rebuilt=883  n_identical=339  n_delta=0
+labeled->UNLABELED (FAIL)=0
+labeled->DIFFERENT-label (FAIL)=0
+unlabeled->labeled (expected M0 fix)=0
+
+======================================================================
+OVERLAY: PURER
+n_rows_rebuilt=883  n_identical=221  n_delta=0
+labeled->UNLABELED (FAIL)=0
+labeled->DIFFERENT-label (FAIL)=0
+unlabeled->labeled (expected M0 fix)=0

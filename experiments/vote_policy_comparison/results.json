@@ -1,0 +1,338 @@
+{
+  "winner": "majority",
+  "rationale": "highest mean \u03ba=0.597 (coverage=0.818)",
+  "vaamr": [
+    {
+      "dataset": "MMORE_Processed",
+      "note": null,
+      "policies": {
+        "legacy": {
+          "policy": "legacy",
+          "n_human_items": 66,
+          "n_with_ballots": 66,
+          "n_scored": 66,
+          "n_labeled": 54,
+          "n_unlabeled": 12,
+          "coverage": 0.8181818181818182,
+          "kappa": 0.5973684210526315,
+          "kappa_ci": {
+            "point": 0.5973684210526315,
+            "lo": 0.44128559102674725,
+            "hi": 0.7407415057729066,
+            "n_boot": 2000
+          },
+          "pct_agree": 0.6851851851851852
+        },
+        "majority": {
+          "policy": "majority",
+          "n_human_items": 66,
+          "n_with_ballots": 66,
+          "n_scored": 66,
+          "n_labeled": 54,
+          "n_unlabeled": 12,
+          "coverage": 0.8181818181818182,
+          "kappa": 0.5973684210526315,
+          "kappa_ci": {
+            "point": 0.5973684210526315,
+            "lo": 0.44128559102674725,
+            "hi": 0.7407415057729066,
+            "n_boot": 2000
+          },
+          "pct_agree": 0.6851851851851852
+        },
+        "majority_coded": {
+          "policy": "majority_coded",
+          "n_human_items": 66,
+          "n_with_ballots": 66,
+          "n_scored": 66,
+          "n_labeled": 66,
+          "n_unlabeled": 0,
+          "coverage": 1.0,
+          "kappa": 0.4479376982982405,
+          "kappa_ci": {
+            "point": 0.4479376982982405,
+            "lo": 0.29932075664885577,
+            "hi": 0.5845760332765005,
+            "n_boot": 2000
+          },
+          "pct_agree": 0.5606060606060606
+        },
+        "coded_plurality": {
+          "policy": "coded_plurality",
+          "n_human_items": 66,
+          "n_with_ballots": 66,
+          "n_scored": 66,
+          "n_labeled": 66,
+          "n_unlabeled": 0,
+          "coverage": 1.0,
+          "kappa": 0.3778763515386748,
+          "kappa_ci": {
+            "point": 0.3778763515386748,
+            "lo": 0.2469284093220642,
+            "hi": 0.5118273411754629,
+            "n_boot": 2000
+          },
+          "pct_agree": 0.48484848484848486
+        }
+      },
+      "per_class_by_policy": {
+        "legacy": {
+          "No-code": {
+            "recall": 0.6666666666666666,
+            "n_support": 18,
+            "n_correct": 12
+          },
+          "Vigilance": {
+            "recall": 0.3,
+            "n_support": 10,
+            "n_correct": 3
+          },
+          "Avoidance": {
+            "recall": 1.0,
+            "n_support": 2,
+            "n_correct": 2
+          },
+          "AttentionReg": {
+            "recall": 0.9,
+            "n_support": 10,
+            "n_correct": 9
+          },
+          "Metacognition": {
+            "recall": 0.5,
+            "n_support": 4,
+            "n_correct": 2
+          },
+          "Reappraisal": {
+            "recall": 0.9,
+            "n_support": 10,
+            "n_correct": 9
+          }
+        },
+        "majority": {
+          "No-code": {
+            "recall": 0.6666666666666666,
+            "n_support": 18,
+            "n_correct": 12
+          },
+          "Vigilance": {
+            "recall": 0.3,
+            "n_support": 10,
+            "n_correct": 3
+          },
+          "Avoidance": {
+            "recall": 1.0,
+            "n_support": 2,
+            "n_correct": 2
+          },
+          "AttentionReg": {
+            "recall": 0.9,
+            "n_support": 10,
+            "n_correct": 9
+          },
+          "Metacognition": {
+            "recall": 0.5,
+            "n_support": 4,
+            "n_correct": 2
+          },
+          "Reappraisal": {
+            "recall": 0.9,
+            "n_support": 10,
+            "n_correct": 9
+          }
+        },
+        "majority_coded": {
+          "No-code": {
+            "recall": 0.5,
+            "n_support": 24,
+            "n_correct": 12
+          },
+          "Vigilance": {
+            "recall": 0.25,
+            "n_support": 12,
+            "n_correct": 3
+          },
+          "Avoidance": {
+            "recall": 1.0,
+            "n_support": 2,
+            "n_correct": 2
+          },
+          "AttentionReg": {
+            "recall": 0.9,
+            "n_support": 10,
+            "n_correct": 9
+          },
+          "Metacognition": {
+            "recall": 0.4,
+            "n_support": 5,
+            "n_correct": 2
+          },
+          "Reappraisal": {
+            "recall": 0.6923076923076923,
+            "n_support": 13,
+            "n_correct": 9
+          }
+        },
+        "coded_plurality": {
+          "No-code": {
+            "recall": 0.25,
+            "n_support": 24,
+            "n_correct": 6
+          },
+          "Vigilance": {
+            "recall": 0.3333333333333333,
+            "n_support": 12,
+            "n_correct": 4
+          },
+          "Avoidance": {
+            "recall": 1.0,
+            "n_support": 2,
+            "n_correct": 2
+          },
+          "AttentionReg": {
+            "recall": 0.9,
+            "n_support": 10,
+            "n_correct": 9
+          },
+          "Metacognition": {
+            "recall": 0.4,
+            "n_support": 5,
+            "n_correct": 2
+          },
+          "Reappraisal": {
+            "recall": 0.6923076923076923,
+            "n_support": 13,
+            "n_correct": 9
+          }
+        }
+      }
+    },
+    {
+      "dataset": "MMORE_Processed_cohort2",
+      "note": "no qra.db (pre-migration JSONL); human IRR codes not machine-readable",
+      "policies": {},
+      "per_class_by_policy": {}
+    }
+  ],
+  "purer": [
+    {
+      "dataset": "MMORE_Processed",
+      "source_type": "sqlite",
+      "n_raters_note": "1 rater (nvidia/nemotron-3-nano-4b)",
+      "policies": {
+        "legacy": {
+          "policy": "legacy",
+          "n_total": 221,
+          "n_labeled": 221,
+          "n_abstain_consensus": 0,
+          "n_unlabeled": 0,
+          "n_with_secondary": null,
+          "coverage": 1.0
+        },
+        "majority": {
+          "policy": "majority",
+          "n_total": 221,
+          "n_labeled": 221,
+          "n_abstain_consensus": 0,
+          "n_unlabeled": 0,
+          "n_with_secondary": 23,
+          "coverage": 1.0
+        },
+        "majority_coded": {
+          "policy": "majority_coded",
+          "n_total": 221,
+          "n_labeled": 221,
+          "n_abstain_consensus": 0,
+          "n_unlabeled": 0,
+          "n_with_secondary": 23,
+          "coverage": 1.0
+        },
+        "coded_plurality": {
+          "policy": "coded_plurality",
+          "n_total": 221,
+          "n_labeled": 221,
+          "n_abstain_consensus": 0,
+          "n_unlabeled": 0,
+          "n_with_secondary": 23,
+          "coverage": 1.0
+        }
+      },
+      "flips_vs_legacy": {
+        "majority": {
+          "unchanged": 221,
+          "flip_to_labeled": 0,
+          "flip_to_unlabeled": 0
+        },
+        "majority_coded": {
+          "unchanged": 221,
+          "flip_to_labeled": 0,
+          "flip_to_unlabeled": 0
+        },
+        "coded_plurality": {
+          "unchanged": 221,
+          "flip_to_labeled": 0,
+          "flip_to_unlabeled": 0
+        }
+      }
+    },
+    {
+      "dataset": "MMORE_Processed_cohort2",
+      "source_type": "jsonl",
+      "n_raters_note": "3 raters (nemotron-4b, gemma-4-4b, qwen3-8b)",
+      "policies": {
+        "legacy": {
+          "policy": "legacy",
+          "n_total": 39,
+          "n_labeled": 39,
+          "n_abstain_consensus": 0,
+          "n_unlabeled": 0,
+          "n_with_secondary": null,
+          "coverage": 1.0
+        },
+        "majority": {
+          "policy": "majority",
+          "n_total": 39,
+          "n_labeled": 39,
+          "n_abstain_consensus": 0,
+          "n_unlabeled": 0,
+          "n_with_secondary": 34,
+          "coverage": 1.0
+        },
+        "majority_coded": {
+          "policy": "majority_coded",
+          "n_total": 39,
+          "n_labeled": 39,
+          "n_abstain_consensus": 0,
+          "n_unlabeled": 0,
+          "n_with_secondary": 34,
+          "coverage": 1.0
+        },
+        "coded_plurality": {
+          "policy": "coded_plurality",
+          "n_total": 39,
+          "n_labeled": 39,
+          "n_abstain_consensus": 0,
+          "n_unlabeled": 0,
+          "n_with_secondary": 34,
+          "coverage": 1.0
+        }
+      },
+      "flips_vs_legacy": {
+        "majority": {
+          "unchanged": 39,
+          "flip_to_labeled": 0,
+          "flip_to_unlabeled": 0
+        },
+        "majority_coded": {
+          "unchanged": 39,
+          "flip_to_labeled": 0,
+          "flip_to_unlabeled": 0
+        },
+        "coded_plurality": {
+          "unchanged": 39,
+          "flip_to_labeled": 0,
+          "flip_to_unlabeled": 0
+        }
+      }
+    }
+  ]
+}
