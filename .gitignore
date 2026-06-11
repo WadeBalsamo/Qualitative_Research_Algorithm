@@ -43,3 +43,15 @@ references/
 tests/testrun-outputs/
 tests/unit_results.txt
 tests/integration_results.txt
+tests/test_results.txt
+
+# Runtime logs / watchdog control files (may contain anonymized session text — NEVER commit)
+*.log
+STOP_GEMMA_WATCHDOG
+.purer_gemma_watchdog.lock
+run_purer_gemma_watchdog.sh
+
+# Experiment artifacts derived from confidential data/ (regenerate locally, never commit)
+experiments/mechanism/_design.csv
+experiments/mechanism/_e9_results.json
+experiments/mechanism/_emb_*.npz
