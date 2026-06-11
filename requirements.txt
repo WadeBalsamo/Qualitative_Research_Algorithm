@@ -7,7 +7,7 @@ certifi==2026.2.25
 click==8.3.2
 dataclasses-json==0.6.7
 filelock==3.25.2
-idna==3.11
+idna==3.15
 joblib==1.5.3
 marshmallow==3.26.2
 mypy-extensions==1.1.0
