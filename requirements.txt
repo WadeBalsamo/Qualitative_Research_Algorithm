@@ -14,7 +14,7 @@ mypy-extensions==1.1.0
 packaging==26.0
 regex==2026.4.4
 requests==2.33.1
-setuptools==81.0.0
+setuptools==83.0.0
 shellingham==1.5.4
 six==1.17.0
 srt==3.5.3
