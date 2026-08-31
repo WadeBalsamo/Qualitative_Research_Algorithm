@@ -1,0 +1,27 @@
+{
+    "title": "QRA: Qualitative Research Algorithm",
+    "upload_type": "software",
+    "version": "1.0.0",
+    "access_right": "open",
+    "license": "mit",
+    "language": "eng",
+    "creators": [
+        {"name": "Balsamo, Wade"},
+        {"name": "Wexler, Ryan S."}
+    ],
+    "description": "A clinical NLP pipeline that classifies therapeutic dialogue against phenomenological frameworks and indexes stage transitions to surface the language patterns present at clinically meaningful thresholds. Deployed on the Move-MORE Feasibility Trial at NUNM.",
+    "keywords": [
+        "natural language processing",
+        "qualitative research",
+        "mindfulness-based interventions",
+        "computational phenomenology",
+        "clinical trials"
+    ],
+    "related_identifiers": [
+        {
+            "identifier": "https://doi.org/10.1007/s12671-026-02782-1",
+            "relation": "isSupplementTo",
+            "resource_type": "publication-article"
+        }
+    ]
+}
