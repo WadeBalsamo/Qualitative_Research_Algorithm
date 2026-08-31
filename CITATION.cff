@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "QRA: Qualitative Research Algorithm"
+authors:
+  - family-names: Balsamo
+    given-names: Wade
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+  - family-names: Wexler
+    given-names: Ryan S.
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+version: 1.0.0
+date-released: 2026-09-01
+license: MIT
+repository-code: "https://github.com/WadeBalsamo/Qualitative_Research_Algorithm"
+abstract: "Computational phenomenology pipeline for classifying therapeutic progression in mindfulness-based intervention transcripts."
