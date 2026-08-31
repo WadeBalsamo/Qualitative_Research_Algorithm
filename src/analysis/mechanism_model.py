@@ -17,9 +17,9 @@ right tools and asks whether it *earns its place* out of sample:
         with graceful singular/under-identified handling;
   - (c) earns-its-place participant-grouped CV (multinomial log-loss): FROM-only vs
         additive vs interaction;
-  - (d) Bayesian hierarchical ordinal (opt-in; lazy bambi; degrades gracefully — bambi
-        needs numpy≥2 which conflicts with the pinned transformers, so it is unavailable
-        in the main venv: run it in an isolated env, see experiments/mechanism).
+  - (d) Bayesian hierarchical ordinal (opt-in; lazy bambi; degrades gracefully — the
+        Bayesian stack is intentionally kept out of the main pipeline environment, so
+        run it in an isolated env; see experiments/mechanism).
 
 Plus a confound-sensitivity table (E-value / Rosenbaum Γ per cell), a PURER-label-noise
 robustness check (the cue labels are not yet human-validated), and a trajectory model
@@ -54,17 +54,17 @@ class MechanismModelConfig:
     """Settings for the re-centered mechanism estimator (serialized into PipelineConfig.mechanism).
 
     NOTE ON ``estimator``: the roadmap lists 'bayesian' as the strongest small-n arm, but the
-    in-process DEFAULT here is 'frequentist' because the Bayesian stack (bambi/pymc)
-    requires numpy≥2.0 while the pipeline's pinned transformers requires numpy<2.0 — the
-    two cannot coexist in the main venv. 'bayesian' / 'both' are opt-in and lazy-import
-    bambi, degrading gracefully when it is absent (it WILL be absent in the main venv).
+    in-process DEFAULT here is 'frequentist' because the Bayesian stack (bambi/pymc/arviz)
+    is intentionally not part of the main pipeline environment. 'bayesian' / 'both' are
+    opt-in and lazy-import bambi, degrading gracefully when it is absent (it WILL be absent
+    in the main venv unless you install that stack separately).
 
     PRODUCTION POSTURE (Gate 4, signed off): ``enabled=True`` default-on is the SHIPPED,
     INTENTIONAL behavior — the frequentist estimator runs in-process by default and the
     report leads with it. The Bayesian arm stays isolated: bambi/arviz are imported ONLY
-    inside ``_bayesian_ordinal`` and ONLY when ``estimator in ('bayesian','both')``, so no
-    numpy≥2 dependency is reachable from the default frequentist path (verified by grep:
-    the only ``import bambi``/``import arviz`` in src/ is that lazy block).
+    inside ``_bayesian_ordinal`` and ONLY when ``estimator in ('bayesian','both')``, so the
+    heavier Bayesian dependency stack is unreachable from the default frequentist path
+    (verified by grep: the only ``import bambi``/``import arviz`` in src/ is that lazy block).
     """
     enabled: bool = True                     # default-on (Gate 4: intentional, shipped); degrades to additive table if libs absent
     # ---- adjacency interaction model (H2 / §7.6) ----
@@ -90,6 +90,14 @@ class MechanismModelConfig:
     # ---- robustness ----
     purer_noise_check: bool = True           # perturb PURER at the single-rater disagreement rate, re-rank (E5)
     purer_disagreement_rate: Optional[float] = None   # read from IRR if available, else default 0.30
+    # ---- cue→response unit of analysis ----
+    # When False (default), cue blocks pair GLOBALLY-consecutive participant turns
+    # (DENSE, cross-participant — a discourse-level association; reproduces the
+    # dense Δprogression / lift cells). When True, cue blocks are restricted to
+    # WITHIN-participant transitions (a participant's turn → therapist cue → that
+    # SAME participant's next own turn) — the valid-but-sparse within-person view
+    # (WS2). True activates the MIN_SAME_PARTICIPANT_BLOCKS small-n banner.
+    cue_within_participant_only: bool = False
 
     @property
     def wants_bayesian(self) -> bool:
@@ -218,8 +226,8 @@ def _earns_its_place(D: pd.DataFrame, seed: int = 42, min_n: int = 20) -> Dict:
 def _bayesian_ordinal(D: pd.DataFrame, config: MechanismModelConfig) -> Dict:
     """Opt-in Bayesian hierarchical ordinal arm (lazy bambi). Degrades gracefully.
 
-    bambi/pymc require numpy≥2.0, which conflicts with the pinned transformers
-    (numpy<2.0) in the main venv — so the ImportError path is the EXPECTED one here.
+    The Bayesian stack is intentionally omitted from the main pipeline environment,
+    so the ImportError path is the EXPECTED one here unless it is installed separately.
     """
     try:
         import bambi as bmb          # noqa: F401

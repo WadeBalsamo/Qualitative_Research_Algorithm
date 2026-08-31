@@ -145,9 +145,34 @@ def write_confound_report(cells: List[dict], output_dir: str) -> str:
     return path
 
 
+def _write_insufficient_confound_report(n_med: int, output_dir: str, insuff,
+                                        within_participant: bool = False) -> str:
+    """Write confound_localization.txt with an honest small-n insufficiency banner."""
+    W = 78
+    L = ["=" * W, "CONFOUND LOCALIZATION (elicitation/responsiveness §9.4)", "=" * W, ""]
+    if within_participant:
+        L.append("UNIT — WITHIN-PARTICIPANT: divergence is measured per (from_stage × move) over")
+        L.append("cue blocks that pair a participant's turn with that SAME participant's next own")
+        L.append("turn. Cross-participant pairs are excluded; at pilot n these are sparse.")
+        L.append("")
+        L.append(insuff(n_med, 'the observed−counterfactual divergence map', width=W))
+    else:
+        L.append("Too few mediated cue-block triples to localize the confound at this scale")
+        L.append(f"(n={n_med}). Deferred to higher N; re-run via `qra analyze`.")
+    L.append("")
+    L.append("=" * W)
+    rep = _paths.reports_gnn_dir(output_dir)
+    os.makedirs(rep, exist_ok=True)
+    path = os.path.join(rep, 'confound_localization.txt')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write("\n".join(L))
+    return path
+
+
 def run_confound_localization(df_all, output_dir: str, config=None, *,
                               transition_result: Optional[dict] = None,
-                              seg_emb=None, verbose: bool = False) -> dict:
+                              seg_emb=None, verbose: bool = False,
+                              require_same_participant: bool = False) -> dict:
     """Map the signed divergence between the learned counterfactual and observed Δprogression per
     (from_stage × move), with participant-clustered CIs. Reuses the WS-T transition result when
     handed in (no retraining); otherwise recomputes it. Returns {status, files_written, cells}."""
@@ -162,9 +187,19 @@ def run_confound_localization(df_all, output_dir: str, config=None, *,
         emb = _T._qwen_embeddings(df_all, output_dir, seg_emb)
         if not emb:
             return {'status': 'skipped: Qwen embeddings unavailable', 'files_written': []}
-        ds = _T.build_block_dataset(df_all, emb)
+        ds = _T.build_block_dataset(df_all, emb,
+                                    require_same_participant=require_same_participant)
         if ds is None:
-            return {'status': 'skipped: too few cue-block triples', 'files_written': []}
+            # Honest small-n degrade: too few cue-block triples to localize the
+            # confound. Write a clear insufficiency report.
+            from .cue_features import build_cue_blocks_with_segments as _bcb
+            from process.cue_blocks import insufficient_blocks_banner as _insuff
+            n_med = sum(1 for b in _bcb(df_all, require_same_participant=require_same_participant)
+                        if b.get('therapist_seg_ids'))
+            path = _write_insufficient_confound_report(
+                n_med, output_dir, _insuff, within_participant=require_same_participant)
+            return {'status': 'skipped: too few cue-block triples',
+                    'files_written': [path] if path else []}
         seed = int(getattr(config, 'seed', 42)) if config is not None else 42
         cdim = int(getattr(config, 'transition_cue_dim', 32)) if config is not None else 32
         cue_proj, _p, _c = _T._project_cue(ds['C'], cdim, seed=seed)

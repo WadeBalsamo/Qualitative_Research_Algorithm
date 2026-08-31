@@ -105,7 +105,7 @@ Built June 2026. Package: `src/gnn_layer/` (moved to `src/gnn_layer/classifier/`
 | Repositioned default-OFF, classifier isolated | 2026-06-07 | `8619066` ("gnn: separate classifier (default OFF) + rebuild mechanism as a dyadic transition model + H6/discovery layer") |
 
 **Why demoted.**
-H5 was formally refuted on the current corpus (n ≈ 32 participants, 205 LLM-labeled + 66 human-coded
+H5 was formally refuted on the current corpus (n ≈ 20 participants, 205 LLM-labeled + 66 human-coded
 segments). Measured outcomes from the GNN reliability battery:
 
 - GraphSAGE classifier↔human κ ≈ 0.36 (arm A4n), but this is carried entirely by No-code abstention
@@ -148,4 +148,4 @@ result its positive interpretation as construct evidence. The discovery layer is
 |--------|-----|-------------|--------|---------------|
 | Lit-trained NSP classifier | Jan 2024 – Jun 2025 | `32040ca` (created), `c33741a` (deleted) | Abandoned — wrong objective; needed fine-tuning data | Replaced by zero-shot LLM pipeline (`src/classification_tools/`) |
 | MentalBERT graph classifier (`mentalbert_sentence_aqua`) | Jun 2025 – Mar 2026 | `c33741a` (created), `7dfa61c` (deleted) | Abandoned — H2 not validated; infeasible deps under env pin | Replaced by zero-shot LLM pipeline; graph hypothesis formally tested in `experiments/gnn_reliability/` |
-| GNN GraphSAGE consensus-distillation (H5) | Jun 2026 – present | `628e71a` (built), `8619066` (demoted default-OFF) | Demoted — H5 refuted at n ≈ 32; data ceiling | Remains in `src/gnn_layer/classifier/` default-OFF; fully studied in `experiments/gnn_reliability/` |
+| GNN GraphSAGE consensus-distillation (H5) | Jun 2026 – present | `628e71a` (built), `8619066` (demoted default-OFF) | Demoted — H5 refuted at n ≈ 20; data ceiling | Remains in `src/gnn_layer/classifier/` default-OFF; fully studied in `experiments/gnn_reliability/` |

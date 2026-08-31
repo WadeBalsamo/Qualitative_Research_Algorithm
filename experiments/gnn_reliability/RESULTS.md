@@ -10,9 +10,9 @@
 
 The QRA GNN layer (`src/gnn_layer/`) was built as a *scaler*: learn the multi-run LLM VAAMR consensus over a graph of therapy segments (kNN-cosine-similarity edges + temporal-chain edges over Qwen3-Embedding-8B vectors, GraphSAGE message passing, soft-VAAMR supervision from the LLM ballots) so the graph could then label *new* transcript segments without paying for the LLM. That is hypothesis **H5** — the graph as a consensus-distillation classifier / labeling scaler.
 
-This battery tests H5 on the real Cohort 1–2 corpus under the **only leak-free protocol**: participant-grouped cross-validation (whole participants held out).
+This battery tests H5 on the real pilot corpus (Cohorts 1–2 complete + first 3 Cohort-3 sessions) under the **only leak-free protocol**: participant-grouped cross-validation (whole participants held out).
 
-**Corpus** (`data/Meta/`, Move-MORE, n ≈ 32 participants):
+**Corpus** (`data/Meta/`, a frozen Move-MORE pilot snapshot — Cohorts 1–2 complete + first 3 Cohort-3 sessions; 20 analyzed participants):
 - 339 participant segments → **205 carry an integer VAAMR label**, **134 are "No code"** (~36% — no VAAMR stage expressed).
 - Labeled-stage distribution: Attention-Regulation 73 · Reappraisal 58 · Metacognition 29 · Vigilance 25 · **Avoidance 20** (the two binding rare classes are Avoidance and Metacognition).
 - **76 human-coded IRR items** (~66 usable vs. the model); human consensus mix is No-code 24, Vigilance 12, Avoidance 2, Attention-Regulation 10, Metacognition 5, Reappraisal 13.
@@ -72,7 +72,7 @@ Discipline: hyperparameters tuned on the **LLM axis only**; the human axis is **
 
 ## 4. The H5 classifier verdict
 
-**H5 is not supported at n ≈ 32.** With real Qwen features the graph reproduces the LLM consensus on held-out **participants** at grouped **κ ≈ 0.05–0.14** — far below the κ ≥ 0.70 promotion gate and **below even the human↔human band**. (The MiniLM floor is 0.05; the production Qwen GNN grouped gate lands at 0.14; the Qwen GNN battery arms reach LLM-axis 0.16–0.21 / human-axis 0.10–0.14 for the five real stages, with A4n's higher human 0.36 attributable to No-code abstention, not stage discrimination.) The graph never earns its place as the VAAMR classifier of record: a **linear probe on the same features ties or beats it**, and adding graph machinery (Correct-&-Smooth, anchors) only *lowers* reliability. The multi-run LLM consensus (κ = 0.537 vs. human, already human-level and affordable at trial scale) remains the **label of record**.
+**H5 is not supported at n ≈ 20.** With real Qwen features the graph reproduces the LLM consensus on held-out **participants** at grouped **κ ≈ 0.05–0.14** — far below the κ ≥ 0.70 promotion gate and **below even the human↔human band**. (The MiniLM floor is 0.05; the production Qwen GNN grouped gate lands at 0.14; the Qwen GNN battery arms reach LLM-axis 0.16–0.21 / human-axis 0.10–0.14 for the five real stages, with A4n's higher human 0.36 attributable to No-code abstention, not stage discrimination.) The graph never earns its place as the VAAMR classifier of record: a **linear probe on the same features ties or beats it**, and adding graph machinery (Correct-&-Smooth, anchors) only *lowers* reliability. The multi-run LLM consensus (κ = 0.537 vs. human, already human-level and affordable at trial scale) remains the **label of record**.
 
 ---
 
@@ -137,10 +137,10 @@ edge) and was **retired**. It has been **rebuilt** as the dyadic FROM→CUE→TO
 `src/gnn_layer/transition.py` (`TO_mixture ≈ f(FROM_mixture, FROM_stage, pooled raw-Qwen cue)`, no kNN,
 FROM-stage conditioned), whose learned counterfactual now triangulates **positively** with the observed
 ranking (Spearman ρ ≈ **+0.34**, versus the retired −0.13), shipped with a confound-localization map
-(`src/gnn_layer/confound.py`). It remains hypothesis-generating, not causal: at n ≈ 32 the cue does not
+(`src/gnn_layer/confound.py`). It remains hypothesis-generating, not causal: at n ≈ 20 the cue does not
 *earn its place* under participant-grouped CV (the transition is under-identified), so **`mechanism.py`
 (observed) still leads**. Full record: `docs/methodology.md` §8.5 (Track B). Per the pre-registered
-protocol the binding constraint throughout is **data scale (n ≈ 32)**; most conclusions here are explicitly
+protocol the binding constraint throughout is **data scale (n ≈ 20)**; most conclusions here are explicitly
 n-bound and worth re-running as participants accrue.
 
 ---
@@ -167,4 +167,4 @@ python experiments/gnn_reliability/run_mechanism.py
 
 ## 12. Successor campaign
 
-This battery is the **predecessor that motivated the classification-scaler campaign** documented in [`../classification_scaler/CAMPAIGN_LOG.md`](../classification_scaler/CAMPAIGN_LOG.md). The winning arm here — **A1n, the Qwen class-weighted 6-class linear probe (human κ 0.365 / LLM-axis grouped κ 0.31)** — became the **scaler candidate and the baseline to beat** in that campaign, which reused this directory's `harness.py` / `baselines.py` apparatus (same participant-grouped CV, same dual-axis scorer, seed 42) to sweep further levers (context embeddings, soft-label distillation, two-stage No-code gating, per-rater ensembling, capacity). That campaign's honest conclusion mirrors this one: three independent methods converge on **LLM κ ≈ 0.36 / human κ ≈ 0.45**, neither clearing the LLM-equivalence bar (LLM κ ≥ 0.45 or human κ ≥ 0.50) — the signature of a **data ceiling at n ≈ 32, not a method gap** — yielding at best an *assistive, human-reviewed* pre-labeler, never an autonomous LLM replacement.
+This battery is the **predecessor that motivated the classification-scaler campaign** documented in [`../classification_scaler/CAMPAIGN_LOG.md`](../classification_scaler/CAMPAIGN_LOG.md). The winning arm here — **A1n, the Qwen class-weighted 6-class linear probe (human κ 0.365 / LLM-axis grouped κ 0.31)** — became the **scaler candidate and the baseline to beat** in that campaign, which reused this directory's `harness.py` / `baselines.py` apparatus (same participant-grouped CV, same dual-axis scorer, seed 42) to sweep further levers (context embeddings, soft-label distillation, two-stage No-code gating, per-rater ensembling, capacity). That campaign's honest conclusion mirrors this one: three independent methods converge on **LLM κ ≈ 0.36 / human κ ≈ 0.45**, neither clearing the LLM-equivalence bar (LLM κ ≥ 0.45 or human κ ≥ 0.50) — the signature of a **data ceiling at n ≈ 20, not a method gap** — yielding at best an *assistive, human-reviewed* pre-labeler, never an autonomous LLM replacement.

@@ -43,7 +43,18 @@ class LLMClientConfig:
     model: str = 'nvidia/nemotron-3-super'
     models: List[str] = field(default_factory=list)  # For multi-model cross-referencing
     temperature: float = 0.0
-    timeout: int = 1800
+    timeout: int = 1800  # legacy/back-compat alias; see connect_timeout/read_timeout below
+    # Explicit (connect, read) timeouts passed to ``requests`` on every generation
+    # call.  Generation requests are NON-streaming, so the server sends NO bytes
+    # until the whole completion is done — which means ``read_timeout`` effectively
+    # caps total inference time, not just idle silence.  It must therefore sit well
+    # ABOVE the slowest realistic single-segment inference (a large reasoning model
+    # can take many minutes/call), or it will kill legitimate generations mid-flight
+    # and retry forever.  3600s (1h) gives ample headroom for a slow reasoning model
+    # while still surfacing a truly dead/stuck generation as a retryable timeout
+    # (vs. the original 5.5h indefinite hang).  Override per-config for faster models.
+    connect_timeout: int = 30
+    read_timeout: int = 3600
     max_retries: int = 3
     retry_base_delay: float = 2.0
     ollama_host: str = '0.0.0.0'
@@ -64,6 +75,19 @@ class LLMClient:
 
     def __init__(self, config: LLMClientConfig):
         self.config = config
+
+    @property
+    def _request_timeout(self) -> Tuple[int, int]:
+        """``(connect, read)`` timeout tuple for ``requests`` generation calls.
+
+        An explicit tuple (vs a bare scalar) makes the read timeout unambiguous:
+        if the server sends no bytes for ``read_timeout`` seconds the call raises
+        ``requests.exceptions.ReadTimeout`` instead of hanging indefinitely on a
+        stuck LM Studio generation.  The raised timeout is caught by the bare
+        ``except Exception`` in ``_make_request_with_retries`` → retried →
+        eventually an ERROR ballot, never an infinite hang.
+        """
+        return (self.config.connect_timeout, self.config.read_timeout)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -373,7 +397,9 @@ class LLMClient:
                     "response_format": {"type": "json_object"},
                     "messages": [{"role": "user", "content": prompt}],
                 },
-                timeout=self.config.timeout,
+                # (connect, read) — bounded read timeout so a stuck generation
+                # raises ReadTimeout (retryable) instead of hanging forever.
+                timeout=self._request_timeout,
             )
 
             metadata = response.json()
@@ -422,7 +448,9 @@ class LLMClient:
                     "format": "json",
                     "options": ollama_options,
                 },
-                timeout=self.config.timeout,
+                # (connect, read) — bounded read timeout so a stuck generation
+                # raises ReadTimeout (retryable) instead of hanging forever.
+                timeout=self._request_timeout,
             )
 
             data = response.json()
@@ -487,7 +515,10 @@ class LLMClient:
                     "Content-Type": "application/json",
                 },
                 json=json_body,
-                timeout=self.config.timeout,
+                # (connect, read) — bounded read timeout so a stuck LM Studio
+                # generation raises ReadTimeout (retryable) instead of hanging
+                # for hours; the read timeout is per-byte-silence on the socket.
+                timeout=self._request_timeout,
             )
             data = response.json()
 

@@ -30,8 +30,8 @@ every arm so all results are on identical folds):
 - **Paired contrast:** for the headline arms, a *paired* cluster-bootstrap Δκ vs the A1n baseline on
   identical items (n_boot = 3000) — the honest within-fold comparison (`_paired_delta.py`, `_csweep2.py`).
 
-**Data.** n ≈ 32 participants; **205** LLM-labeled + **134** "No code" participant segments; **66** human
-consensus codes.
+**Data.** Move-MORE pilot corpus (Cohorts 1–2 complete + first 3 Cohort-3 sessions; 20 analyzed
+participants); **205** LLM-labeled + **134** "No code" participant segments; **66** human consensus codes.
 
 **Features.** Cached **4096-d Qwen3-Embedding-8B** vectors, **L2-normalized**. (The context arm additionally
 re-embeds preceding turns; a local-MiniLM contrast is used to get a clean within-embedder signal.)
@@ -186,7 +186,7 @@ were run in the same family.
 HistGradientBoosting **≤ linear**; StandardScaler **0.246** (worse than L2). **Every** capacity lever lands
 **below the linear A1n 0.283.**
 
-**Interpretation.** At n ≈ 32 participants the bottleneck is not model capacity — added nonlinearity overfits
+**Interpretation.** At n ≈ 20 participants the bottleneck is not model capacity — added nonlinearity overfits
 and L2-normalization beats StandardScaler. Rejected. Stay linear.
 
 ---
@@ -265,7 +265,7 @@ gate, not in-loop calibration. Rejected.
 
 **Interpretation.** Splitting the 134 No-code examples three ways **starves each per-rater gate** — the
 structural lever needs the pooled negatives it had in S5. The two levers are not additively stackable at
-n ≈ 32. Rejected.
+n ≈ 20. Rejected.
 
 ---
 
@@ -285,7 +285,7 @@ stacking lever ties or hurts. Convergence of unrelated methods on **LLM κ ≈ 0
 signature of a data ceiling.
 
 **The binding bottleneck** is the **two rare stages** — Avoidance and Metacognition, recall ≈ .28–.35 across
-*every* arm — compounded by the **shallow VAAMR separability of a content-trained embedding** and **n ≈ 32
+*every* arm — compounded by the **shallow VAAMR separability of a content-trained embedding** and **n ≈ 20
 participants**. Gains concentrate in the frequent stages; the rare ones do not move regardless of method.
 
 **Verdict — ship as assistive, not autonomous.** The best shippable scaler is **S6 `ens_softavg` (C=4)**: one

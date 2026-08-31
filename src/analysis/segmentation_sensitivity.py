@@ -769,7 +769,7 @@ def _write_outputs(table: pd.DataFrame, verdict: str, embed_fallback: bool,
     # F2-C — embedder disclosure + param-only-perturbation framing.
     L.append(f"EMBEDDER: {short}.")
     if embed_fallback:
-        L.append("  The configured (Qwen3) embedder would not load under the pinned transformers,")
+        L.append("  The configured embedder was unavailable in this run,")
         L.append("  so all-MiniLM was used for EVERY arm INCLUDING the canonical baseline. The")
         L.append("  baseline every arm is compared to is therefore a canonical-in-MiniLM re-")
         L.append("  segmentation (default params, LLM off) — so the only thing varying across")

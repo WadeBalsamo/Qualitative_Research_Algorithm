@@ -1137,13 +1137,18 @@ def _overlay_models_for_classify(config, overlay, output_dir):
     return models
 
 
-def _get_or_create_runs_for_overlay(output_dir, overlay, models, config):
+def _get_or_create_runs_for_overlay(output_dir, overlay, models, config, fresh=False):
     """Get-or-create one queued run per model (rater_label = raw model string).
 
-    Reuses an existing NON-archived row (incl. its checkpoint) when the rater
-    label already exists for the overlay; otherwise creates a queued run.  This
-    keeps κ-history continuity (the rater id is the raw model string).  Returns
-    the ordered list of run_ids.
+    Reuses an existing row (incl. its checkpoint) when the rater label already
+    exists for the overlay; otherwise creates a queued run.  This keeps κ-history
+    continuity (the rater id is the raw model string).  An ARCHIVED row is
+    REVIVED in place (status→queued) rather than re-created — ``rater_label`` is
+    UNIQUE per overlay, so re-creating it would collide on the UNIQUE constraint
+    (and ``--fresh`` archives, never deletes, to protect the IRR-campaign run
+    lineage).  On ``fresh`` the revived run's ballots are cleared first so it
+    starts from a clean slate; non-fresh reuse keeps ballots.  Returns the
+    ordered list of run_ids.
     """
     from process import run_registry as _rr
     sub = (config.theme_classification if overlay == 'theme'
@@ -1154,14 +1159,18 @@ def _get_or_create_runs_for_overlay(output_dir, overlay, models, config):
     run_ids = []
     for m in models:
         row = existing.get(m)
-        if row is not None and row['status'] != 'archived':
+        if row is not None:
+            if row['status'] == 'archived':
+                # rater_label is UNIQUE per overlay — can't create a duplicate.
+                # Revive the archived run's lineage instead.
+                _rr.update_run(output_dir, row['run_id'], status='queued', selected=False)
+                if fresh:                      # only on --fresh: start from a clean slate
+                    _rr.delete_ballots_for_run(output_dir, overlay, row['run_id'])
             run_ids.append(row['run_id'])
             continue
-        rid = _rr.create_run(
-            output_dir, overlay=overlay, model=m, rater_label=m,
-            backend=backend, temperature=temperature, note='classify shim',
-        )
-        run_ids.append(rid)
+        run_ids.append(_rr.create_run(output_dir, overlay=overlay, model=m,
+                                      rater_label=m, backend=backend,
+                                      temperature=temperature, note='classify shim'))
     return run_ids
 
 
@@ -1247,7 +1256,8 @@ def cmd_classify(args):
         if not models:
             print(f"  {w}: no model configured — skipping.")
             continue
-        run_ids = _get_or_create_runs_for_overlay(output_dir, overlay, models, config)
+        run_ids = _get_or_create_runs_for_overlay(
+            output_dir, overlay, models, config, fresh=getattr(args, 'fresh', False))
         print(f"  {w}: queued/reused runs {run_ids} [{', '.join(models)}]")
         overlays_to_execute.append(overlay)
 
@@ -1672,6 +1682,11 @@ def cmd_testset_create(args):
     framework = _load_framework(args.framework)
 
     kind = args.kind
+    # PURER testsets must use the PURER framework so the worksheet move-label legend
+    # and the AI answer key show P/U/R/E/R2 — not the default VAAMR stage names.
+    if kind == 'purer':
+        from constructs.registry import load as _load_fw
+        framework = _load_fw('purer')
     # Validate pool is non-empty for kind
     if kind == 'purer':
         pool = _pool_purer(segments)

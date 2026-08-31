@@ -586,9 +586,14 @@ def _append_interaction_lead(L: List[str], mm: dict, framework: dict) -> None:
 
 def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
                             trajectories, construct, framework, path,
-                            mixed_rows=None, mechanism_models=None) -> str:
+                            mixed_rows=None, mechanism_models=None,
+                            n_labeled_blocks=None, within_participant=False) -> str:
     from .reports.stat_format import (
         fmt_est_ci, fmt_signed, fmt_p, m_ref, provenance_header,
+    )
+    from process.cue_blocks import (
+        MIN_SAME_PARTICIPANT_BLOCKS as _MINB,
+        insufficient_blocks_banner as _insuff,
     )
     L = []
     L.append("=" * 78)
@@ -613,6 +618,22 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
     L.append("permutation p, BH-FDR) bounds sampling noise, not this confound.")
     L.append("The E-value and Rosenbaum Γ in the interaction section quantify its magnitude.")
     L.append("")
+    if within_participant:
+        L.append("UNIT — WITHIN-PARTICIPANT (cue_within_participant_only=True): every cue block is a")
+        L.append("single participant's turn (FROM), the therapist cue, and THAT SAME participant's")
+        L.append("next own stage-bearing turn (TO). Δprogression is a real change in ONE person.")
+        L.append("")
+        if n_labeled_blocks is not None and n_labeled_blocks < _MINB:
+            L.append(_insuff(n_labeled_blocks,
+                             'within-participant cue→Δprogression', width=78))
+            L.append("")
+    else:
+        L.append("UNIT — CROSS-PARTICIPANT / DISCOURSE-LEVEL (cue_within_participant_only=False,")
+        L.append("default): cue blocks pair GLOBALLY-consecutive participant turns, which in these")
+        L.append("GROUP sessions are frequently DIFFERENT people. These cells are a discourse-level")
+        L.append("association — DIRECTIONAL, NOT a within-person change. The valid-but-sparse")
+        L.append("within-participant view is available via cue_within_participant_only=True (WS2).")
+        L.append("")
 
     # PRIMARY ESTIMATOR — the FROM×move interaction (masterplan §3). Emitted only when the
     # re-centered estimator ran; otherwise the report is byte-identical to the legacy output.
@@ -781,7 +802,8 @@ def _write_mechanism_report(delta_rows, liminality, avoidance, cusp_density,
     return path
 
 
-def _write_avoidance_report(avoidance, cusp_density, framework, path) -> str:
+def _write_avoidance_report(avoidance, cusp_density, framework, path,
+                            within_participant=False) -> str:
     from .reports.stat_format import (
         fmt_est_ci, fmt_signed, m_ref, provenance_header,
     )
@@ -807,10 +829,27 @@ def _write_avoidance_report(avoidance, cusp_density, framework, path) -> str:
     _av_mean = avoidance.get('mean_delta_from_avoidance')
     _av_mean_s = (fmt_signed(_av_mean, nd=3)
                   if isinstance(_av_mean, (int, float)) and _av_mean == _av_mean else "n/a")
+    if within_participant:
+        L.append("UNIT — WITHIN-PARTICIPANT: cue blocks pair a participant's turn with that SAME")
+        L.append("participant's next own turn (therapist cue between); cross-participant excluded.")
+    else:
+        L.append("UNIT — CROSS-PARTICIPANT / DISCOURSE-LEVEL (default): cue blocks pair globally-")
+        L.append("consecutive participant turns (often different people in group sessions).")
+        L.append("DIRECTIONAL discourse-level association, NOT a within-person change.")
+    L.append("")
     L.append(f"Avoidance cue blocks analysed: {avoidance['n_avoidance_blocks']}")
     L.append(f"Mean Δprogression from Avoidance: {_av_mean_s}  {m_ref('delta_prog')}")
     L.append(f"Blocks landing back IN Avoidance from a higher stage: {avoidance.get('n_into_avoidance', 0)}")
     L.append("")
+    if within_participant:
+        from process.cue_blocks import (
+            MIN_SAME_PARTICIPANT_BLOCKS as _MINB,
+            insufficient_blocks_banner as _insuff,
+        )
+        if int(avoidance.get('n_avoidance_blocks', 0)) < _MINB:
+            L.append(_insuff(int(avoidance.get('n_avoidance_blocks', 0)),
+                             'within-participant avoidance-barrier cue effects', width=78))
+            L.append("")
 
     def _emit(rows, title):
         L.append("-" * 78)
@@ -861,6 +900,20 @@ def _write_avoidance_report(avoidance, cusp_density, framework, path) -> str:
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+def _resolve_within_participant(config) -> bool:
+    """Read MechanismModelConfig.cue_within_participant_only from whatever config shape
+    we are handed (a MechanismModelConfig, a PipelineConfig with .mechanism, or None).
+    Default False = dense/cross-participant."""
+    if config is None:
+        return False
+    if hasattr(config, 'cue_within_participant_only'):
+        return bool(getattr(config, 'cue_within_participant_only'))
+    mech = getattr(config, 'mechanism', None)
+    if mech is not None and hasattr(mech, 'cue_within_participant_only'):
+        return bool(getattr(mech, 'cue_within_participant_only'))
+    return False
+
+
 def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
                            output_dir: str, framework: dict, config=None) -> dict:
     """Run the full mechanistic analysis. Returns {files_written, n_blocks}.
@@ -875,7 +928,11 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
     mech_dir = _paths.mechanism_dir(output_dir)
     os.makedirs(mech_dir, exist_ok=True)
 
-    blocks = build_cue_blocks_with_segments(df_all)
+    # Resolve the cue→response unit toggle (default False = dense/cross-participant).
+    within_participant = _resolve_within_participant(config)
+
+    blocks = build_cue_blocks_with_segments(
+        df_all, require_same_participant=within_participant)
     if not blocks:
         return {'files_written': files_written, 'n_blocks': 0}
 
@@ -957,14 +1014,17 @@ def run_mechanism_analysis(df: pd.DataFrame, df_all: pd.DataFrame,
     out_dir = _paths.reports_outcomes_dir(output_dir)
     os.makedirs(mech_dir, exist_ok=True)
     os.makedirs(out_dir, exist_ok=True)
+    n_labeled_blocks = sum(1 for b in enriched if b.get('dominant_purer'))
     files_written.append(_write_mechanism_report(
         delta_rows, liminality, avoidance, cusp_density, trajectories, construct,
         framework, os.path.join(mech_dir, 'mechanism.txt'),
         mixed_rows=mixed_rows, mechanism_models=mechanism_models,
+        n_labeled_blocks=n_labeled_blocks, within_participant=within_participant,
     ))
     files_written.append(_write_avoidance_report(
         avoidance, cusp_density, framework,
         os.path.join(out_dir, 'avoidance_barrier.txt'),
+        within_participant=within_participant,
     ))
 
     # Figures that depend on the CSVs just written.

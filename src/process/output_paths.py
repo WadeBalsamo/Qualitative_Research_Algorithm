@@ -237,6 +237,16 @@ def reports_outcomes_dir(run_dir: str) -> str:
     return os.path.join(run_dir, '06_reports', '02_outcomes')
 
 
+def reports_case_studies_path(run_dir: str) -> str:
+    """Per-cohort preliminary case studies (deterministic selection; grant doc)."""
+    return os.path.join(reports_outcomes_dir(run_dir), 'case_studies.txt')
+
+
+def reports_case_studies_figure_path(run_dir: str) -> str:
+    """Companion figure for the per-cohort case studies (utterance counts per stage)."""
+    return os.path.join(reports_outcomes_dir(run_dir), 'case_studies_fig.png')
+
+
 def reports_mechanism_dir(run_dir: str) -> str:
     """Mechanism reports: transitions, PURER, mechanism, atlas, superposition."""
     return os.path.join(run_dir, '06_reports', '03_mechanism')

@@ -262,14 +262,14 @@ class TestStageResegmentTherapistE2E(unittest.TestCase):
         parts = [s for s in reloaded if s.speaker == 'participant']
         ths = [s for s in reloaded if s.speaker == 'therapist']
 
-        # Participants byte-identical (id + index + text preserved).
+        # Participants preserved: segment_id + text byte-identical (the
+        # overlay/testset join key).  segment_index is now re-derived
+        # chronologically, so it is NOT asserted to be unchanged here.
         self.assertEqual(len(parts), 2)
         by_id = {s.segment_id: s for s in parts}
         self.assertIn('part_A', by_id)
         self.assertIn('part_B', by_id)
-        self.assertEqual(by_id['part_A'].segment_index, 0)
         self.assertEqual(by_id['part_A'].text, 'participant turn A text')
-        self.assertEqual(by_id['part_B'].segment_index, 2)
         self.assertEqual(by_id['part_B'].text, 'participant turn B text')
 
         # Therapist rows REPLACED: old ids gone, new ids present.
@@ -277,12 +277,19 @@ class TestStageResegmentTherapistE2E(unittest.TestCase):
         self.assertNotIn('old_th_1', th_ids)
         self.assertNotIn('old_th_2', th_ids)
         self.assertEqual(len(ths), result['new_therapist'])
-        # New therapist indices are above the prior max session index (2).
-        for s in ths:
-            self.assertGreater(s.segment_index, 2)
         # New therapist text comes from the .vtt content.
         joined = ' '.join(s.text for s in ths)
         self.assertIn('welcome back', joined)
+
+        # segment_index is now CHRONOLOGICAL across the whole session:
+        # contiguous 0..n-1 in start_time_ms order (replaces "therapist appended
+        # above the participant max").
+        ordered = sorted(reloaded, key=lambda s: s.segment_index)
+        self.assertEqual([s.segment_index for s in ordered],
+                         list(range(len(ordered))))
+        starts = [s.start_time_ms for s in ordered]
+        self.assertEqual(starts, sorted(starts),
+                         'segment_index order must match start_time_ms order')
 
     def test_orphaned_purer_labels_removed(self):
         from process import orchestrator

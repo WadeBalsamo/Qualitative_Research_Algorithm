@@ -16,6 +16,7 @@ dist/
 .coverage
 htmlcov/
 .venv/
+tools/
 
 # Local data, models, and pipeline output (never committed)
 context/
@@ -28,6 +29,7 @@ references/
 .env
 
 # Editor / sandbox / tooling artifacts
+CLAUDE.md
 .claude
 */.claude
 .claw/
@@ -50,6 +52,11 @@ tests/test_results.txt
 STOP_GEMMA_WATCHDOG
 .purer_gemma_watchdog.lock
 run_purer_gemma_watchdog.sh
+
+# Draft communications / reports containing participant quotes (never commit)
+movemore_adaptation_email.txt
+QRA_MoveMORE_comprehensive_report.txt
+WS2_cue_response_patterns.md
 
 # Experiment artifacts derived from confidential data/ (regenerate locally, never commit)
 experiments/mechanism/_design.csv

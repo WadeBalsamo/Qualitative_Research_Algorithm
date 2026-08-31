@@ -42,7 +42,12 @@ def _make_row(
     purer_primary=None,
     cohort_id=1,
     segment_id='seg_001',
+    participant_id='P01',
 ):
+    # All participant rows share a participant_id by default so consecutive
+    # participant turns are the SAME person — compute_cue_block_purer_profiles
+    # now builds WITHIN-participant cue blocks (use B): a transition is emitted
+    # only when FROM and TO are the same participant.
     return {
         'session_id': session_id,
         'speaker': speaker,
@@ -52,6 +57,7 @@ def _make_row(
         'purer_primary': purer_primary,
         'cohort_id': cohort_id,
         'segment_id': segment_id,
+        'participant_id': participant_id,
     }
 
 

@@ -138,6 +138,37 @@ class _RetryLoopMixin:
         # Sleep happens between attempts only: after attempt 1 and 2, not 3.
         self.assertEqual(sleep.call_count, 2)
 
+    # -- (e) per-request (connect, read) timeout is passed through -----------
+    def test_request_timeout_tuple_passed_through(self):
+        """Every generation POST carries the bounded (connect, read) tuple so a
+        stuck generation raises ReadTimeout rather than hanging forever."""
+        client = _make_client(self.backend)
+        # Override defaults to confirm the values flow through verbatim.
+        client.config.connect_timeout = 7
+        client.config.read_timeout = 123
+        with (
+            patch("requests.post", return_value=_make_response(self.ok_payload)) as post,
+            patch("classification_tools.llm_client.time.sleep"),
+        ):
+            self._call(client)
+        self.assertEqual(post.call_args.kwargs["timeout"], (7, 123))
+
+    def test_read_timeout_is_retryable_then_exhausts(self):
+        """A requests.ReadTimeout is a retryable error: it exhausts to
+        (None, None) after max_retries, which downstream becomes an ERROR ballot
+        (never an infinite hang)."""
+        import requests
+        client = _make_client(self.backend, max_retries=3, retry_base_delay=2.0)
+        with (
+            patch("requests.post", side_effect=requests.exceptions.ReadTimeout("stuck")) as post,
+            patch("classification_tools.llm_client.time.sleep") as sleep,
+        ):
+            text, metadata = self._call(client)
+        self.assertIsNone(text)
+        self.assertIsNone(metadata)
+        self.assertEqual(post.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
     # -- (d) backoff schedule -----------------------------------------------
     def test_backoff_schedule(self):
         client = _make_client(self.backend, max_retries=4, retry_base_delay=2.0)

@@ -3,13 +3,13 @@
 > **⚠️ SUPERSEDED IN PART (2026-06-07).** The Q4/Q5/Q30 register items and Part-VIII charges concerning the §8.2 `expected_codes` pre-registration and the shuffled-stage permutation control (hypotheses **H3/H3a**) are obsolete: that VAAMR×VCE construct-validity work was **deferred to future research and removed** from code and manuscript. The GNN discovery + H6 + mechanism content stands; the VCE classifier is retained as optional enrichment. Current framing: `docs/methodology.md` §3.3, §5.2, §8.2.
 
 **Status:** review draft for adjudication · **Branch:** `beta` · **Companion PR under review:** [#8](https://github.com/WadeBalsamo/Qualitative_Research_Algorithm/pull/8) (`gnn-exp/ws1-h6` → `beta`) · **Date:** 2026-06-07
-**Pilot corpus:** Move-MORE Cohorts 1–2 (`./data/Meta/`), n≈32 participants; 339 participant segments (205 VAAMR-labeled, 134 "No code"); 66–76 human IRR items.
+**Pilot corpus:** Move-MORE Cohorts 1–2 (`./data/Meta/`), n≈20 participants; 339 participant segments (205 VAAMR-labeled, 134 "No code"); 66–76 human IRR items.
 
 > **What this document is.** A systematic, self-critical review that holds the GNN *implementation* (PR #8) against QRA's *primary research questions* (`docs/methodology.md` §3.4) and asks: is this the **right** methodology for learning what we need to learn about therapeutic-language progression across the dialogue, is each claim **verifiable in the committed outputs**, did we **explain it well enough to survive rigorous peer review**, and **what is the better experiment next?** It is written for two readers:
 > 1. the **PhD advisor** — adjudicate the science (Part VIII-A);
 > 2. a **methodology-review agent** — review the design against the intentions and propose next steps (Part VIII-B).
 >
-> Everything here is **observational, n≈32, hypothesis-generating — never causal**. The multi-run LLM consensus remains the label of record (κ=0.537 vs human; §5.4).
+> Everything here is **observational, n≈20, hypothesis-generating — never causal**. The multi-run LLM consensus remains the label of record (κ=0.537 vs human; §5.4).
 
 ---
 
@@ -36,10 +36,10 @@ From `docs/methodology.md` §3.4 (the falsifiable hypotheses) and §7 (what the 
 - **H2 — Context-dependent therapist effects (the central mechanism question; §7.6).** Specific PURER moves / cue language are associated with forward VAAMR transitions, and that association is **moderated by the participant's FROM stage** — *the same move helps more at some stages than others.* *Instrument:* `src/analysis/mechanism.py` (Δprogression × from-stage, mixed-effects, permutation, FDR).
 - **H3 / H3a — Cross-framework construct validity** (VAAMR × VCE lift; does the codebook sharpen the arc). *Instrument:* `src/process/cross_validation.py`; `gnn_layer/classifier/ablation.py:vce_vaamr_contribution`.
 - **H4 — Convergent validity** vs clinical outcomes. *Instrument:* `src/analysis/efficacy.py:link_to_external`.
-- **H5 — Distillation/scalability** (graph reproduces LLM consensus to IRR → LLM-free scaling). *Instrument:* `gnn_layer/classifier/validation.py` gate. **Pilot result: refuted** at n≈32.
+- **H5 — Distillation/scalability** (graph reproduces LLM consensus to IRR → LLM-free scaling). *Instrument:* `gnn_layer/classifier/validation.py` gate. **Pilot result: refuted** at n≈20.
 - **H6 — Discriminant validity** (VAAMR is developmental, not topical). *Surfaced by the pilot.* *Instrument (new):* `gnn_layer/discriminant.py`.
 
-The **binding constraints** the methodology itself names: (i) n≈32, single-arm, observational; (ii) the **elicitation/responsiveness confound** (§9.4 — therapists select moves *in response to* participant state); (iii) linguistic expression ≠ phenomenological state (§9.1); (iv) PURER human-validation is **still pending** (§8.1, target Krippendorff α ≥ 0.70).
+The **binding constraints** the methodology itself names: (i) n≈20, single-arm, observational; (ii) the **elicitation/responsiveness confound** (§9.4 — therapists select moves *in response to* participant state); (iii) linguistic expression ≠ phenomenological state (§9.1); (iv) PURER human-validation is **still pending** (§8.1, target Krippendorff α ≥ 0.70).
 
 **The one-sentence research aim this review uses as its yardstick:** *Identify, defensibly and hypothesis-generatingly, the relationships between therapist language and participant developmental progression across the dialogue — at the resolution where mechanism actually operates — and say honestly how far each relationship can be trusted at this scale.*
 
@@ -68,7 +68,7 @@ Paired **probe − content Δκ**: human **+0.170** [0.002, 0.318]; LLM **+0.214
 ### II.3 WS-T — the dyadic FROM→CUE→TO transition model (the mechanism rebuild)
 **Intent (researcher directive):** replace the classifier-counterfactual with a learned *response function* `TO_mixture ≈ f(FROM_mixture, FROM_stage, pooled raw-Qwen cue)` — directed FROM→CUE→TO only, **no kNN** (H6), FROM-stage conditioning baked in (the *partial* control for the confound: moves compared **within** a starting state). **Artifact:** `src/gnn_layer/transition.py` → `06_reports/06_gnn/transition_model.txt`, `transition_counterfactual.csv`, `transition_per_move.csv`.
 **Verified (161 triples, 19 participants):**
-- **Earns-its-place = NEGATIVE.** Adding the cue does **not** improve held-out TO prediction over a FROM-only baseline (Δ KL **+0.371**, Δ E[stage] MAE **+0.149** — both worse). ⇒ the transition is **under-identified at n≈32** (consistent with H2's pilot status); `mechanism.py` leads.
+- **Earns-its-place = NEGATIVE.** Adding the cue does **not** improve held-out TO prediction over a FROM-only baseline (Δ KL **+0.371**, Δ E[stage] MAE **+0.149** — both worse). ⇒ the transition is **under-identified at n≈20** (consistent with H2's pilot status); `mechanism.py` leads.
 - **Triangulation = POSITIVE.** The learned per-cell counterfactual ranks with observed Δprogression at **Spearman ρ ≈ +0.337** (sign agreement 0.55) — versus the *retired* classifier-counterfactual's **−0.13**. **0 FDR-significant observed cells**, so convergence is under-powered.
 
 ### II.4 WS3 — confound localization
@@ -96,7 +96,7 @@ The single most important framing for review: **the GNN is not one thing.** It i
 | Instrument | Job | Defensible status | Right tool? |
 |---|---|---|---|
 | **H6 discriminant validity** (`discriminant.py`) | construct validation: stage is developmental, not topical | **Strong, N-robust, two-sided, falsifiable.** Rests on a *contrast* that holds regardless of n. | **Yes** — the probe-vs-similarity contrast is the correct tool. The headline contribution. |
-| **Transition model** (`transition.py`) | mechanism: timing-independent cue influence | **Secondary, scale-gated.** Under-identified at n≈32 (does not beat FROM-only). Its value is a *sensitivity lens* + a *confound localizer*, NOT a primary estimator. | **Partly** — see Part VI; a hierarchical statistical model may be the more defensible estimator at this scale. |
+| **Transition model** (`transition.py`) | mechanism: timing-independent cue influence | **Secondary, scale-gated.** Under-identified at n≈20 (does not beat FROM-only). Its value is a *sensitivity lens* + a *confound localizer*, NOT a primary estimator. | **Partly** — see Part VI; a hierarchical statistical model may be the more defensible estimator at this scale. |
 | **Discovery** (`communities.py`, `motifs.py`, `coupling.py`) | hypothesis-generating leads | **Exploratory only.** H6 says these clusters are *content*, so routines are content-adjacency, weakly informative about *developmental* mechanism. | **Yes, for lead-generation** — provided it is framed as such and human-filtered. |
 
 **The load-bearing claim the manuscript must make unmissable:** the **observed** Δprogression analysis (`mechanism.py` — from-stage-conditioned, mixed-effects, within-stratum permutation, FDR, participant-clustered CIs) is the **primary** mechanism instrument and **leads**; the GNN is **construct validation (H6) + a secondary sensitivity/discovery layer.** (PR #8's §8.5 says this; a reviewer skimming could still mis-read the transition model as the estimator — Q14.)
@@ -121,7 +121,7 @@ For each question: **what the implementation does**, what is **VERIFIED** (commi
 - *Implements:* `efficacy.py:link_to_external`. **VERIFIED:** scaffolding exists. **NOT verified:** the REDCap outcome linkage itself (pain/TSK-11/ODI/MAIA-2) — pending data integration (Q6). **Gap:** entirely pending. Untouched.
 
 ### H5 — Distillation / scalability
-- *Implements:* `classifier/validation.py` gate. **VERIFIED & settled:** refuted at n≈32 (grouped κ≈0.05–0.14). PR #8 makes this structural (classifier default-OFF). **NOT verified:** whether *any* learned scaler (the §8.4 fine-tuned model, or the graph at Cohorts 3–4) can earn the role at higher N (Q7). **Gap:** re-opened only at scale.
+- *Implements:* `classifier/validation.py` gate. **VERIFIED & settled:** refuted at n≈20 (grouped κ≈0.05–0.14). PR #8 makes this structural (classifier default-OFF). **NOT verified:** whether *any* learned scaler (the §8.4 fine-tuned model, or the graph at Cohorts 3–4) can earn the role at higher N (Q7). **Gap:** re-opened only at scale.
 
 ### H6 — Discriminant validity
 - *Implements:* `discriminant.py` (PR #8). **VERIFIED:** probe ≫ content ≈ chance; paired Δκ CI excludes 0; geometry. **NOT verified:** robustness to embedding choice (Qwen vs MentalBERT vs MiniLM — `graph_experiments.md` flagged this but it is not run) (Q8); replication at Cohorts 3–4 (Q9); that the *human axis* (not just the LLM axis) drives the contrast at larger N. **Gap:** H6 is the best-supported claim but its *generality* (embedding, cohort) is unverified.
@@ -152,7 +152,7 @@ This is the heart of the review. Each question is **answerable with a concrete c
 
 ### A. Is the mechanism *estimator* the right one?
 
-- **Q13 — Learned MLP vs hierarchical model.** The transition model is a small neural net that **does not beat a FROM-only baseline** at n≈32. *Question:* would a **Bayesian/mixed-effects ordinal transition model** (`TO_stage ~ FROM_stage * move + (1 | participant)`, ordinal link, weak priors) be both more interpretable *and* more defensible at this scale? *Verify:* fit it on `master_segments.csv`; compare held-out predictive log-loss to the MLP and to FROM-only under the same participant-grouped folds; report interaction coefficients with credible intervals. *Why it matters:* a reviewer will ask why report a neural model that doesn't earn its place over a standard hierarchical model.
+- **Q13 — Learned MLP vs hierarchical model.** The transition model is a small neural net that **does not beat a FROM-only baseline** at n≈20. *Question:* would a **Bayesian/mixed-effects ordinal transition model** (`TO_stage ~ FROM_stage * move + (1 | participant)`, ordinal link, weak priors) be both more interpretable *and* more defensible at this scale? *Verify:* fit it on `master_segments.csv`; compare held-out predictive log-loss to the MLP and to FROM-only under the same participant-grouped folds; report interaction coefficients with credible intervals. *Why it matters:* a reviewer will ask why report a neural model that doesn't earn its place over a standard hierarchical model.
 - **Q14 — Primary-vs-secondary framing.** *Question:* does the manuscript make it unmissable that `mechanism.py` (observed) is primary and the GNN counterfactual is a sensitivity lens? *Verify:* a methods reader reads §8.5/§3.4 cold and is asked "what is the primary mechanism estimator?" — do they answer `mechanism.py`?
 - **Q15 — Does the nonlinear model find an interaction the additive table misses?** *Question:* the GNN's only claim to add value over `mechanism.py` is context-dependent/nonlinear influence. *Verify:* compare the transition model's per-(from_stage×move) counterfactual ranking to the additive `mechanism_delta_progression.csv` ranking; is there any cell where the conditioning materially changes the sign/order *and* survives a participant-clustered bootstrap? (Today: 9/20 sign-differ, but with 0 FDR-significant observed cells none is powered.)
 
@@ -194,7 +194,7 @@ This is the heart of the review. Each question is **answerable with a concrete c
 <a name="part-vii"></a>
 ## Part VII — Did we do the right thing? The better next experiment
 
-**Honest verdict.** PR #8 did the *right structural* thing: it stopped over-claiming the classifier, made H6 a real instrument, rebuilt the mechanism tool correctly-specified, and kept everything honestly caveated and tested. **But** the *mechanism* aim (H2 — the project's center) is served only weakly by a learned model that doesn't earn its place at n≈32, and the discovery is content-level. The strongest, most defensible core is **H6 + the classical hierarchical mechanism + an explicit confound-sensitivity analysis**, with the GNN scoped to construct-validation and lead-generation.
+**Honest verdict.** PR #8 did the *right structural* thing: it stopped over-claiming the classifier, made H6 a real instrument, rebuilt the mechanism tool correctly-specified, and kept everything honestly caveated and tested. **But** the *mechanism* aim (H2 — the project's center) is served only weakly by a learned model that doesn't earn its place at n≈20, and the discovery is content-level. The strongest, most defensible core is **H6 + the classical hierarchical mechanism + an explicit confound-sensitivity analysis**, with the GNN scoped to construct-validation and lead-generation.
 
 **Ranked next experiments (each maps to OPEN questions above):**
 1. **Hierarchical/Bayesian ordinal transition model** as the *primary* mechanism estimator (Q13/Q15) — more interpretable + defensible at small n than the MLP; the MLP becomes a triangulating sensitivity lens.
@@ -215,7 +215,7 @@ This is the heart of the review. Each question is **answerable with a concrete c
 ### VIII-A — For the PhD advisor (adjudicate the science)
 Please rule on:
 1. **Scope of the GNN in the paper.** Is the three-instrument split (H6 / mechanism-sensitivity / discovery) the right framing, and is the GNN's manuscript footprint proportionate to its evidence (Q29)? Should mechanism be led by a hierarchical model (Q13)?
-2. **H2 honesty.** Is "under-identified at n≈32; instrument now correctly specified (ρ flips −0.13→+0.34); confound localized not solved" the defensible statement, or an over- or under-claim?
+2. **H2 honesty.** Is "under-identified at n≈20; instrument now correctly specified (ρ flips −0.13→+0.34); confound localized not solved" the defensible statement, or an over- or under-claim?
 3. **Confound treatment.** Is mapping (divergence) without an E-value/sensitivity analysis (Q20) sufficient for a methods venue?
 4. **H6 as headline.** Is the discriminant-validity finding strong + general enough (pending Q8/Q9/Q28) to lead the contribution?
 5. **Dependencies.** Should mechanism/dyadic claims be gated on PURER validation (Q10) and the §8.2 permutation control + pre-registration (Q4/Q30)?
@@ -226,7 +226,7 @@ Please rule on:
 >
 > **Your charge:**
 > 1. **Map implementation → intention → primary question.** For each of H1–H6 and §7.6, confirm the implementation actually tests the stated question, using the committed outputs. Flag every place the artifact does not substantiate the claim, or tests a *weaker* question than stated (Part IV is the starting map — verify it; do not trust it).
-> 2. **Adjudicate instrument choice.** Is the GNN the *optimal logical process* for each job, or is a simpler/standard method superior at n≈32? Specifically rule on Q13 (hierarchical vs MLP mechanism), Q16 (cue representation), Q18 (unit of analysis), Q20 (confound sensitivity). Recommend the estimator the paper should lead with.
+> 2. **Adjudicate instrument choice.** Is the GNN the *optimal logical process* for each job, or is a simpler/standard method superior at n≈20? Specifically rule on Q13 (hierarchical vs MLP mechanism), Q16 (cue representation), Q18 (unit of analysis), Q20 (confound sensitivity). Recommend the estimator the paper should lead with.
 > 3. **Verify the verifiable.** Take the OPEN questions in Appendix B and, for each, either (a) run/spec the exact check and report the result, or (b) state precisely why it cannot be run yet (needs Cohort 3–4 / REDCap / PURER validation). Convert "we believe" into "we verified" wherever the data already allow it.
 > 4. **Peer-review simulation.** Read the manuscript (`docs/methodology.md` §3.4/§7.6/§8.5/§9.4) as a skeptical methods reviewer. List the top objections and whether the current text answers them. Decide: would this pass rigorous peer review *as written*, and if not, the minimal additions required.
 > 5. **Next-step plan.** Return a ranked, dependency-aware plan (Part VII is a candidate — improve it): for each step, the question it closes, the artifact it would add, the expected defensibility gain, and whether it is doable now or scale-gated.
@@ -296,4 +296,4 @@ All **OPEN** (not yet verified). ID → question → how to verify → cohort-ga
 | Q29 | Is the GNN's paper footprint proportionate to its evidence? | advisor judgment | now |
 | Q30 | Are §7.6 predictions pre-registered in code before Cohort 3? | inspect `vaamr.py`/`purer.py` | now |
 
-> **The honest one-line summary for the advisor:** *We built the discovery/construct-validation layer well and rebuilt the mechanism instrument correctly; H6 is a real, defensible contribution; the central mechanism question (H2) remains under-identified at n≈32 and is currently served best by the classical hierarchical analysis plus an explicit confound-sensitivity analysis we have not yet added — and the next, highest-value experiment is the hierarchical ordinal mechanism model + E-value sensitivity + pre-registration, not more GNN.*
+> **The honest one-line summary for the advisor:** *We built the discovery/construct-validation layer well and rebuilt the mechanism instrument correctly; H6 is a real, defensible contribution; the central mechanism question (H2) remains under-identified at n≈20 and is currently served best by the classical hierarchical analysis plus an explicit confound-sensitivity analysis we have not yet added — and the next, highest-value experiment is the hierarchical ordinal mechanism model + E-value sensitivity + pre-registration, not more GNN.*

@@ -35,12 +35,25 @@ Public API
 ----------
 @dataclass CueBlockSpec
     session_id, from_item, to_item, from_index, to_index,
-    from_stage, to_stage, transition_type, therapist_items
+    from_stage, to_stage, transition_type, therapist_items,
+    from_participant, to_participant
 
 build_cue_blocks(items, *, get_session, get_speaker, get_start, get_end,
-                 get_stage, get_id, require_stage=True)
+                 get_stage, get_id, get_participant=None, require_stage=True,
+                 require_same_participant=False)
     -> (sorted_items, list[CueBlockSpec])
     Generic core; all accessors are callables so it works on any item type.
+
+Two distinct USES of cue blocks (keep separate):
+  (A) PURER MOVE LABELING / move counts — "what therapist move occurred between
+      two participant turns." Does NOT need a same-participant constraint;
+      callers keep the default ``require_same_participant=False``.
+  (B) PARTICIPANT PROGRESSION ATTRIBUTION — anything computing
+      ``to_stage - from_stage`` / Δprogression / a FROM→TO transition / a move's
+      lift on the next participant stage. These MUST pass
+      ``require_same_participant=True`` so FROM and TO are the SAME participant
+      (a real within-person change), not consecutive turns of different people
+      in a group session.
 
 cue_blocks_from_segments(segments, *, stage_attr='primary_stage',
                          require_stage=True)
@@ -58,6 +71,46 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Small-n honesty (same-participant cue blocks)
+# ---------------------------------------------------------------------------
+# When the same-participant constraint is applied (use B — within-participant
+# progression attribution), the count of usable cue blocks collapses at pilot
+# cohort sizes (n≈20 → ~3 labeled blocks). Below this threshold the mechanism /
+# transition / confound / avoidance-barrier / lift reports must NOT print point
+# estimates as if they were estimable; they emit an honest insufficiency banner.
+MIN_SAME_PARTICIPANT_BLOCKS = 10
+
+
+def insufficient_blocks_banner(n: int, context: str,
+                               threshold: int = MIN_SAME_PARTICIPANT_BLOCKS,
+                               width: int = 72) -> str:
+    """Return a clearly-flagged multi-line banner for the small-n case.
+
+    *context* names the analysis (e.g. ``"within-participant cue→progression"``).
+    Used by every use-(B) report so the language is uniform and unmissable.
+    """
+    bar = '!' * width
+    return '\n'.join([
+        bar,
+        'INSUFFICIENT same-participant cue blocks '
+        f'(n={n} < {threshold}) to estimate',
+        f'{context} at this cohort size.',
+        'Cue blocks are now restricted to WITHIN-participant transitions '
+        '(FROM and TO',
+        'are the same person, therapist speech strictly between) — the only '
+        'configuration',
+        'in which Δprogression is a real change in one participant. In group '
+        'therapy at',
+        'n≈20 too few such blocks carry a PURER label to estimate '
+        'cue→progression.',
+        'DEFERRED to Cohorts 3–4. Any numbers below are shown for audit only '
+        'and must',
+        'NOT be read as estimates.',
+        bar,
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +163,13 @@ class CueBlockSpec:
         from_stage > to_stage, ``'lateral'`` if equal.
     therapist_items : list
         The actual item objects (Segment or dict) in sorted order.
+    from_participant : Any
+        Participant id of *from_item* (None when no ``get_participant`` accessor
+        was supplied).
+    to_participant : Any
+        Participant id of *to_item* (None when no ``get_participant`` accessor
+        was supplied).  When ``require_same_participant=True`` this always equals
+        ``from_participant``.
     """
     session_id: str
     from_item: Any
@@ -120,6 +180,8 @@ class CueBlockSpec:
     to_stage: int
     transition_type: str
     therapist_items: List[Any] = field(default_factory=list)
+    from_participant: Any = None
+    to_participant: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +197,9 @@ def build_cue_blocks(
     get_end: Callable[[Any], int],
     get_stage: Callable[[Any], Optional[int]],
     get_id: Callable[[Any], str],
+    get_participant: Optional[Callable[[Any], Any]] = None,
     require_stage: bool = True,
+    require_same_participant: bool = False,
 ) -> Tuple[List[Any], List[CueBlockSpec]]:
     """
     Build cue-block specs from an arbitrary list of items.
@@ -156,11 +220,42 @@ def build_cue_blocks(
         Return the stage label (None means unlabelled).
     get_id : callable(item) -> str
         Return the unique segment identifier.
+    get_participant : callable(item) -> Any, optional
+        Return the participant id for an item.  Required when
+        ``require_same_participant=True``.  When supplied, every emitted spec
+        carries ``from_participant``/``to_participant``.
     require_stage : bool, default True
         When True, participant items with ``get_stage(item) is None`` are
         excluded from the participant list (they cannot anchor a cue window).
         When False, all participants are included; stage 0 is substituted for
         null stages when computing ``from_stage``/``to_stage``.
+    require_same_participant : bool, default False
+        **Use-(B) switch — within-participant progression attribution.**
+        When True, pairs are built PER PARTICIPANT: for each participant we walk
+        THAT participant's OWN consecutive stage-bearing turns and pair each with
+        their next own turn, skipping turns by other participants in between.
+        This defines a *within-participant transition*: a single participant's
+        turn (FROM / the report) and THAT SAME participant's NEXT OWN
+        VAAMR-stage-bearing turn (TO / the response), with the therapist speech
+        in the gap as the cue.  Only then is ``to_stage - from_stage`` a real
+        change in ONE person that can be associated with the cue.  This matches
+        the canonical per-participant unit used by
+        ``analysis/reports/transition_report.py`` (which groups by
+        ``['participant_id','session_id']`` and walks consecutive own turns).
+        The cue window below collects only THERAPIST items between FROM and TO,
+        so any OTHER participant who spoke in the gap is never part of the cue.
+
+        Residual caveat (documented, accepted): in a group debrief the
+        therapist speech in the gap may also have addressed OTHER participants in
+        the room, so it is not perfectly addressed to the FROM participant; and
+        when other participants spoke between P's two turns, the gap (hence the
+        cue) spans their turns too.  Both are strictly weaker confounds than
+        mixing speakers across the FROM→TO transition itself, and are acceptable
+        at pilot scale.
+
+        Default False preserves use (A) — PURER move labeling and move counts,
+        which need only "what therapist move occurred between two participant
+        turns" and must remain unchanged.
 
     Returns
     -------
@@ -171,6 +266,11 @@ def build_cue_blocks(
         One spec per consecutive participant pair, in session-order.  Specs
         for empty blocks (no therapist items between the pair) ARE included.
     """
+    if require_same_participant and get_participant is None:
+        raise ValueError(
+            "require_same_participant=True requires a get_participant accessor"
+        )
+
     # 1. Sort all items globally by start_time_ms
     sorted_items: List[Any] = sorted(items, key=lambda it: get_start(it))
 
@@ -197,9 +297,39 @@ def build_cue_blocks(
     for session_id, p_items in segs_by_session.items():
         th_items = th_by_session.get(session_id, [])
 
-        for i in range(len(p_items) - 1):
-            from_item = p_items[i]
-            to_item = p_items[i + 1]
+        # Build the (from, to) participant pairs for this session.
+        if require_same_participant:
+            # USE (B): WITHIN-participant transitions. For each participant,
+            # walk THAT participant's OWN consecutive stage-bearing turns
+            # (skipping turns by other participants in between). This matches the
+            # canonical per-participant unit used by transition_report.py
+            # (groupby ['participant_id','session_id'] → consecutive own turns):
+            # participant P's turn → therapist speech in the gap → P's NEXT OWN
+            # turn. The therapist cue window below collects only therapist items
+            # between the two turns, so any OTHER participant who spoke in the gap
+            # is excluded from the cue (the documented, accepted residual caveat
+            # is only that the therapist speech in the gap may also have addressed
+            # those other participants). p_items is already in start-time order,
+            # so each participant's sub-list is time-ordered too.
+            by_part: dict = defaultdict(list)
+            for it in p_items:
+                part = get_participant(it)
+                if part is None:
+                    continue
+                by_part[part].append(it)
+            pairs = []
+            for part, own_items in by_part.items():
+                for j in range(len(own_items) - 1):
+                    pairs.append((own_items[j], own_items[j + 1]))
+            # Stable session order: sort pairs by the FROM turn's start time.
+            pairs.sort(key=lambda pr: get_start(pr[0]))
+        else:
+            # USE (A): globally-consecutive participant pairs (unchanged).
+            pairs = [(p_items[i], p_items[i + 1]) for i in range(len(p_items) - 1)]
+
+        for from_item, to_item in pairs:
+            from_part = get_participant(from_item) if get_participant else None
+            to_part = get_participant(to_item) if get_participant else None
 
             from_idx = item_id_to_idx.get(get_id(from_item), -1)
             to_idx = item_id_to_idx.get(get_id(to_item), -1)
@@ -246,6 +376,8 @@ def build_cue_blocks(
                 to_stage=to_stage,
                 transition_type=transition_type,
                 therapist_items=between,
+                from_participant=from_part,
+                to_participant=to_part,
             )
             specs.append(spec)
 
@@ -261,6 +393,7 @@ def cue_blocks_from_segments(
     *,
     stage_attr: str = 'primary_stage',
     require_stage: bool = True,
+    require_same_participant: bool = False,
 ) -> Tuple[List[Any], List[CueBlockSpec]]:
     """
     Build cue-block specs from a list of ``Segment`` dataclass objects.
@@ -288,7 +421,9 @@ def cue_blocks_from_segments(
         get_end=lambda s: s.end_time_ms,
         get_stage=lambda s: getattr(s, stage_attr, None),
         get_id=lambda s: s.segment_id,
+        get_participant=lambda s: getattr(s, 'participant_id', None) or None,
         require_stage=require_stage,
+        require_same_participant=require_same_participant,
     )
 
 
@@ -301,6 +436,7 @@ def cue_blocks_from_records(
     *,
     stage_key: str = 'final_label',
     require_stage: bool = True,
+    require_same_participant: bool = False,
 ) -> List[CueBlockSpec]:
     """
     Build cue-block specs from a list of dicts (e.g. ``df.to_dict('records')``).
@@ -318,6 +454,16 @@ def cue_blocks_from_records(
     list[CueBlockSpec]
         The ``therapist_items`` in each spec are the raw dict objects.
     """
+    def _participant_of(r):
+        pid = r.get('participant_id')
+        if pid is None:
+            return None
+        # treat NaN / empty string as missing
+        if isinstance(pid, float) and pid != pid:
+            return None
+        s = str(pid).strip()
+        return s or None
+
     _, specs = build_cue_blocks(
         records,
         get_session=lambda r: str(r.get('session_id', '')),
@@ -326,7 +472,9 @@ def cue_blocks_from_records(
         get_end=lambda r: int(r.get('end_time_ms', 0) or 0),
         get_stage=lambda r: _coerce_int_or_none(r.get(stage_key)),
         get_id=lambda r: str(r.get('segment_id', id(r))),
+        get_participant=_participant_of,
         require_stage=require_stage,
+        require_same_participant=require_same_participant,
     )
     return specs
 

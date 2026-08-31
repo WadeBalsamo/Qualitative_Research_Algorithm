@@ -1,24 +1,17 @@
 """
 tests/unit/test_language_atlas.py
 ----------------------------------
-Tests for analysis/reports/language_atlas.py.
+Tests for analysis/reports/language_atlas.py (transition-centric, extractive).
 
 generate_language_atlas(df, df_all, framework, output_dir) → Optional[str]
 
-Key behaviors to cover:
-  - Returns None when df_all yields no cue blocks (or enriched blocks are empty)
-  - Returns None when enriched blocks are empty (no progression_coord)
-  - Writes 06_reports/02_mechanism/language_atlas.txt when at least one valid block
-  - Section headers present in output: 1a FORWARD, 1b BACKWARD, 2. EMERGENT MOTIFS,
-    3. ALLIANCE / COUPLING FACTORS
-  - Mechanism CSV drives the ranked forward/backward specs list
-  - Missing GNN motif/coupling CSVs yield graceful fallback text
-  - framework dict used for stage name rendering
-
-Strategy:
-  - Monkeypatch build_cue_blocks_with_segments to return controlled blocks
-  - Monkeypatch _seg_lookup, _load_block_motifs, _enrich_blocks so no real data needed
-  - Build a minimal df_all with progression_coord + mixture
+Covers:
+  - Returns None when no cue blocks / enriched blocks
+  - Writes 06_reports/03_mechanism/language_atlas.txt
+  - Section headers: 0. TRANSITION CUE PROTOTYPES, 1. TRANSITION INVENTORY
+  - Same-participant stage changes drive both sections; no-VTT fallback text
+  - Helper behaviors: timecode/gap formatting, embedded-speaker-line parsing,
+    same-participant filtering
 """
 
 import os
@@ -34,10 +27,6 @@ if _QRA_ROOT not in sys.path: sys.path.insert(1, _QRA_ROOT)
 import numpy as np
 import pandas as pd
 
-from process import output_paths as _paths
-
-
-# ── minimal framework dict ────────────────────────────────────────────────────
 
 FRAMEWORK = {
     0: {'short_name': 'Vigilance'},
@@ -49,7 +38,6 @@ FRAMEWORK = {
 
 
 def _make_df_all(n=6):
-    """Minimal df_all with all columns needed by language_atlas helpers."""
     rows = []
     for i in range(n):
         spk = 'participant' if i % 2 == 0 else 'therapist'
@@ -57,11 +45,13 @@ def _make_df_all(n=6):
             'segment_id': f'seg_{i}',
             'session_id': 'c1s1',
             'speaker': spk,
-            'text': f'Some {"participant" if spk == "participant" else "therapist"} text {i}',
-            'start_time_ms': i * 2000,
-            'end_time_ms': i * 2000 + 1500,
+            'participant_id': 'P01' if spk == 'participant' else None,
+            'cohort_id': 1,
+            'session_number': 1,
+            'text': f'Some {"participant" if spk == "participant" else "therapist"} text {i}.',
+            'start_time_ms': i * 2000 + 1000,
+            'end_time_ms': i * 2000 + 2500,
             'final_label': (i % 3) if spk == 'participant' else np.nan,
-            'purer_primary': np.nan if spk == 'participant' else (i % 5),
             'mixture': [0.6, 0.3, 0.05, 0.03, 0.02] if spk == 'participant' else None,
             'progression_coord': (0.5 + i * 0.1) if spk == 'participant' else np.nan,
             'mixture_entropy': 0.4 if spk == 'participant' else np.nan,
@@ -70,89 +60,40 @@ def _make_df_all(n=6):
 
 
 def _make_minimal_blocks():
-    """Two cue blocks: one forward, one backward."""
     return [
-        {
-            'session_id': 'c1s1',
-            'from_seg_id': 'seg_0',
-            'to_seg_id': 'seg_2',
-            'from_stage': 0,
-            'to_stage': 1,
-            'transition_type': 'forward',
-            'therapist_seg_ids': ['seg_1'],
-        },
-        {
-            'session_id': 'c1s1',
-            'from_seg_id': 'seg_2',
-            'to_seg_id': 'seg_4',
-            'from_stage': 1,
-            'to_stage': 0,
-            'transition_type': 'backward',
-            'therapist_seg_ids': ['seg_3'],
-        },
+        {'session_id': 'c1s1', 'from_seg_id': 'seg_0', 'to_seg_id': 'seg_2',
+         'from_stage': 0, 'to_stage': 1, 'transition_type': 'forward',
+         'therapist_seg_ids': ['seg_1']},
+        {'session_id': 'c1s1', 'from_seg_id': 'seg_2', 'to_seg_id': 'seg_4',
+         'from_stage': 1, 'to_stage': 0, 'transition_type': 'backward',
+         'therapist_seg_ids': ['seg_3']},
     ]
 
 
 def _make_enriched_blocks():
-    """Return two enriched blocks directly."""
+    common = {'session_id': 'c1s1', 'participant_id': 'P01',
+              'from_participant': 'P01', 'to_participant': 'P01',
+              'from_entropy': 0.3, 'dominant_purer': None, 'cue_motif': None,
+              'n_therapist_segments': 1}
     return [
-        {
-            'session_id': 'c1s1',
-            'from_seg_id': 'seg_0',
-            'to_seg_id': 'seg_2',
-            'from_stage': 0,
-            'to_stage': 1,
-            'transition_type': 'forward',
-            'therapist_seg_ids': ['seg_1'],
-            'participant_id': 'P01',
-            'delta_prog': 0.45,
-            'from_entropy': 0.3,
-            'from_mixture': [0.7, 0.2, 0.05, 0.03, 0.02],
-            'dominant_purer': 'Reframing',
-            'cue_motif': None,
-            'n_therapist_segments': 1,
-            'delta_direction': 'progress',
-        },
-        {
-            'session_id': 'c1s1',
-            'from_seg_id': 'seg_2',
-            'to_seg_id': 'seg_4',
-            'from_stage': 1,
-            'to_stage': 0,
-            'transition_type': 'backward',
-            'therapist_seg_ids': ['seg_3'],
-            'participant_id': 'P01',
-            'delta_prog': -0.30,
-            'from_entropy': 0.4,
-            'from_mixture': [0.3, 0.6, 0.05, 0.03, 0.02],
-            'dominant_purer': 'Education',
-            'cue_motif': None,
-            'n_therapist_segments': 1,
-            'delta_direction': 'regress',
-        },
+        {**common, 'from_seg_id': 'seg_0', 'to_seg_id': 'seg_2',
+         'from_stage': 0, 'to_stage': 1, 'transition_type': 'forward',
+         'therapist_seg_ids': ['seg_1'], 'delta_prog': 0.45,
+         'from_mixture': [0.7, 0.2, 0.05, 0.03, 0.02], 'delta_direction': 'progress'},
+        {**common, 'from_seg_id': 'seg_2', 'to_seg_id': 'seg_4',
+         'from_stage': 1, 'to_stage': 0, 'transition_type': 'backward',
+         'therapist_seg_ids': ['seg_3'], 'delta_prog': -0.30,
+         'from_mixture': [0.3, 0.6, 0.05, 0.03, 0.02], 'delta_direction': 'regress'},
     ]
 
 
 def _minimal_seg_lookup(df_all):
-    """Simple lookup with progression_coord and mixture for the test segments."""
-    return {
-        'seg_0': {'progression_coord': 0.5, 'mixture': [0.6, 0.3, 0.05, 0.03, 0.02],
-                  'mixture_entropy': 0.3, 'purer': None, 'participant_id': 'P01'},
-        'seg_1': {'progression_coord': None, 'mixture': None, 'mixture_entropy': None,
-                  'purer': 2, 'participant_id': None},
-        'seg_2': {'progression_coord': 0.95, 'mixture': [0.2, 0.7, 0.05, 0.03, 0.02],
-                  'mixture_entropy': 0.4, 'purer': None, 'participant_id': 'P01'},
-        'seg_3': {'progression_coord': None, 'mixture': None, 'mixture_entropy': None,
-                  'purer': 3, 'participant_id': None},
-        'seg_4': {'progression_coord': 0.65, 'mixture': [0.5, 0.4, 0.05, 0.03, 0.02],
-                  'mixture_entropy': 0.5, 'purer': None, 'participant_id': 'P01'},
-        'seg_5': {'progression_coord': None, 'mixture': None, 'mixture_entropy': None,
-                  'purer': 4, 'participant_id': None},
-    }
+    return {f'seg_{i}': {'progression_coord': 0.5 + i * 0.1, 'mixture': None,
+                         'mixture_entropy': 0.3, 'purer': None, 'participant_id': 'P01'}
+            for i in range(6)}
 
 
 class TestLanguageAtlasNoBlocks(unittest.TestCase):
-    """Returns None when build_cue_blocks_with_segments yields nothing."""
 
     def test_returns_none_when_no_blocks(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -163,7 +104,6 @@ class TestLanguageAtlasNoBlocks(unittest.TestCase):
             self.assertIsNone(result)
 
     def test_returns_none_when_enriched_empty(self):
-        """If enriched blocks are empty (no progression_coord match), returns None."""
         with tempfile.TemporaryDirectory() as tmp:
             df_all = _make_df_all()
             blocks = _make_minimal_blocks()
@@ -177,7 +117,7 @@ class TestLanguageAtlasNoBlocks(unittest.TestCase):
 
 
 class TestLanguageAtlasWrites(unittest.TestCase):
-    """With valid enriched blocks, a file is written to 02_mechanism/language_atlas.txt."""
+    """With valid enriched blocks (no VTT in tmp), file written; fallbacks shown."""
 
     def _run(self, tmp, df_all=None):
         if df_all is None:
@@ -197,10 +137,6 @@ class TestLanguageAtlasWrites(unittest.TestCase):
             path = self._run(tmp)
             self.assertIsNotNone(path)
             self.assertTrue(os.path.isfile(path))
-
-    def test_path_ends_with_language_atlas_txt(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = self._run(tmp)
             self.assertTrue(path.endswith('language_atlas.txt'))
 
     def test_path_in_mechanism_dir(self):
@@ -215,97 +151,75 @@ class TestLanguageAtlasWrites(unittest.TestCase):
             with open(path, encoding='utf-8') as f:
                 content = f.read()
             self.assertIn('THERAPEUTIC LANGUAGE ATLAS', content)
-            self.assertIn('1a. TOP FORWARD-MOVING', content)
-            self.assertIn('1b. BACKWARD-MOVING', content)
-            self.assertIn('2. EMERGENT MOTIFS', content)
-            self.assertIn('3. ALLIANCE / COUPLING FACTORS', content)
+            self.assertIn('0. MOST DISCRIMINATIVE THERAPIST LANGUAGE', content)
+            self.assertIn('1. TRANSITION CUE PROTOTYPES', content)
+            self.assertIn('2. TRANSITION INVENTORY', content)
+            self.assertIn('[distillation method: ', content)
 
-    def test_gnn_not_available_fallback(self):
-        """Without GNN CSVs, sections 2 and 3 show fallback text."""
+    def test_transitions_and_no_vtt_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = self._run(tmp)
             with open(path, encoding='utf-8') as f:
                 content = f.read()
-            # No cue_motifs.csv → section 2 fallback
-            self.assertIn('GNN motif discovery not available', content)
-            # No coupling_factors.csv → section 3 fallback
-            self.assertIn('GNN coupling not available', content)
+            # both transition types present, with stage names
+            self.assertIn('Vigilance → Avoidance', content)
+            self.assertIn('Avoidance → Vigilance', content)
+            # no VTT in tmp → per-example cue fallback + prototype fallback
+            self.assertIn('no VTT timing — cue unavailable', content)
+            self.assertIn('no usable proximal cues', content)
+            # 2 same-participant stage changes counted
+            self.assertIn('2 same-participant stage changes total', content)
 
-    def test_forward_mover_run_instruction_when_no_mech_csv(self):
-        """Without mechanism CSV, section 1a shows a run-first message."""
+    def test_no_llm_prose_sections(self):
+        """Motif glossary / movers / summaries / syntheses are gone."""
         with tempfile.TemporaryDirectory() as tmp:
             path = self._run(tmp)
             with open(path, encoding='utf-8') as f:
                 content = f.read()
-            # No mechanism_delta_progression.csv in tmp → empty forward_specs
-            self.assertIn('run the mechanism analysis first', content)
+            self.assertNotIn('MOTIF GLOSSARY', content)
+            self.assertNotIn('[SUMMARY', content)
+            self.assertNotIn('LLM SYNTHESIS', content)
+            self.assertNotIn('EMERGENT MOTIFS', content)
 
 
-class TestLanguageAtlasMechanismCSV(unittest.TestCase):
-    """When mechanism_delta_progression.csv exists, ranked specs drive section 1."""
+class TestAtlasHelpers(unittest.TestCase):
 
-    def _run_with_mech(self, tmp):
-        """Seed the mechanism CSV then run atlas."""
-        mech_dir = _paths.mechanism_dir(tmp)
-        os.makedirs(mech_dir, exist_ok=True)
-        pd.DataFrame([
-            {'grouping': 'purer', 'from_stage': 1, 'from_stage_name': 'Avoidance',
-             'behavior': 'Reframing', 'n': 10, 'mean_delta_prog': 0.42, 'fdr_significant': True},
-            {'grouping': 'purer', 'from_stage': 0, 'from_stage_name': 'Vigilance',
-             'behavior': 'Education', 'n': 6, 'mean_delta_prog': -0.25, 'fdr_significant': True},
-        ]).to_csv(os.path.join(mech_dir, 'mechanism_delta_progression.csv'), index=False)
+    def test_fmt_timecode(self):
+        from analysis.reports.language_atlas import _fmt_timecode
+        self.assertEqual(_fmt_timecode(120610), '0:02:00')
+        self.assertEqual(_fmt_timecode(3_723_000), '1:02:03')
+        self.assertEqual(_fmt_timecode(0), '--:--:--')
+        self.assertEqual(_fmt_timecode(None), '--:--:--')
+        self.assertEqual(_fmt_timecode(float('nan')), '--:--:--')
 
-        df_all = _make_df_all()
-        blocks = _make_minimal_blocks()
-        enriched = _make_enriched_blocks()
-        # Patch dominant_purer to 'Reframing' in forward block so example shows
-        enriched[0]['dominant_purer'] = 'Reframing'
-        enriched[1]['dominant_purer'] = 'Reframing'
-        lookup = _minimal_seg_lookup(df_all)
-        with patch('gnn_layer.cue_features.build_cue_blocks_with_segments', return_value=blocks), \
-             patch('analysis.mechanism._seg_lookup', return_value=lookup), \
-             patch('analysis.mechanism._load_block_motifs', return_value={}), \
-             patch('analysis.mechanism._enrich_blocks', return_value=enriched):
-            from analysis.reports.language_atlas import generate_language_atlas
-            return generate_language_atlas(df_all, df_all, FRAMEWORK, tmp)
+    def test_fmt_gap(self):
+        from analysis.reports.language_atlas import _fmt_gap
+        self.assertEqual(_fmt_gap(60_000, 273_000), 'gap 3m 33s')
+        self.assertEqual(_fmt_gap(0, 273_000), 'gap n/a')
+        self.assertEqual(_fmt_gap(273_000, 60_000), 'gap n/a')
+        self.assertEqual(_fmt_gap(None, 60_000), 'gap n/a')
 
-    def test_mechanism_csv_populates_sections(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = self._run_with_mech(tmp)
-            self.assertIsNotNone(path)
-            with open(path, encoding='utf-8') as f:
-                content = f.read()
-            # The mechanism CSV rows feed section 1; the from-stage names should appear
-            self.assertIn('Avoidance', content)
+    def test_speaker_lines_multi_speaker(self):
+        from analysis.reports.language_atlas import _speaker_lines
+        text = ("[therapist_2]: Any other challenges?\n"
+                "[Participant_MM001]: I fell asleep.\n"
+                "and then I woke up.")
+        lines = _speaker_lines(text, 'participant')
+        self.assertEqual(lines[0], ('therapist_2', 'Any other challenges?'))
+        self.assertEqual(lines[1][0], 'Participant_MM001')
+        self.assertIn('and then I woke up', lines[1][1])
 
+    def test_speaker_lines_unprefixed_uses_default(self):
+        from analysis.reports.language_atlas import _speaker_lines
+        lines = _speaker_lines('Just plain text.', 'Participant_MM009')
+        self.assertEqual(lines, [('Participant_MM009', 'Just plain text.')])
 
-class TestLanguageAtlasWithCouplingCSV(unittest.TestCase):
-    """When coupling_factors.csv exists, section 3 renders it."""
-
-    def test_coupling_csv_rendered(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            gnn_dir = _paths.gnn_data_dir(tmp)
-            os.makedirs(gnn_dir, exist_ok=True)
-            pd.DataFrame([
-                {'factor': 0, 'nearest_cf_ic': 'Alliance', 'forward_corr': 0.65,
-                 'explained_variance_ratio': 0.21},
-            ]).to_csv(os.path.join(gnn_dir, 'coupling_factors.csv'), index=False)
-
-            df_all = _make_df_all()
-            blocks = _make_minimal_blocks()
-            enriched = _make_enriched_blocks()
-            lookup = _minimal_seg_lookup(df_all)
-            with patch('gnn_layer.cue_features.build_cue_blocks_with_segments', return_value=blocks), \
-                 patch('analysis.mechanism._seg_lookup', return_value=lookup), \
-                 patch('analysis.mechanism._load_block_motifs', return_value={}), \
-                 patch('analysis.mechanism._enrich_blocks', return_value=enriched):
-                from analysis.reports.language_atlas import generate_language_atlas
-                path = generate_language_atlas(df_all, df_all, FRAMEWORK, tmp)
-
-            with open(path, encoding='utf-8') as f:
-                content = f.read()
-            self.assertIn('Alliance', content)
-            self.assertIn('forward-corr=+0.650', content)
+    def test_same_participant(self):
+        from analysis.reports.language_atlas import _same_participant
+        self.assertTrue(_same_participant({'from_participant': 'P01', 'to_participant': 'P01'}))
+        self.assertFalse(_same_participant({'from_participant': 'P01', 'to_participant': 'P02'}))
+        self.assertFalse(_same_participant({'from_participant': None, 'to_participant': 'P02'}))
+        self.assertFalse(_same_participant({}))
 
 
 if __name__ == '__main__':

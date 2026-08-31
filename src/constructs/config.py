@@ -32,6 +32,7 @@ class ThemeClassificationConfig:
     ollama_host: str = '0.0.0.0'
     ollama_port: int = 11434
     lmstudio_base_url: str = 'http://127.0.0.1:1234/v1'  # LM Studio server URL
+    no_reasoning: bool = False  # Disable chain-of-thought tokens for thinking models (LM Studio)
     context_window_segments: int = 2  # Number of preceding segments to include as context (0 = disabled)
     # Prompt exemplar control
     zero_shot_prompt: bool = False          # True = definitions only, no examples

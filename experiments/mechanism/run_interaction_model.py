@@ -204,7 +204,7 @@ def freq_inference(D: pd.DataFrame) -> dict:
         bh = S.benjamini_hochberg(pvals, alpha=0.05)
         n_sig = int(sum(bool(x) for x in bh["reject"]))
         out["additive_percell_FDR"] = dict(n_cells=len(rows), n_FDR_significant=n_sig,
-                                           note="the shipped per-cell read; 0 significant = under-powered at n≈32")
+                                           note="the shipped per-cell read; 0 significant = under-powered at n≈20")
     except Exception as e:
         out["additive_percell_FDR"] = {"error": f"{type(e).__name__}: {e}"}
 

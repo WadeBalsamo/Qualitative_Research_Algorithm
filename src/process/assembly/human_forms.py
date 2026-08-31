@@ -752,7 +752,10 @@ def refresh_testset_answer_key(
     ai_path = _paths.testset_ai_flat_path(run_dir, n)
 
     if kind == 'purer':
-        _write_purer_answer_key(segs, framework, ai_path, n, n_total)
+        # PURER answer keys must use the PURER framework (P/U/R/E/R2), not the
+        # default VAAMR framework the refresh caller passes for all worksheets.
+        from constructs.registry import load as _load_fw
+        _write_purer_answer_key(segs, _load_fw('purer'), ai_path, n, n_total)
     elif kind == 'codebook':
         _write_codebook_answer_key(segs, codebook, ai_path, n, n_total)
     else:

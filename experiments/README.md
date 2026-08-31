@@ -2,8 +2,9 @@
 
 > **What this is.** A self-contained, preserved record of **every** methodological experiment run for
 > QRA's VAAMR classification work — the **GNN reliability battery**, the **classification /
-> scaler distillation campaign**, and the **mechanism interaction campaign** — including the *failed*
-> attempts. It exists so that no trialed method is lost and every reported number is reproducible.
+> scaler distillation campaign**, the **mechanism interaction campaign**, the **classification-methods
+> history catalog**, and the **vote-policy comparison** — including the *failed* attempts. It exists so
+> that no trialed method is lost and every reported number is reproducible.
 >
 > **Inert research code.** **Nothing in the pipeline** (`src/process`, `src/analysis`, `src/gnn_layer`,
 > `qra.py`) imports `experiments/`. Everything is consolidated under `experiments/` at the repo root:
@@ -18,7 +19,7 @@
 
 ---
 
-## The arc (why these three campaigns, in order)
+## The arc (why these campaigns, in order)
 
 1. **GNN reliability battery** (`gnn_reliability/`) asked: *can a content-similarity GraphSAGE GNN
    reproduce the multi-run LLM VAAMR consensus well enough to label new segments LLM-free?* (hypothesis
@@ -30,15 +31,27 @@
    probe be bootstrapped — from the human- and LLM-labeled examples already in hand — to LLM-equivalent
    fidelity, so it can scale labeling?* The full ranked battery (context, capacity, soft-label,
    per-rater, structure, stacking, human-anchor) found a **better model than the single probe** — a
-   **per-rater ensemble** — but **no configuration reaches the LLM-equivalence bar at n≈32**, and three
+   **per-rater ensemble** — but **no configuration reaches the LLM-equivalence bar at n≈20**, and three
    independent methods converge on the same frontier, marking a **data ceiling**.
 
 3. **Mechanism interaction campaign** (`mechanism/`) asked: *does the therapist PURER move's effect on the
    next participant VAAMR stage depend on the participant's FROM stage?* (H2, FROM×move interaction).
    The PURER-move main effect earns its place (held-out log-loss improves vs FROM-only); the interaction
-   does not (overfits at n ≈ 32, LR p = 0.52, Gaussian model singular). Bayesian hierarchical ordinal
+   does not (overfits at n ≈ 20, LR p = 0.52, Gaussian model singular). Bayesian hierarchical ordinal
    (E1c) returns finite credible intervals but 0/16 exclude zero — honest under-identification. E2–E9
    corroboration arms provide confound E-values, cue-representation, trajectory, and H1 tests.
+
+4. **Classification-methods history catalog** (`classification_methods/`, built 2026-06-08) recreates the
+   full R&D path to the shipped multi-model consensus (embedding similarity → single-LLM zero-shot →
+   prompt/harness grids) as run-ready, content-validity-scored arms (`cv_vaamr_v1`, 109 items). It has its
+   own arm table (`classification_methods/CATALOG.md`); arm runs are landing incrementally (see each
+   experiment's `results.md`) — consult that catalog, not this index, for per-arm status.
+
+5. **Vote-policy comparison** (`vote_policy_comparison/`, completed 2026-06-10) re-voted the stored
+   per-rater ballots under four consensus policies against the human IRR codes (no LLM calls). Strict
+   `majority` won (κ = 0.597, coverage 0.818); policies that force a label onto split ballots scored
+   materially worse (`majority_coded` 0.448, `coded_plurality` 0.378). **Promoted:** `majority` is now the
+   default vote mode for VAAMR and PURER.
 
 The headline of the classifier campaigns:
 
@@ -51,7 +64,7 @@ The headline of the classifier campaigns:
 
 **Verdict:** the winner *dominates* the prior probe on both axes but is **not LLM-equivalent**; it ships
 as an **assistive, gated, abstention-aware pre-labeler**, not an autonomous LLM replacement. The ceiling
-is *data* (the rare stages Avoidance/Metacognition stay stuck at recall ≈.28–.35; n≈32 participants),
+is *data* (the rare stages Avoidance/Metacognition stay stuck at recall ≈.28–.35; n≈20 participants),
 so fidelity is expected to rise as labeled participants accrue. Reproduced on the live corpus
 (`data/Meta`): A1n = 0.283/0.365, `ens_softavg` C=1 = 0.325/0.389, and the headline **C=4 winner =
 0.361/0.450** (`_csweep.py` → committed `classification_scaler/_csweep_results.json`).
@@ -83,6 +96,12 @@ experiments/
 │   ├── anchors_arm.py                ← CFiCS-style construct anchor-node arm (lowered reliability)
 │   ├── capacity_scaler.py            ← GNN model-capacity / scale-mode arm
 │   └── run_battery.py · run_mechanism.py
+├── classification_methods/           ← History catalog: the R&D path to multi-model consensus
+│   ├── CATALOG.md                    ← arm table (9 experiments + dead-ends; content-validity axis)
+│   └── 01..09_*/ · 99_dead_ends/     ← run-ready arms (LM Studio / offline); per-arm status in CATALOG
+├── vote_policy_comparison/           ← Completed 2026-06-10: consensus vote-policy bake-off
+│   ├── README.md · RESULTS.md        ← design + results (majority wins, promoted to default)
+│   └── run_experiment.py · results.json  ← re-votes stored ballots; no LLM calls; PHI-free results
 ├── classification_scaler/            ← Campaign 2: distillation to a scalable classifier
 │   ├── RESULTS.md                    ← detailed per-family results + the convergent-ceiling verdict
 │   ├── CAMPAIGN_LOG.md               ← the append-only campaign log (every arm, as it ran)
@@ -143,7 +162,7 @@ uses ordinal/Bayesian interaction models, not the classifier harness):
   segments) and **classifier↔human** κ (66 human items), each with a **participant-clustered bootstrap
   95 % CI**. The human axis is load-bearing and read once per arm (never tuned on).
 - **Features — `get_embeddings(df,'qwen')`:** cached 4096-d Qwen3-Embedding-8B vectors, L2-normalized.
-- **Data:** n≈32 participants; 205 LLM-labeled + 134 "No code" participant segments; 66 human codes.
+- **Data:** n≈20 participants; 205 LLM-labeled + 134 "No code" participant segments; 66 human codes.
 - **Success bar:** classifier↔LLM grouped κ ≥ **0.45** (human↔human ceiling) **or** classifier↔human
   κ ≥ **0.50** (LLM↔human is 0.537), CI-aware.
 

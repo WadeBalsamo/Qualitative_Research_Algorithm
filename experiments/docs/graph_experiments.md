@@ -1,6 +1,6 @@
 # Graph Experiments — VAAMR Reliability & Mechanism
 
-**Date:** 2026-06-06 · **Corpus:** `./data/Meta/` (Move-MORE, n≈32 participants; 339 participant
+**Date:** 2026-06-06 · **Corpus:** `./data/Meta/` (Move-MORE, n≈20 participants; 339 participant
 segments, 205 VAAMR-labeled, 134 "No code"; 76 human-coded IRR items) · **Companion records:**
 `design_decisions.md` (§0 synthesis + full decision log), `docs/gnn_experiments/ledger.csv` (per-arm
 data), `docs/GNN_MASTER_PLAN.md` Track A0.
@@ -156,11 +156,11 @@ Two independent reasons, both fundamental:
 2. **Under-identification / low power (estimation).** The counterfactual shift is tiny (±0.035 on a
    0–4 scale) because a participant's predicted progression is dominated by *their own* features, not
    the swapped therapist cue; the mediating GNN is itself a weak classifier (gate κ≈0.13–0.20); and
-   ρ is computed over **20 cells from n≈32 participants**, giving a CI of [−0.48, 0.01]. Even the
+   ρ is computed over **20 cells from n≈20 participants**, giving a CI of [−0.48, 0.01]. Even the
    *observed* analysis has **0 FDR-significant cells**. There is simply no statistical power to detect
    convergence at this scale, regardless of the confound.
 
-The honest reading: the mechanism is *under-identified at n≈32*. The GNN adds a sensitivity lens that
+The honest reading: the mechanism is *under-identified at n≈20*. The GNN adds a sensitivity lens that
 **disagrees** with the confounded observational signal — which is itself informative (it flags the
 confound) but is not corroboration.
 
@@ -171,7 +171,7 @@ confound) but is not corroboration.
 1. **The GNN's two raisons d'être are both undercut *at this scale*, for principled reasons.** As a
    *classifier*, the graph's homophily assumption is wrong for a process label (4.2) → a probe is
    better. As a *mechanism* instrument, the readout is under-identified and confound-divergent (4.6).
-   Neither is a coding bug; both are structural facts about *process labels on n≈32 observational
+   Neither is a coding bug; both are structural facts about *process labels on n≈20 observational
    data*.
 2. **The real deliverable is the evaluation methodology, and it is now defensible.** Participant-
    grouped CV (no leakage), participant-clustered bootstrap CIs (tiny n → intervals, not points), a
@@ -185,7 +185,7 @@ confound) but is not corroboration.
 4. **Two of the three winning levers were not "AI" at all** — they were *measurement discipline*
    (grouped CV) and *construct operationalization* (the No-code null class). The one modeling lever
    that helped (class-weighting) is standard imbalance handling, not graph machinery.
-5. **The binding constraint is data scale (n≈32), full stop.** No architecture move closes the gap;
+5. **The binding constraint is data scale (n≈20), full stop.** No architecture move closes the gap;
    the human↔human ceiling (α 0.33–0.52) and the 20-cell mechanism table are the limits.
 
 ---
@@ -237,11 +237,11 @@ cleared. Folds are deterministic (`StratifiedGroupKFold`, seed 42).
 
 ## 8. Honest limitations
 
-- n≈32 participants / 205 labels / 66 human items / 20 mechanism cells — every number has a wide CI;
+- n≈20 participants / 205 labels / 66 human items / 20 mechanism cells — every number has a wide CI;
   CIs, not point estimates, carry the conclusions.
 - The human axis (66 items, α 0.33–0.52 among raters) is itself fuzzy; "human-level" means the human
   *band*, not a sharp target.
 - The Qwen embeddings truncate texts to 8000 chars (a handful of long didactic turns); the endpoint
   returns L2-normalized vectors (cosine-equivalent, but a magnitude asymmetry vs the local path).
-- All mechanism statements are observational, n≈32, elicitation-confounded → **hypothesis-generating,
+- All mechanism statements are observational, n≈20, elicitation-confounded → **hypothesis-generating,
   never causal**.

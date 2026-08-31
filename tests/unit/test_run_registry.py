@@ -336,5 +336,94 @@ class TestRemapBallotSegmentIds(unittest.TestCase):
         self.assertEqual(db.loads(row['applies_to_json']), ['new', 'other2'])
 
 
+class TestDeleteBallotsForRun(unittest.TestCase):
+    """delete_ballots_for_run — clean-slate helper for revived (--fresh) runs."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.run_id = rr.create_run(self.tmpdir, overlay='theme', model='m')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_deletes_only_target_run(self):
+        other = rr.create_run(self.tmpdir, overlay='theme', model='m2')
+        rr.upsert_ballots(self.tmpdir, 'theme', self.run_id,
+                          {'s1': {'vote': 'CODED', 'primary_stage': 1},
+                           's2': {'vote': 'CODED', 'primary_stage': 2}})
+        rr.upsert_ballots(self.tmpdir, 'theme', other,
+                          {'s1': {'vote': 'CODED', 'primary_stage': 3}})
+        n = rr.delete_ballots_for_run(self.tmpdir, 'theme', self.run_id)
+        self.assertEqual(n, 2)
+        # target run's ballots gone, the other run's intact
+        self.assertEqual(rr.ballots_for_runs(self.tmpdir, 'theme', [self.run_id]), {})
+        kept = rr.ballots_for_runs(self.tmpdir, 'theme', [other])
+        self.assertEqual(kept['s1'][other]['primary_stage'], 3)
+
+    def test_empty_when_no_ballots(self):
+        self.assertEqual(rr.delete_ballots_for_run(self.tmpdir, 'theme', self.run_id), 0)
+
+
+class TestGetOrCreateRevivesArchived(unittest.TestCase):
+    """qra._get_or_create_runs_for_overlay — reviving an archived run lineage.
+
+    Regression: an ARCHIVED row used to fall through to create_run(), colliding
+    on UNIQUE(overlay, rater_label).  It must now be revived in place.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        # import the CLI helper under test
+        import importlib
+        self.qra = importlib.import_module('qra')
+        self.config = self._make_config()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _make_config(self):
+        from process.config import PipelineConfig
+        return PipelineConfig(transcript_dir=self.tmpdir, output_dir=self.tmpdir)
+
+    def test_revives_archived_run_without_duplicate(self):
+        rid = rr.create_run(self.tmpdir, overlay='theme', model='modelA',
+                            rater_label='modelA')
+        rr.update_run(self.tmpdir, rid, status='archived', selected=True)
+        # Should NOT raise IntegrityError, and should reuse the same run_id.
+        got = self.qra._get_or_create_runs_for_overlay(
+            self.tmpdir, 'theme', ['modelA'], self.config)
+        self.assertEqual(got, [rid])
+        # exactly one row for this rater_label (no duplicate)
+        rows = [r for r in rr.list_runs(self.tmpdir, overlay='theme')
+                if r['rater_label'] == 'modelA']
+        self.assertEqual(len(rows), 1)
+        revived = rr.get_run(self.tmpdir, rid)
+        self.assertEqual(revived['status'], 'queued')
+        self.assertFalse(revived['selected'])
+
+    def test_fresh_clears_ballots_on_revive(self):
+        rid = rr.create_run(self.tmpdir, overlay='theme', model='modelA',
+                            rater_label='modelA')
+        rr.upsert_ballots(self.tmpdir, 'theme', rid,
+                          {'s1': {'vote': 'CODED', 'primary_stage': 1}})
+        rr.update_run(self.tmpdir, rid, status='archived')
+        got = self.qra._get_or_create_runs_for_overlay(
+            self.tmpdir, 'theme', ['modelA'], self.config, fresh=True)
+        self.assertEqual(got, [rid])
+        self.assertEqual(rr.ballots_for_runs(self.tmpdir, 'theme', [rid]), {})
+
+    def test_non_fresh_keeps_ballots_on_revive(self):
+        rid = rr.create_run(self.tmpdir, overlay='theme', model='modelA',
+                            rater_label='modelA')
+        rr.upsert_ballots(self.tmpdir, 'theme', rid,
+                          {'s1': {'vote': 'CODED', 'primary_stage': 1}})
+        rr.update_run(self.tmpdir, rid, status='archived')
+        got = self.qra._get_or_create_runs_for_overlay(
+            self.tmpdir, 'theme', ['modelA'], self.config, fresh=False)
+        self.assertEqual(got, [rid])
+        kept = rr.ballots_for_runs(self.tmpdir, 'theme', [rid])
+        self.assertEqual(kept['s1'][rid]['primary_stage'], 1)
+
+
 if __name__ == '__main__':
     unittest.main()

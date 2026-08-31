@@ -265,7 +265,7 @@ class PurerCueConfig:
         Splitting produces finer-grained PURER labels (one per sub-cue) rather
         than dropping or monolithically sending the block.
     """
-    classification_unit: str = "turn"   # "turn" (one PURER label per therapist turn, classified within its full surrounding exchange) | "cue_block" (one label per therapist response between participant turns, split by max_cue_words and propagated)
+    classification_unit: str = "cue_block"   # "cue_block" (CANONICAL, per CLAUDE.md: one label per therapist response between participant turns, split by max_cue_words and propagated to constituents — dense labels) | "turn" (one PURER label per therapist turn, classified within its full surrounding exchange — short fragments abstain, sparse labels)
     skip_lesson_content: bool = True
     max_lesson_words: int = 400
     therapist_max_gap_seconds: float = 120.0

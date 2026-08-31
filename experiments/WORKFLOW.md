@@ -30,8 +30,9 @@ properties make this scale:
 Code: `gnn_reliability/harness.py` + `gnn_reliability/baselines.py` (the canonical copy; imported
 directly by tests and the discovery layer from `experiments/gnn_reliability/`).
 
-- **Corpus.** `data/Meta` — Move-MORE Cohorts 1–2, n ≈ 32 participants; 205 LLM-labeled + 134 "No code"
-  participant segments; 66 human-consensus codes.
+- **Corpus.** `data/Meta` (a frozen snapshot whose composition matches the current `data/MMORE_Processed`)
+  — Move-MORE pilot corpus: Cohorts 1–2 complete + first 3 Cohort-3 sessions, 20 analyzed participants;
+  205 LLM-labeled + 134 "No code" participant segments; 66 human-consensus codes.
 - **Features.** Cached **Qwen3-Embedding-8B** (4096-d), L2-normalized, text-hash-keyed cache (a warm cache
   never re-hits the endpoint). MiniLM-384 is kept only as a *within-embedder control*.
 - **Folds — the methodological backbone.** `build_folds(df, seed=42)` = participant-grouped
@@ -70,7 +71,7 @@ is set at the **human↔human ceiling**, not the unreachable legacy κ ≥ 0.70.
   not gradient-tuning on the test set.
 - Hyperparameters are tuned on the **LLM axis only**; the **human axis is read once per arm** and never
   tuned on.
-- **CIs decide, not point estimates** — at n ≈ 32 a 0.02 point gain inside overlapping CIs is noise.
+- **CIs decide, not point estimates** — at n ≈ 20 a 0.02 point gain inside overlapping CIs is noise.
 - Folds, seed, and scorer are frozen, so any arm is re-runnable and any verdict re-adjudicable as n grows.
 
 ---
@@ -149,7 +150,7 @@ participant-clustered CI · the raw result artifact committed next to the script
   correction, class-weighting, and the No-code null; turned the negative into the H6 discriminant
   instrument and the rebuilt transition mechanism.
 - **Campaign 2 (scaler distillation):** ranked seven lever families; found the per-rater ensemble winner,
-  established the n ≈ 32 **data ceiling** via three converging methods, and bounded the search (context,
+  established the n ≈ 20 **data ceiling** via three converging methods, and bounded the search (context,
   capacity, ordinal, stacking, anchors all archived as negatives).
 - **Campaign 3 (mechanism — PURER×VAAMR interaction):** tested whether the therapist move effect on the
   next VAAMR stage depends on the participant's FROM stage (FROM×move interaction, H2). The PURER-move
@@ -157,7 +158,7 @@ participant-clustered CI · the raw result artifact committed next to the script
   (1.531, overfits). Frequentist E1b: ordinal LR test p = 0.52; Gaussian model singular. Bayesian E1c:
   0/16 interaction HDIs exclude 0 (honest under-identification). E2 confound E-values provide a formal
   sensitivity floor. E3–E9 corroboration arms cover cue representation, trajectory, PURER noise, lift
-  controls, transition counterfactual, and H1. All observational, hypothesis-generating at n ≈ 32;
+  controls, transition counterfactual, and H1. All observational, hypothesis-generating at n ≈ 20;
   see `mechanism/RESULTS.md`.
 
 The throughline: **the binding constraint is data scale, not model architecture.** The workflow is built so

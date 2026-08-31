@@ -10,7 +10,7 @@
 
 **Mission:** make the VAAMR GNN methodologically defensible — PRIMARY: a mechanism (therapist→
 participant) readout that *triangulates* with the observed analysis; SECONDARY: classifier IRR as a
-trust floor. Corpus `./data/Meta/` (n≈32 participants; 339 participant segments, 205 VAAMR-labeled,
+trust floor. Corpus `./data/Meta/` (n≈20 participants; 339 participant segments, 205 VAAMR-labeled,
 134 "No code"; 76 human-coded items).
 
 **Bottom line (all numbers participant-grouped CV + participant-clustered bootstrap CIs):**
@@ -37,14 +37,14 @@ trust floor. Corpus `./data/Meta/` (n≈32 participants; 339 participant segment
 
 **The defensible design IS the rigorous evaluation:** participant-grouped CV (no leakage), bootstrap
 CIs (tiny n → CIs decide, not points), a pre-registered arm battery, the human axis as load-bearing,
-and negative results recorded as evidence. **The binding constraint is data scale (n≈32)** — more
+and negative results recorded as evidence. **The binding constraint is data scale (n≈20)** — more
 labeled participants is the only credible path to a *corroborating* (not merely exploratory) GNN
 mechanism instrument.
 
 **Recommendations:** (i) switch the production reliability gate from random-k-fold to participant-
 grouped CV (it currently over-reports κ); (ii) keep the LLM as label-of-record + ship the calibrated
 Qwen probe as the abstention-gated assist; (iii) report mechanism from `mechanism.py` (observed) with
-the GNN as an exploratory lens + the n≈32/confound caveats; (iv) wire the Qwen `/v1/embeddings` backend
+the GNN as an exploratory lens + the n≈20/confound caveats; (iv) wire the Qwen `/v1/embeddings` backend
 (`embedding_backend='openai'`) as the GNN feature default.
 
 ---
@@ -53,7 +53,7 @@ the GNN as an exploratory lens + the n≈32/confound caveats; (iv) wire the Qwen
 
 **PRIMARY = mechanism; SECONDARY = classifier IRR (a trust floor that must never compromise
 the primary).** Workspace `./data/Meta/`. **PURER is out of scope except as cue context.** All
-claims are n≈32 observational — **NO causal claims** (elicitation confound: PURER inquiry
+claims are n≈20 observational — **NO causal claims** (elicitation confound: PURER inquiry
 *elicits* the very VAAMR language it is scored against; `methodology.md` §9.4).
 
 ### 1A. PRIMARY — therapist→participant VAAMR mechanism (peer-review deliverable)
@@ -247,7 +247,7 @@ model (D-C). Mechanism (M2) graph kept regardless.
   — it runs with the gate κ as *reported trust context*, not as a hard suppressor (the κ≥0.70 gate
   is unreachable in principle, so hard-gating would permanently block the primary deliverable).
 - **2026-06-06 — FDR-null finding (PRIMARY metric adaptation).** The real
-  `mechanism_delta_progression.csv` has **0/20 PURER cells FDR-significant** at n≈32, so the
+  `mechanism_delta_progression.csv` has **0/20 PURER cells FDR-significant** at n≈20, so the
   pre-registered "≥70% sign agreement on FDR-significant effects" is vacuous. Adapted the success
   metric to a Spearman-ρ pattern-convergence test (n≥3-support cells, participant-clustered bootstrap
   CI) + a "directionally-reliable" (observed-CI-excludes-0) sign-agreement secondary, with an
@@ -340,7 +340,7 @@ model (D-C). Mechanism (M2) graph kept regardless.
   experimental branches kept.
 - **2026-06-06 — Researcher decision: drop the graph as a CLASSIFIER; focus it on MECHANISM.** Per the
   battery (probe ≥ GNN; H5 refuted) the graph is no longer pursued as a label producer/scaler; the
-  **probe stays an experimental diagnostic, not a method of record** (at n≈32 the LLM is human-level +
+  **probe stays an experimental diagnostic, not a method of record** (at n≈20 the LLM is human-level +
   affordable, so the probe's only edge — cost — doesn't yet justify the reliability hit, κ 0.365 vs
   0.537). `docs/methodology.md` updated with the methods + findings and the hypothesis implications:
   **H5 refuted** (graph-as-scaler) → repositioned in §8.5; **H2 under-identified** + the elicitation
@@ -371,7 +371,7 @@ currently suppressed unless `validation.gate_ready_for_scaling` (the κ≥0.70 l
 gate is unreachable in principle (§3), hard-gating would permanently block the PRIMARY deliverable.
 Resolution: the mechanism readout **runs regardless**, and the gate κ is reported as **trust
 context** beside it (low κ ⇒ "treat as exploratory; weight the triangulation result"). The
-non-causal, n≈32, elicitation-confound caveats ride on every figure. This honors the original
+non-causal, n≈20, elicitation-confound caveats ride on every figure. This honors the original
 gate's intent (don't let an untrustworthy model masquerade as authoritative) without letting an
 unreachable threshold veto an honest convergence test.
 
@@ -383,11 +383,11 @@ Qwen embeddings. Branch: run on the winning classifier branch (needs its model) 
 ### 9A. ⚠ FDR reality check — the pre-registered sign-agreement metric is vacuous as written
 Inspecting the REAL `data/Meta/03_analysis_data/mechanism/mechanism_delta_progression.csv`:
 **ZERO of the 20 PURER cue→transition cells are `fdr_significant`** (all fdr_q ≈ 0.50–0.96; the
-smallest within-stage permutation p is ≈0.065). At n≈32, no individual (from_stage × move) effect
+smallest within-stage permutation p is ≈0.065). At n≈20, no individual (from_stage × move) effect
 survives FDR correction — the observed mechanism is inherently a **pattern-level** signal, not an
 effect-level one. Consequence: "**≥70% sign agreement on FDR-significant effects**" is computed over
 an **empty set** → undefined. This is a finding, not a bug: it bounds every mechanism claim to
-hypothesis-generating, never causal — consistent with the n≈32 mandate.
+hypothesis-generating, never causal — consistent with the n≈20 mandate.
 
 **Adapted success metric (proposed; pending researcher confirmation).** Keep the spirit (convergence
 with the independent observed analysis), make it computable + honest:
@@ -398,7 +398,7 @@ with the independent observed analysis), make it computable + honest:
    bootstrap CI (`ci_lo,ci_hi`) excludes 0 (a within-method reliability criterion that survives the
    FDR-null, e.g. Vigilance+Reframing +[1.11,3.07], Reappraisal+Education −[1.92,0.33]). Report the
    fraction + n. (The FDR-significant subset is ALSO reported — as "n=0", explicitly.)
-3. **Headline caveat on every artifact:** no cue→transition effect is FDR-significant at n≈32; the
+3. **Headline caveat on every artifact:** no cue→transition effect is FDR-significant at n≈20; the
    triangulation tests whether two INDEPENDENT methods agree on the effect-size *rank pattern* —
    hypothesis-generating only. If ρ-CI includes 0 → `mechanism.py` leads, GNN exploratory (per goal).
 
@@ -425,7 +425,7 @@ sensitivity **inverts** the observed per-cell association. This is exactly what 
 responsiveness confound** predicts (methodology §9.4): therapists deploy PURER moves *in response to*
 participant state, so the OBSERVED association (move m co-occurs with progression) reflects
 *responsiveness*, while the COUNTERFACTUAL (swap-to-m → predicted shift) attempts to isolate
-*sensitivity*. At n≈32 the two diverge — the divergence is **evidence of the confound**, the central
+*sensitivity*. At n≈20 the two diverge — the divergence is **evidence of the confound**, the central
 reason no causal claim is admissible. The counterfactual shift is also tiny (±0.035 on a 0–4 scale):
 the participant's predicted progression is driven mostly by their own features, not the swapped cue.
 Artifacts: `06_reports/06_gnn/influence.txt`, `03_analysis_data/gnn/gnn_counterfactual_influence.csv`.
@@ -434,6 +434,6 @@ Artifacts: `06_reports/06_gnn/influence.txt`, `03_analysis_data/gnn/gnn_counterf
 blocks, 5 factors) vs subsequent participant forward movement: **all |corr| < 0.07** (max 0.068) —
 no latent therapist-cue factor predicts forward movement, consistent with the prior MiniLM run
 (<0.08). **Both GNN mechanism lenses (a counterfactual, b coupling) are weak/non-convergent at
-n≈32** → the observed `mechanism.py` Δprogression analysis is the **only** defensible mechanism
+n≈20** → the observed `mechanism.py` Δprogression analysis is the **only** defensible mechanism
 evidence (itself hypothesis-generating, 0 FDR-significant cells). The honest mission conclusion: the
 graph is a useful *exploratory* lens, not a corroborating mechanism instrument at this data scale.

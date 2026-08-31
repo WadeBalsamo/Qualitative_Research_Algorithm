@@ -960,6 +960,13 @@ def build_purer_turn_cue_units(config, segments, output_dir):
 
     ctx_window = getattr(purer_cfg, 'context_window_segments', 6)
     max_ctx_words = getattr(purer_cue, 'max_context_words', 1000)
+    # Turn-mode lesson skipping: long didactic therapist monologues (session
+    # lectures, multi-paragraph stories) are not P/U/R/E/R2 guided-inquiry moves
+    # and, as single prompts, overflow the model context.  When skip_lesson_content
+    # is on, drop any therapist turn longer than max_lesson_words (cue_block mode
+    # has its own equivalent skip; turn mode previously ignored the flag).
+    skip_lessons = getattr(purer_cue, 'skip_lesson_content', False)
+    max_lesson_words = getattr(purer_cue, 'max_lesson_words', 400)
 
     from .cue_blocks import cue_blocks_from_segments as _cue_blocks_from_segments
     sorted_segs, _specs = _cue_blocks_from_segments(
@@ -977,6 +984,9 @@ def build_purer_turn_cue_units(config, segments, output_dir):
         for _pos in range(_n):
             _gidx, _seg = _items[_pos]
             if _seg.speaker != 'therapist' or not (_seg.text or '').strip():
+                continue
+            # Skip long didactic lesson monologues (overflow + not a PURER move).
+            if skip_lessons and len((_seg.text or '').split()) > max_lesson_words:
                 continue
             _from_item = None; _from_pos = -1
             for _p in range(_pos - 1, -1, -1):
@@ -2015,14 +2025,20 @@ def stage_resegment_therapist(config, output_dir, observer=None) -> dict:
 
     Re-extracts therapist (PURER cue) segments from the raw .vtt inputs using the
     current ``extract_therapist_segments`` logic and REPLACES the therapist rows
-    in ``qra.db``'s ``segments`` table, while leaving every PARTICIPANT row
-    byte-identical (same ``segment_id`` AND ``segment_index``).  Participant rows
-    feed VAAMR and the (VAAMR-only) validation testsets, so keeping them untouched
-    preserves both the ``theme_labels`` overlay join and testset validity.
+    in ``qra.db``'s ``segments`` table.  Participant rows keep their
+    ``segment_id`` AND ``text`` byte-identical — preserving the ``theme_labels``
+    overlay join (keyed by ``segment_id``) and testset validity — so VAAMR and the
+    (VAAMR-only) validation testsets are unaffected.
 
-    New therapist segments are assigned ``segment_index`` values ABOVE the max
-    existing index in the session (collision-free; participant indices unchanged);
-    cue-block construction re-derives order from ``start_time_ms``.
+    Participant and new therapist rows are then re-interleaved by
+    ``start_time_ms`` and assigned a CHRONOLOGICAL ``segment_index`` (replacing the
+    older "append therapist indices above the participant max", which left
+    ``segment_index`` non-chronological).  Only ``segment_index`` changes on
+    participant rows; their identity/text/overlay joins are untouched.
+
+    NOTE: this mutates ``segment_index`` on existing rows, so it must only be run
+    against NEW/unfrozen data (per the cohort 4+ guardrail) — never re-run on the
+    frozen cohort 1-3 sessions.
 
     Returns ``{'sessions', 'old_therapist', 'new_therapist', 'participant_preserved'}``.
     """
@@ -2069,8 +2085,6 @@ def stage_resegment_therapist(config, output_dir, observer=None) -> dict:
         part_segs = [s for s in existing if s.speaker == 'participant']
         old_th_ids = [s.segment_id for s in existing if s.speaker == 'therapist']
         old_th_n = len(old_th_ids)
-        max_idx = max((s.segment_index for s in existing
-                       if s.segment_index is not None), default=-1)
 
         # Metadata: pull trial_id from an existing row; derive the rest from the id.
         _trial_id = next((s.trial_id for s in existing if s.trial_id), None) or config.trial_id
@@ -2089,10 +2103,7 @@ def stage_resegment_therapist(config, output_dir, observer=None) -> dict:
             session_data['sentences'], metadata, max_gap_seconds=_th_gap,
         )
 
-        # Assign collision-free, time-ordered indices above the session's max.
         new_th_sorted = sorted(new_th, key=lambda s: s.start_time_ms)
-        for k, seg in enumerate(new_th_sorted):
-            seg.segment_index = max_idx + 1 + k
 
         # --- PHI text anonymization (MANDATORY) — mirror stage_ingest ----------
         if new_th_sorted and getattr(config, 'anonymize_transcript_text', True):
@@ -2107,6 +2118,17 @@ def stage_resegment_therapist(config, output_dir, observer=None) -> dict:
                 confidence_threshold=getattr(config, 'anonymize_text_confidence_threshold', 0.6),
                 model_name=getattr(config, 'anonymize_text_model', 'obi/deid_roberta_i2b2'),
             )
+
+        # --- Chronological segment_index across the WHOLE session --------------
+        # Re-interleave participant + new therapist rows by start_time_ms and
+        # assign segment_index in time order, replacing the old "therapist
+        # indices appended above the participant max" (which left segment_index
+        # non-chronological).  Participant rows keep their segment_id and text
+        # byte-identical; only their segment_index is re-derived.
+        combined = sorted(part_segs + list(new_th_sorted),
+                          key=lambda s: s.start_time_ms)
+        for k, seg in enumerate(combined):
+            seg.segment_index = k
 
         # --- Replace therapist rows in one atomic transaction -----------------
         ts = datetime.datetime.utcnow().isoformat() + 'Z'
@@ -2129,6 +2151,13 @@ def stage_resegment_therapist(config, output_dir, observer=None) -> dict:
                 rows = [segments_io._seg_insert_row(seg, params_hash, ts)
                         for seg in new_th_sorted]
                 conn.executemany(segments_io._INSERT_SEGMENT_SQL, rows)
+            # Re-index the preserved participant rows chronologically (id + text
+            # untouched; only segment_index changes).
+            for seg in part_segs:
+                conn.execute(
+                    "UPDATE segments SET segment_index=? WHERE segment_id=?",
+                    (seg.segment_index, seg.segment_id),
+                )
             conn.execute(
                 "UPDATE segments SET total_segments_in_session=? WHERE session_id=?",
                 (new_total, sid),

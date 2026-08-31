@@ -128,6 +128,7 @@ class HarnessSpec:
     backend: str = 'lmstudio'
     base_url: str = 'http://10.0.0.58:1234/v1'
     model: str = 'nvidia/nemotron-3-super'
+    no_reasoning: bool = False  # Disable chain-of-thought tokens for thinking models
 
     def to_client(self) -> LLMClient:
         """Build an LLMClient from this spec."""
@@ -136,6 +137,7 @@ class HarnessSpec:
             model=self.model,
             lmstudio_base_url=self.base_url,
             models=self.per_run_models or [self.model],
+            no_reasoning=self.no_reasoning,
         )
         return LLMClient(cfg)
 
@@ -225,6 +227,7 @@ def run_llm_arm(
         per_run_models=list(harness.per_run_models) if harness.per_run_models else [],
         evidence_secondary_weight=harness.secondary_weight,
         evidence_presence_threshold=harness.presence_threshold,
+        no_reasoning=harness.no_reasoning,
         # Write checkpoints to a temp location; callers may override output_dir later.
         output_dir=str(Path('/tmp') / 'qra_cv_harness'),
         save_interval=len(items) + 1,   # disable mid-run saves for CV items

@@ -287,6 +287,7 @@ def classify_purer_cue_units(
         ollama_host=getattr(config, 'ollama_host', '0.0.0.0'),
         ollama_port=getattr(config, 'ollama_port', 11434),
         lmstudio_base_url=getattr(config, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+        no_reasoning=getattr(config, 'no_reasoning', False),
         process_logger=process_logger,
     )
     client = LLMClient(llm_config)
@@ -659,6 +660,7 @@ def classify_segments_zero_shot(
         ollama_host=getattr(config, 'ollama_host', '0.0.0.0'),
         ollama_port=getattr(config, 'ollama_port', 11434),
         lmstudio_base_url=getattr(config, 'lmstudio_base_url', 'http://127.0.0.1:1234/v1'),
+        no_reasoning=getattr(config, 'no_reasoning', False),
         process_logger=process_logger,
     )
     client = LLMClient(llm_config)

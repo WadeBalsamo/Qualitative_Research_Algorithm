@@ -258,6 +258,22 @@ METHODS = OrderedDict([
       "experiments/vote_policy_comparison/RESULTS.md). The selection decision and κ "
       "snapshot are persisted under the classification manifest key "
       "'run_selection:<overlay>' for reproducibility.")),
+    ('case_selection',
+     ("Per-cohort case-study selection (deterministic)",
+      "One participant per cohort is selected by a pre-specified rule with no free "
+      "choices: cohort is the participant's modal session-id prefix (robust to missing "
+      "cohort_id; dual-cohort participants are flagged); eligibility requires >=4 attended "
+      "sessions with >=1 coded utterance and >=10 coded utterances; Tier A ('climber') "
+      "requires Kendall tau(session_number, final_label) > 0 over the participant's coded "
+      "utterances and ranks by tau, then by early->late shift (drop in Vigilance/Avoidance "
+      "share plus rise in Metacognition/Reappraisal share between the first two and last "
+      "two attended sessions), then n_coded, then participant_id; Tier B ('consolidator') "
+      "drops the tau requirement and ranks by shift; Tier C falls back to the "
+      "best-documented participant with an explicit caveat. Early/late contrasts use "
+      "two-sided Fisher exact tests on utterance counts. Cases are the upper tail of the "
+      "cohort distribution chosen for ILLUSTRATION of the pre-registered outcome linkage "
+      "(H4) - selection is not an efficacy analysis, and per-case statistics ignore "
+      "within-participant clustering.")),
 ])
 
 

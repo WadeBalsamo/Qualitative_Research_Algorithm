@@ -81,11 +81,15 @@ def _isnan(v) -> bool:
 # Cue-block triple dataset
 # ---------------------------------------------------------------------------
 
-def build_block_dataset(df_all, seg_emb, n_stages: int = N_STAGES) -> Optional[dict]:
+def build_block_dataset(df_all, seg_emb, n_stages: int = N_STAGES,
+                        require_same_participant: bool = False) -> Optional[dict]:
     """Assemble FROM→CUE→TO triples with FROM/TO soft mixtures + raw pooled cue embeddings.
 
     Keeps only mediated blocks (non-empty therapist cue) whose FROM and TO are real-stage
     participant turns. Returns aligned numpy arrays + per-block metadata, or None if too few.
+
+    ``require_same_participant`` (driven by MechanismModelConfig.cue_within_participant_only,
+    default False = dense/cross-participant) restricts triples to within-participant transitions.
     """
     import numpy as np
     from .cue_features import build_cue_blocks_with_segments, cue_block_embeddings
@@ -104,7 +108,8 @@ def build_block_dataset(df_all, seg_emb, n_stages: int = N_STAGES) -> Optional[d
             except (TypeError, ValueError):
                 pass
 
-    blocks = build_cue_blocks_with_segments(df_all)
+    blocks = build_cue_blocks_with_segments(
+        df_all, require_same_participant=require_same_participant)
     rows, cue_X = cue_block_embeddings(blocks, seg_emb)
     if cue_X is None or len(rows) == 0:
         return None
@@ -434,9 +439,17 @@ def write_transition_csv(cf_result: dict, output_dir: str) -> List[str]:
 
 
 def write_transition_report(cv: dict, cf_result: dict, tri: Optional[dict],
-                            output_dir: str) -> str:
+                            output_dir: str, within_participant: bool = False) -> str:
     W = 78
     L = ["=" * W, "DYADIC FROM→CUE→TO TRANSITION MODEL (mechanism instrument)", "=" * W, ""]
+    if within_participant:
+        L.append("UNIT — WITHIN-PARTICIPANT: FROM and TO are the SAME participant (a real within-")
+        L.append("person transition; therapist cue in the gap). Valid-but-sparse at pilot n.")
+    else:
+        L.append("UNIT — CROSS-PARTICIPANT / DISCOURSE-LEVEL (default): FROM→TO pairs globally-")
+        L.append("consecutive participant turns, often DIFFERENT people in these group sessions —")
+        L.append("a discourse-level association, DIRECTIONAL, not a within-person change.")
+    L.append("")
     L.append("HYPOTHESIS-GENERATING. n≈20 participants, observational; sensitivity analysis of a")
     L.append("learned model, NOT causation (elicitation confound §9.4). A small regressor predicts")
     L.append("the TO participant's VAAMR mixture from (FROM_mixture, FROM_stage, pooled cue")
@@ -517,8 +530,34 @@ def write_transition_report(cv: dict, cf_result: dict, tri: Optional[dict],
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+def _write_insufficient_transition_report(n_med: int, output_dir: str, insuff,
+                                          within_participant: bool = False) -> str:
+    """Write transition_model.txt with an honest small-n insufficiency banner."""
+    W = 78
+    L = ["=" * W, "DYADIC FROM→CUE→TO TRANSITION MODEL (mechanism instrument)", "=" * W, ""]
+    if within_participant:
+        L.append("UNIT — WITHIN-PARTICIPANT: cue-block triples pair a participant's turn (FROM),")
+        L.append("the therapist cue, and THAT SAME participant's next own turn (TO). Cross-")
+        L.append("participant pairs are excluded — the transition is only meaningful within one")
+        L.append("person; at pilot n these triples are sparse.")
+        L.append("")
+        L.append(insuff(n_med, 'the FROM→CUE→TO transition model', width=W))
+    else:
+        L.append("Too few mediated cue-block triples to fit the transition model at this scale")
+        L.append(f"(n={n_med}). Deferred to higher N; re-run via `qra analyze`.")
+    L.append("")
+    L.append("=" * W)
+    rep = _paths.reports_gnn_dir(output_dir)
+    os.makedirs(rep, exist_ok=True)
+    path = os.path.join(rep, 'transition_model.txt')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write("\n".join(L))
+    return path
+
+
 def run_transition_model(df_all, output_dir: str, config=None, *,
-                         seg_emb=None, verbose: bool = False) -> dict:
+                         seg_emb=None, verbose: bool = False,
+                         require_same_participant: bool = False) -> dict:
     """Build the dataset → CV earns-its-place → counterfactual → triangulate → report/CSV.
 
     Returns {status, files_written, cv, counterfactual, triangulation}. Degrades gracefully.
@@ -532,9 +571,20 @@ def run_transition_model(df_all, output_dir: str, config=None, *,
         return {'status': 'skipped: Qwen embeddings unavailable', 'files_written': []}
 
     seed = int(getattr(config, 'seed', 42)) if config is not None else 42
-    ds = build_block_dataset(df_all, seg_emb, n_stages=N_STAGES)
+    ds = build_block_dataset(df_all, seg_emb, n_stages=N_STAGES,
+                             require_same_participant=require_same_participant)
     if ds is None:
-        return {'status': 'skipped: too few cue-block triples', 'files_written': []}
+        # Honest small-n degrade: too few cue-block triples to fit the transition
+        # model. Under the within-participant unit the count collapses at pilot n;
+        # write a clear insufficiency report instead of skipping silently.
+        from .cue_features import build_cue_blocks_with_segments as _bcb
+        from process.cue_blocks import insufficient_blocks_banner as _insuff
+        n_med = sum(1 for b in _bcb(df_all, require_same_participant=require_same_participant)
+                    if b.get('therapist_seg_ids'))
+        path = _write_insufficient_transition_report(
+            n_med, output_dir, _insuff, within_participant=require_same_participant)
+        return {'status': 'skipped: too few cue-block triples',
+                'files_written': [path] if path else []}
 
     cue_dim = int(getattr(config, 'transition_cue_dim', 32)) if config is not None else 32
     cue_proj, _pca, _Cn = _project_cue(ds['C'], cue_dim, seed=seed)
@@ -548,7 +598,8 @@ def run_transition_model(df_all, output_dir: str, config=None, *,
 
     files = []
     files.extend(write_transition_csv(cf, output_dir))
-    files.append(write_transition_report(cv, cf, tri, output_dir))
+    files.append(write_transition_report(cv, cf, tri, output_dir,
+                                         within_participant=require_same_participant))
     # ds + cue_proj are returned so WS3 (confound localization) can reuse the trained
     # counterfactual without retraining the model.
     return {'status': 'ok', 'files_written': files, 'cv': cv,

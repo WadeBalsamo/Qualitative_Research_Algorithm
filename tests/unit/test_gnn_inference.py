@@ -251,7 +251,8 @@ class TestBuildCueBlocksWithSegments(unittest.TestCase):
         result = self._fn(df)
         expected_keys = {'session_id', 'from_seg_id', 'to_seg_id',
                          'from_stage', 'to_stage', 'transition_type',
-                         'therapist_seg_ids'}
+                         'therapist_seg_ids',
+                         'participant_id', 'from_participant', 'to_participant'}
         for b in result:
             self.assertEqual(set(b.keys()), expected_keys,
                              f"Block has unexpected keys: {set(b.keys())}")

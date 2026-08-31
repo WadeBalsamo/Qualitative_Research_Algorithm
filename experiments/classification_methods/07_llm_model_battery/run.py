@@ -221,12 +221,30 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help='Comma-separated model ids to use instead of discovered/fallback list.',
     )
+    p.add_argument(
+        '--no-reasoning',
+        action='store_true',
+        default=False,
+        help=(
+            'Disable chain-of-thought tokens for thinking models '
+            '(sends include_reasoning=false to LM Studio).  '
+            'Use this for Qwen3, Gemma4, Nemotron-Super/Nano (non-4b), '
+            'and other reasoning models to get fast, direct answers.'
+        ),
+    )
     return p
 
 
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    # Graceful stop sentinel: lets an external orchestrator end a multi-model
+    # sweep cleanly (without SIGKILL) — if STOP_BATTERY exists in the cwd or
+    # beside this script, exit immediately so the next sweep arm is a no-op.
+    if pathlib.Path('STOP_BATTERY').exists() or (_HERE / 'STOP_BATTERY').exists():
+        print('STOP_BATTERY present — skipping this battery arm.', file=sys.stderr)
+        return
 
     out_dir = _HERE
     results_csv = out_dir / 'results.csv'
@@ -299,6 +317,7 @@ def main() -> None:
             model=model_id,
             base_url=args.base_url,
             backend='lmstudio',
+            no_reasoning=args.no_reasoning,
         )
 
         # Real LLM calls happen here — not invoked during --dry-run

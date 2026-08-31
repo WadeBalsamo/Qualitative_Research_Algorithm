@@ -60,7 +60,7 @@ nonlinear (MLP/GBM/SVC-RBF all 0.13–0.23 < linear, S4), calibration (0.13–0.
 (collapses, S5b), soft-KL distillation (trades LLM for human, ns, S2), rater-weighting by human
 agreement (hurts, S6b). The one consistent bottleneck across every arm: the **two rare stages
 (Avoidance, Metacognition) stay stuck** (recall ~.28–.35) — the residual ceiling is rare-class *data*
-(n≈32 participants), not the model.
+(n≈20 participants), not the model.
 
 ## Context lever (S1) — local test NEGATIVE; qwen3 concat running
 Tested locally first (same MiniLM embedder, isolated vs +context, so the contrast is clean):
@@ -72,7 +72,7 @@ Tested locally first (same MiniLM embedder, isolated vs +context, so the contras
   worse still (0.192/0.355). Context as embedding-concatenation **hurts** at both 384-d and 4096-d.
 - **Conclusion:** the LLM's context edge is *reasoning over* context, not context *presence* in the
   feature vector — a linear probe cannot cheaply distil it; concatenated context dims are noise the
-  probe can't exploit at n≈32 participants.
+  probe can't exploit at n≈20 participants.
 
 ---
 
@@ -106,7 +106,7 @@ inference — cached embeddings + 3 tiny probes.
 - **The binding constraint is data, not modelling:** gains concentrate in the frequent stages; the two
   **rare stages (Avoidance, Metacognition) stay stuck** (recall ≈.28–.35) across every arm, and the
   Qwen embedding's VAAMR separability is shallow. Fidelity should rise as labeled participants accrue
-  (n≈32 now) — the scaler is **re-runnable as the corpus grows** via the frozen harness (seed 42).
+  (n≈20 now) — the scaler is **re-runnable as the corpus grows** via the frozen harness (seed 42).
 - **Do not** add context-concatenation, nonlinearity, calibration, ordinal decoding, or No-code/​
   per-rater stacking — all characterized here as flat-to-harmful at this n.
 
@@ -125,4 +125,4 @@ Reusable code (uncommitted, in subagent worktrees): `rater_distill.py` (S6), `ru
   preceding-turn context the isolated-segment probe lacks.
 - **Wave 2** (after S1): stack the frontier — context features ⊕ S5 two-stage gate ⊕ S6 rater-ensemble
   — and read whether the combination clears the bar (LLM κ≥.45 or human κ≥.50, CI-aware), or report the
-  honest n≈32-participant ceiling.
+  honest n≈20-participant ceiling.

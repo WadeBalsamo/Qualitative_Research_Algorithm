@@ -1,8 +1,8 @@
 # GNN Discovery + Mechanism Rebuild — Results & Promotion Guide
 
 **Date:** 2026-06-07 · **Worktree:** `qra-ws-gnn` (branch `gnn-exp/ws1-h6`), **no commits** — review
-the diff and promote. **Corpus:** `data/Meta` (Move-MORE Cohorts 1–2, n≈32; Qwen3-8B cache). Every
-result is **hypothesis-generating, never causal** (n≈32 observational + elicitation confound §9.4).
+the diff and promote. **Corpus:** `data/Meta` (Move-MORE Cohorts 1–2, n≈20; Qwen3-8B cache). Every
+result is **hypothesis-generating, never causal** (n≈20 observational + elicitation confound §9.4).
 
 ## What changed (architecture)
 
@@ -36,7 +36,7 @@ Metacognition below base rate) → similarity neighbours are stage-mixed. Commun
 
 **WS-T — dyadic FROM→CUE→TO transition model** (`06_gnn/transition_model.txt`): the mechanism rebuild.
 - **Earns-its-place: NO** — the cue does not improve held-out TO prediction over a FROM-only baseline
-  (Δ KL +0.37) → the transition is under-identified at n≈32 (consistent with H2). `mechanism.py` leads.
+  (Δ KL +0.37) → the transition is under-identified at n≈20 (consistent with H2). `mechanism.py` leads.
 - **Triangulation: POSITIVE** — the learned counterfactual ranks with observed Δprogression at
   Spearman **ρ ≈ +0.34**, versus the retired classifier-counterfactual's **−0.13**. The properly
   specified model (no kNN, FROM-stage-conditioned) aligns where the old one inverted. Under-powered
@@ -70,7 +70,7 @@ transition model's `transition_per_move.csv` (replacing the retired `influence.p
 **gated on the transition instrument having run, not on the classifier gate** (`gate_passed` now
 governs only the `gnn_consensus` provenance tier). It is still OFF by default
 (`augmentation_enabled=False`) and **retained only if the C4 held-out ablation clears
-`augmentation_min_gain`** — and because the transition cue is under-identified at n≈32, it honestly
+`augmentation_min_gain`** — and because the transition cue is under-identified at n≈20, it honestly
 tends to be stripped. Tests updated (`test_mindfulbert_dataset.py`).
 
 ## How to promote

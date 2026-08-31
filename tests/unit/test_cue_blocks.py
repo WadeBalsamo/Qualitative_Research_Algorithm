@@ -505,5 +505,109 @@ class TestGenericBuilder(unittest.TestCase):
         self.assertEqual(sorted_items[1].segment_id, 'p2')
 
 
+# ---------------------------------------------------------------------------
+# Same-participant constraint (use B — within-participant progression attribution)
+# ---------------------------------------------------------------------------
+
+class TestRequireSameParticipant(unittest.TestCase):
+    """
+    Group-therapy bug: consecutive participant turns are frequently DIFFERENT
+    people, so an unconstrained Δprogression (to_stage - from_stage) is computed
+    across persons. ``require_same_participant=True`` must restrict cue blocks to
+    WITHIN-participant transitions. Default (False) must leave use (A) — PURER
+    move labeling / consecutive-pair behavior — completely unchanged.
+    """
+
+    def _pseg(self, sid, participant, start, end, stage, speaker='participant'):
+        return Segment(
+            segment_id=sid, session_id='s1', speaker=speaker,
+            start_time_ms=start, end_time_ms=end,
+            primary_stage=stage, participant_id=participant, text='x',
+        )
+
+    def test_default_pairs_consecutive_regardless_of_participant(self):
+        # Use (A) unchanged: FROM(X) -> TO(Y) is STILL emitted by default.
+        segs = [
+            self._pseg('p1', 'X', 0, 1000, 0),
+            self._pseg('t1', '', 1000, 2000, None, speaker='therapist'),
+            self._pseg('p2', 'Y', 2000, 3000, 2),
+        ]
+        _, specs = cue_blocks_from_segments(segs)            # default False
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].from_participant, 'X')
+        self.assertEqual(specs[0].to_participant, 'Y')
+        self.assertEqual(len(specs[0].therapist_items), 1)
+
+    def test_same_participant_excludes_cross_participant_pair(self):
+        segs = [
+            self._pseg('p1', 'X', 0, 1000, 0),
+            self._pseg('t1', '', 1000, 2000, None, speaker='therapist'),
+            self._pseg('p2', 'Y', 2000, 3000, 2),
+        ]
+        _, specs = cue_blocks_from_segments(segs, require_same_participant=True)
+        self.assertEqual(specs, [])  # FROM(X)->TO(Y) excluded
+
+    def test_same_participant_includes_within_participant_pair(self):
+        # FROM(X) -> TO(X) with therapist speech strictly between IS included.
+        segs = [
+            self._pseg('p1', 'X', 0, 1000, 0),
+            self._pseg('t1', '', 1000, 2000, None, speaker='therapist'),
+            self._pseg('p2', 'X', 2000, 3000, 2),
+        ]
+        _, specs = cue_blocks_from_segments(segs, require_same_participant=True)
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].from_participant, 'X')
+        self.assertEqual(specs[0].to_participant, 'X')
+        self.assertEqual(specs[0].from_stage, 0)
+        self.assertEqual(specs[0].to_stage, 2)
+        self.assertEqual([t.segment_id for t in specs[0].therapist_items], ['t1'])
+
+    def test_next_own_turn_pairs_across_intervening_participant(self):
+        # Sequence X, Y, X (all stage-bearing). Default (use A) pairs globally
+        # consecutive turns: (X,Y),(Y,X). With same-participant True we use the
+        # canonical per-participant unit: X's turn -> X's NEXT OWN turn, so the
+        # X->X transition IS captured even though Y spoke between. The cue is only
+        # the therapist speech in the gap (Y's participant turn is NOT the cue).
+        segs = [
+            self._pseg('p1', 'X', 0, 1000, 0),
+            self._pseg('t1', '', 1000, 1500, None, speaker='therapist'),
+            self._pseg('p2', 'Y', 2000, 3000, 1),
+            self._pseg('t2', '', 3000, 3500, None, speaker='therapist'),
+            self._pseg('p3', 'X', 4000, 5000, 3),
+        ]
+        _, default_specs = cue_blocks_from_segments(segs)
+        self.assertEqual(len(default_specs), 2)  # use (A): both consecutive pairs
+        _, same_specs = cue_blocks_from_segments(segs, require_same_participant=True)
+        self.assertEqual(len(same_specs), 1)
+        spec = same_specs[0]
+        self.assertEqual((spec.from_participant, spec.to_participant), ('X', 'X'))
+        self.assertEqual((spec.from_stage, spec.to_stage), (0, 3))
+        # cue = therapist items in the gap only; Y (participant) excluded
+        self.assertEqual([t.segment_id for t in spec.therapist_items], ['t1', 't2'])
+
+    def test_records_wrapper_threads_flag(self):
+        recs = [
+            {'segment_id': 'p1', 'session_id': 's1', 'speaker': 'participant',
+             'start_time_ms': 0, 'end_time_ms': 1000, 'final_label': 0, 'participant_id': 'X'},
+            {'segment_id': 't1', 'session_id': 's1', 'speaker': 'therapist',
+             'start_time_ms': 1000, 'end_time_ms': 2000, 'final_label': None, 'participant_id': ''},
+            {'segment_id': 'p2', 'session_id': 's1', 'speaker': 'participant',
+             'start_time_ms': 2000, 'end_time_ms': 3000, 'final_label': 2, 'participant_id': 'Y'},
+        ]
+        self.assertEqual(len(cue_blocks_from_records(recs)), 1)  # default A
+        self.assertEqual(
+            cue_blocks_from_records(recs, require_same_participant=True), []
+        )
+
+    def test_require_same_participant_without_accessor_raises(self):
+        with self.assertRaises(ValueError):
+            build_cue_blocks(
+                [],
+                get_session=lambda x: 's', get_speaker=lambda x: 'participant',
+                get_start=lambda x: 0, get_end=lambda x: 1, get_stage=lambda x: 0,
+                get_id=lambda x: 'i', require_same_participant=True,
+            )
+
+
 if __name__ == '__main__':
     unittest.main()

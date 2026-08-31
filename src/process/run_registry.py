@@ -484,3 +484,20 @@ def remap_ballot_segment_ids(run_dir: str, segid_map: Dict[str, str]) -> int:
             [vals for _o, _s, _r, vals in affected],
         )
     return len(affected)
+
+
+def delete_ballots_for_run(run_dir: str, overlay: str, run_id: int) -> int:
+    """Delete all ``label_ballots`` rows for one (overlay, run_id).
+
+    Used when reviving an archived run on ``--fresh`` so the revived lineage
+    starts from a clean slate (no stale ballots).  Returns the number of rows
+    deleted.  No-op (0) when the store is absent.
+    """
+    if not db.db_exists(run_dir):
+        return 0
+    with db.open_db(run_dir) as conn:
+        cur = conn.execute(
+            "DELETE FROM label_ballots WHERE overlay = ? AND run_id = ?",
+            (overlay, run_id),
+        )
+        return cur.rowcount

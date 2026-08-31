@@ -4,12 +4,12 @@
 > *moderated by the participant's FROM stage* (methodology §7.6 / H2 — an **interaction**)? The shipped
 > estimator (`analysis/mechanism.py:_mixed_effects_delta` → `delta_prog ~ C(dominant_purer)`) fits a move
 > **main effect only**, Gaussian, no interaction. This campaign fits the interaction with the right tools
-> and asks whether it earns its place at n≈32.
+> and asks whether it earns its place at n≈20.
 >
 > **Apparatus.** Move-MORE Cohorts 1–2 (`./data/Meta`), 186 FROM→CUE→TO triples, 20 participants, 160 with a
 > defined CUE move. Canonical cue blocks (`process/cue_blocks.py`, `stage_key='final_label'`). Outcome =
 > next participant VAAMR stage (ordinal 0–4) and signed Δprogression-coordinate. Participant-grouped
-> `StratifiedGroupKFold` (seed 42); participant-cluster bootstrap CIs. **Observational, n≈32 —
+> `StratifiedGroupKFold` (seed 42); participant-cluster bootstrap CIs. **Observational, n≈20 —
 > hypothesis-generating, never causal.**
 
 ---
@@ -24,7 +24,7 @@
 | **E2 sensitivity** | Per-cell **E-values**: Avoidance×Education **4.23**, AttnReg×Reinforcement **3.81**, Metacog×Education **3.49** — a confounder would need an RR this large with *both* move-selection and Δprogression to explain the cell away. |
 
 **Verdict.** The mechanism instruments are now *correct*. The §7.6 interaction is **under-identified at
-n≈32** (not a positive effect), but it is now **estimated with honest bounds** (Bayesian) and a **formal
+n≈20** (not a positive effect), but it is now **estimated with honest bounds** (Bayesian) and a **formal
 confound-sensitivity floor** (E-values), rather than tested with an underpowered FDR table, a singular
 Gaussian fit, or a neural net that doesn't earn its place. The PURER-move *main effect* carries real
 held-out signal — notably more than the GNN transition model's content-embedding cue, which never beat
@@ -50,7 +50,7 @@ generalizes worse than the additive model. Contrast: the GNN transition MLP (con
 - **Ordinal `OrderedModel` LR test** (additive vs interaction): LR=15.0, df=16, **p=0.52** — interaction adds
   nothing in-sample.
 - **Gaussian mixed** `delta_prog ~ C(from_stage)*C(move) + (1|participant)`: **singular matrix** — the
-  interaction design is rank-deficient at n≈32 (cannot be fit by MLE). *This is the motivation for E1c.*
+  interaction design is rank-deficient at n≈20 (cannot be fit by MLE). *This is the motivation for E1c.*
 - **Shipped per-cell FDR** (`_agg_delta` reproduction): 20 cells, **0 FDR-significant** — reproduces the
   manuscript's "0 FDR-significant cells".
 
@@ -97,7 +97,7 @@ consequential honesty flags (E5, E6).**
 | **E9** H1 tested | **Group slope +0.097 cluster-bootstrap CI [0.007, 0.197] (excludes 0); random-participant +0.107, p=0.037.** Mann–Kendall τ=0.5, p=0.108 (NS — honest). **Barrier: 17/20 (85%) cross Avoidance→AttnReg, median first-crossing session 2; endpoint progression crossed 2.74 vs never 0.86.** | **Positive.** H1's progression *and* the avoidance barrier as descriptively rate-limiting are supported (flagged n=20). |
 | **E6** H6 robustness | On **MiniLM-384** the probe−content-similarity Δκ **SIGN-FLIPS**: 5-class −0.048 (CI incl. 0), 6-class **−0.091 (CI excludes 0)** — opposite the shipped **Qwen** result (probe≫content, +0.17/+0.21). | **Honesty flag, not refutation.** Attributable to (a) MiniLM carrying less linearly-separable stage signal (so nonparametric kNN beats a linear probe = capacity, not topicality) and (b) the 6-class "No code" being strongly content-clustered (kNN homophily 0.30→0.36 — answers Q27/Q28: "No code" loads the *content* model). **H6's embedding-generality is UNCONFIRMED:** the faithful test is `src/gnn_layer/discriminant.py` (probe vs Correct-&-Smooth) re-run on Qwen *and* MiniLM — the Qwen endpoint (`http://10.0.0.58:1234`) failed to load at runtime ("Operation canceled"), so Q8 remains open. |
 
-**Cross-cutting verdict.** The campaign converges on "right instruments, honestly under-identified at n≈32" —
+**Cross-cutting verdict.** The campaign converges on "right instruments, honestly under-identified at n≈20" —
 the planning doc's predicted signature (plan since merged into `docs/ROADMAP.md`). Directional positives: **E3** (process ≫ content cue) and **E9** (group
 slope CI excludes 0 + barrier rate-limiting). Honesty flags the manuscript must carry: **E5** (PURER ranking
 fragile → gate on validation) and **E6** (H6 not yet shown encoder-robust — run the faithful two-encoder

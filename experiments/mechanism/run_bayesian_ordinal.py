@@ -10,7 +10,7 @@ design frame the main (frequentist) experiment exported to `_design.csv`. This i
 ALSO the production recommendation: the Bayesian estimator is opt-in and isolated;
 the in-process default is the frequentist ordinal+mixed interaction model.
 
-THE POINT: at n≈32 the frequentist Gaussian FROM×move interaction design is
+THE POINT: at n≈20 the frequentist Gaussian FROM×move interaction design is
 SINGULAR (un-fittable) and the ordinal LR test is non-significant (p≈0.52). The
 Bayesian cumulative-logit with weakly-informative priors + partial pooling STILL
 returns finite, regularized interaction estimates with honest credible intervals —
@@ -91,7 +91,7 @@ def main():
 
     print("\n--- RESULT ---")
     print(f"  interaction terms estimated: {len(rows)}  (frequentist Gaussian was SINGULAR — could not fit these)")
-    print(f"  interaction 95% intervals excluding 0: {len(excl)}  (expected ~0 at n≈32 = honest under-identification)")
+    print(f"  interaction 95% intervals excluding 0: {len(excl)}  (expected ~0 at n≈20 = honest under-identification)")
     print(f"  max R-hat: {maxrhat:.3f}   divergences: {ndiv}")
     inter = rows
     if len(excl):

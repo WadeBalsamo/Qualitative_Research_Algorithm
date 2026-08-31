@@ -59,6 +59,19 @@ def write_cue_motifs(motif_stats: dict, purity: dict, exemplars: dict, output_di
         })
     path = os.path.join(d, 'cue_motifs.csv')
     pd.DataFrame(rows).to_csv(path, index=False)
+    exem_rows = []
+    for m, blocks in sorted(exemplars.items()):
+        for rank, b in enumerate(blocks):
+            exem_rows.append({
+                'motif_id': m, 'rank': rank,
+                'from_seg_id': b['from_seg_id'], 'to_seg_id': b['to_seg_id'],
+                'session_id': b['session_id'],
+                'from_stage': b['from_stage'], 'to_stage': b['to_stage'],
+            })
+    pd.DataFrame(exem_rows, columns=[
+        'motif_id', 'rank', 'from_seg_id', 'to_seg_id',
+        'session_id', 'from_stage', 'to_stage',
+    ]).to_csv(os.path.join(d, 'cue_motif_exemplars.csv'), index=False)
     return path
 
 

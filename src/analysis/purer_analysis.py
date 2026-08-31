@@ -129,7 +129,8 @@ class CueBlock:
 
 # ── Core computation ───────────────────────────────────────────────────────
 
-def compute_cue_block_purer_profiles(df_all: pd.DataFrame) -> List[CueBlock]:
+def compute_cue_block_purer_profiles(df_all: pd.DataFrame,
+                                     within_participant_only: bool = False) -> List[CueBlock]:
     """
     Build CueBlock objects from a full master_segments DataFrame.
 
@@ -150,9 +151,12 @@ def compute_cue_block_purer_profiles(df_all: pd.DataFrame) -> List[CueBlock]:
     Returns
     -------
     List[CueBlock]
-        One CueBlock per consecutive participant-to-participant pair in each
-        session that both have non-null final_label values.  Empty blocks
-        (no therapist speech) ARE included — they are needed for the
+        One CueBlock per participant transition in each session.  When
+        ``within_participant_only`` is False (default), pairs are globally-
+        consecutive participant turns (DENSE, cross-participant — discourse-level
+        association).  When True, only WITHIN-participant transitions (FROM and TO
+        the same participant, therapist speech in the gap) are emitted (WS2).
+        Empty blocks (no therapist speech) ARE included — needed for the
         empty-cue-rate analysis.
     """
     required = {'session_id', 'speaker', 'final_label', 'start_time_ms', 'end_time_ms'}
@@ -162,9 +166,16 @@ def compute_cue_block_purer_profiles(df_all: pd.DataFrame) -> List[CueBlock]:
 
     has_purer = 'purer_primary' in df_all.columns
 
+    # USE (B): the PURER→VAAMR marginal lift, transition profiles and empty-cue
+    # rates attribute the NEXT participant stage to the cue. Driven by
+    # MechanismModelConfig.cue_within_participant_only (default False = dense /
+    # cross-participant discourse-level association). When True, FROM and TO must
+    # be the SAME participant (a real within-person transition); in this group-
+    # therapy corpus consecutive participant turns are frequently different people.
     from process.cue_blocks import cue_blocks_from_records as _cue_blocks_from_records
     specs = _cue_blocks_from_records(
-        df_all.to_dict('records'), stage_key='final_label', require_stage=True
+        df_all.to_dict('records'), stage_key='final_label', require_stage=True,
+        require_same_participant=within_participant_only,
     )
 
     cue_blocks: List[CueBlock] = []
@@ -381,6 +392,7 @@ def generate_purer_report(
     output_dir: str,
     framework=None,
     df_all: Optional[pd.DataFrame] = None,
+    within_participant_only: bool = False,
 ) -> Optional[str]:
     """
     Write purer.txt to 06_reports/03_mechanism/.
@@ -512,6 +524,33 @@ def generate_purer_report(
             'run_purer_labeler=True to enable PURER classification.'
         )
     lines.append('')
+    if within_participant_only:
+        lines.append(
+            'UNIT — WITHIN-PARTICIPANT: cue blocks pair a participant\'s turn with '
+            'that SAME participant\'s next own turn (therapist cue in the gap). '
+            'Consecutive turns of DIFFERENT participants are excluded — the lift '
+            'is a within-person association.'
+        )
+        lines.append('')
+        # Small-n honesty: below threshold the within-participant lift / transition
+        # tables are not estimable — flag prominently (numbers kept for audit only).
+        from process.cue_blocks import (
+            MIN_SAME_PARTICIPANT_BLOCKS as _MINB,
+            insufficient_blocks_banner as _insuff,
+        )
+        if labeled_blocks < _MINB:
+            lines.append(_insuff(labeled_blocks, 'within-participant PURER→VAAMR lift', width=W))
+            lines.append('')
+    else:
+        lines.append(
+            'UNIT — CROSS-PARTICIPANT / DISCOURSE-LEVEL (default): cue blocks pair '
+            'globally-consecutive participant turns, which in these GROUP sessions '
+            'are frequently DIFFERENT people. The lift below is a discourse-level '
+            'association — DIRECTIONAL, NOT a within-person change. The valid-but-'
+            'sparse within-participant view is available via '
+            'cue_within_participant_only=True (WS2).'
+        )
+        lines.append('')
 
     # ── Section 1: Empty cue rates ─────────────────────────────────────────
     lines.append(_hr('─'))
@@ -919,6 +958,7 @@ def run_purer_analysis(
     df_all: pd.DataFrame,
     output_dir: str,
     framework=None,
+    within_participant_only: bool = False,
 ) -> Dict[str, Any]:
     """
     Run the full PURER × VAMMR analysis and write all outputs.
@@ -936,7 +976,8 @@ def run_purer_analysis(
     -------
     dict with keys: cue_blocks, influence, files_written
     """
-    cue_blocks = compute_cue_block_purer_profiles(df_all)
+    cue_blocks = compute_cue_block_purer_profiles(
+        df_all, within_participant_only=within_participant_only)
     n_empty    = sum(1 for cb in cue_blocks if cb.is_empty)
     n_mediated = sum(1 for cb in cue_blocks if not cb.is_empty)
     n_labeled  = sum(1 for cb in cue_blocks if not cb.is_empty and cb.dominant_purer is not None)
@@ -949,7 +990,8 @@ def run_purer_analysis(
     csv_paths = export_purer_csvs(influence, output_dir)
     files_written.extend(csv_paths)
 
-    report_path = generate_purer_report(influence, output_dir, framework=framework, df_all=df_all)
+    report_path = generate_purer_report(influence, output_dir, framework=framework, df_all=df_all,
+                                        within_participant_only=within_participant_only)
     if report_path:
         files_written.append(report_path)
 

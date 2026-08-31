@@ -257,6 +257,14 @@ class ConversationalSegmenter:
             self.plog.log_sentence_filter(before_filter, sentences, excluded_set)
             self.plog.log_sentences("SENTENCES AFTER FILTER", sentences)
 
+        # --- Mark forced boundaries where a therapist turn intervened ---
+        # Done BEFORE folding (while each kept sentence still has its true,
+        # un-merged start/end span) so short-sentence folding cannot glue two
+        # participant turns across the removed therapist prompt; folding then
+        # respects these walls.  Preserves the therapist-prompt-between-shares
+        # structure the speaker filter would otherwise erase.
+        self._mark_intervening_speaker_breaks(sentences, before_filter)
+
         # --- Fold short sentences into adjacent same-speaker neighbors ---
         before_fold = list(sentences)
         sentences = self._fold_short_sentences(sentences)
@@ -326,15 +334,68 @@ class ConversationalSegmenter:
             sentences = [s for s in sentences if s.get('speaker', '') not in excluded_set]
         return sentences
 
+    def _mark_intervening_speaker_breaks(
+        self, kept: List[Dict], all_sentences: List[Dict],
+    ) -> None:
+        """Mark a forced participant boundary wherever a therapist turn intervened.
+
+        After ``_filter_sentences_by_speaker`` strips excluded (therapist)
+        speakers, two participant turns that were separated by a therapist
+        prompt become temporally adjacent in ``kept`` — erasing the
+        speaker-change signal.  Left unmarked, ``_find_boundaries`` would merge
+        them (gap < max_gap and turn < min_segment_words), collapsing the
+        therapist-prompt-between-shares structure.
+
+        This sets ``_break_before=True`` (in place) on each kept sentence that is
+        immediately preceded — in the ORIGINAL interleaved stream — by at least
+        one excluded-speaker turn, so the boundary is treated as FORCED even when
+        the gap is short and the turn is brief.  Called BEFORE folding (while each
+        kept sentence still has its true, un-merged start/end span); folding then
+        treats these marks as walls it must not glue across.
+        """
+        if not self.excluded_speakers or len(kept) < 2:
+            return
+        excluded_set = set(self.excluded_speakers)
+        excl_starts = sorted(
+            float(s.get('start', 0.0))
+            for s in all_sentences
+            if s.get('speaker', '') in excluded_set
+        )
+        if not excl_starts:
+            return
+
+        import bisect
+        tol = 0.5  # seconds — tolerate small diarization end/start overlaps
+        for idx in range(1, len(kept)):
+            prev_end = float(kept[idx - 1].get('end', 0.0))
+            cur_start = float(kept[idx].get('start', 0.0))
+            # Any excluded turn whose start falls in [prev_end - tol, cur_start)?
+            lo = bisect.bisect_left(excl_starts, prev_end - tol)
+            if lo < len(excl_starts) and excl_starts[lo] < cur_start:
+                kept[idx]['_break_before'] = True
+
     def extract_therapist_segments(
         self, sentences: List[Dict], metadata: Dict,
         max_gap_seconds: float = None,
     ) -> List['Segment']:
         """Build Segment objects for excluded (therapist) speakers from raw sentences.
 
-        Groups consecutive therapist sentences into contiguous blocks, splitting
-        on speaker change or a temporal gap exceeding max_gap_seconds.  The
-        resulting segments are intended to be interleaved with participant
+        Walks the FULL (interleaved) sentence stream and groups consecutive
+        therapist sentences into contiguous blocks.  A block is closed whenever:
+
+          * a participant (non-excluded) turn intervenes between two therapist
+            sentences — this is the load-bearing rule: it keeps each
+            therapist-prompt-between-participant-shares as its own cue unit and
+            prevents a short participant share from being BRIDGED into one
+            mega-block (the intervening-participant trigger, not a time gap, is
+            the correct splitter — a 779s therapist span survived even a 2s gap
+            threshold in simulation), OR
+          * the therapist speaker changes, OR
+          * a temporal gap between two therapist sentences exceeds
+            ``max_gap_seconds`` (kept as a coarse fallback for runs of
+            uninterrupted therapist speech).
+
+        The resulting segments are intended to be interleaved with participant
         segments (by start_time_ms) and re-indexed so that
         _collect_therapist_cue() can locate them between participant indices.
 
@@ -345,28 +406,41 @@ class ConversationalSegmenter:
             return []
 
         excluded_set = set(self.excluded_speakers)
-        therapist_sents = [
-            s for s in sentences if s.get('speaker', '') in excluded_set
-        ]
-        if not therapist_sents:
+        if not any(s.get('speaker', '') in excluded_set for s in sentences):
             return []
 
         gap_threshold = max_gap_seconds if max_gap_seconds is not None else self.max_gap_seconds
 
         segments: List['Segment'] = []
-        block: List[Dict] = [therapist_sents[0]]
+        block: List[Dict] = []
+        participant_since_block = False  # a participant turn seen since last therapist
 
-        for sent in therapist_sents[1:]:
+        for sent in sentences:
+            is_therapist = sent.get('speaker', '') in excluded_set
+            if not is_therapist:
+                # Participant (or other non-excluded) turn: only meaningful as a
+                # splitter when it falls BETWEEN therapist sentences.
+                if block:
+                    participant_since_block = True
+                continue
+
+            if not block:
+                block = [sent]
+                participant_since_block = False
+                continue
+
             prev = block[-1]
             speaker_changed = sent.get('speaker', '') != prev.get('speaker', '')
             gap = sent.get('start', 0) - prev.get('end', 0)
-            if speaker_changed or gap > gap_threshold:
+            if participant_since_block or speaker_changed or gap > gap_threshold:
                 segments.append(self._therapist_block_to_segment(block, metadata, len(segments)))
                 block = [sent]
             else:
                 block.append(sent)
+            participant_since_block = False
 
-        segments.append(self._therapist_block_to_segment(block, metadata, len(segments)))
+        if block:
+            segments.append(self._therapist_block_to_segment(block, metadata, len(segments)))
         return segments
 
     def _therapist_block_to_segment(
@@ -398,7 +472,38 @@ class ConversationalSegmenter:
     # ------------------------------------------------------------------
 
     def _fold_short_sentences(self, sentences: List[Dict]) -> List[Dict]:
-        """Fold short sentences into the nearest adjacent sentence by time.
+        """Fold short sentences into the nearest adjacent same-speaker neighbor.
+
+        Respects forced participant-turn walls (``_break_before``): a short
+        sentence is never folded across an intervening-therapist boundary, so
+        two distinct participant turns are not glued together by the fold step.
+        Folding happens independently within each turn-group, then the wall is
+        re-asserted on the first surviving sentence of each later group.
+        """
+        if not sentences:
+            return sentences
+
+        if any(s.get('_break_before') for s in sentences):
+            groups: List[List[Dict]] = [[sentences[0]]]
+            for s in sentences[1:]:
+                if s.get('_break_before'):
+                    groups.append([s])
+                else:
+                    groups[-1].append(s)
+            out: List[Dict] = []
+            for gi, group in enumerate(groups):
+                folded = self._fold_one_group(group)
+                if folded:
+                    # First surviving sentence of each non-initial group starts
+                    # a new participant turn → carries the forced-boundary wall.
+                    folded[0]['_break_before'] = (gi > 0)
+                out.extend(folded)
+            return out
+
+        return self._fold_one_group(sentences)
+
+    def _fold_one_group(self, sentences: List[Dict]) -> List[Dict]:
+        """Fold short sentences into the nearest adjacent neighbor by time.
 
         Instead of dropping sentences below ``min_words_per_sentence``,
         fold them into the nearest neighbor:
@@ -599,7 +704,11 @@ class ConversationalSegmenter:
                 b + 1 < len(sentences) and
                 sentences[b].get('speaker', '') != sentences[b + 1].get('speaker', '')
             )
-            if is_gap or is_speaker_change:
+            is_intervening_break = (
+                b + 1 < len(sentences) and
+                sentences[b + 1].get('_break_before', False)
+            )
+            if is_gap or is_speaker_change or is_intervening_break:
                 confidence[b] = 'confident'
             elif b in broad_dips or b in cluster_boundaries:
                 confidence[b] = 'confident'
@@ -645,7 +754,13 @@ class ConversationalSegmenter:
                 i + 1 < len(sentences) and
                 sentences[i].get('speaker', '') != sentences[i + 1].get('speaker', '')
             )
-            forced = is_gap_exceeded or is_speaker_change
+            # An intervening (removed) therapist turn forces a participant
+            # boundary even when gap < max_gap and turn < min_segment_words.
+            is_intervening_break = (
+                i + 1 < len(sentences) and
+                sentences[i + 1].get('_break_before', False)
+            )
+            forced = is_gap_exceeded or is_speaker_change or is_intervening_break
             should_break = forced or is_sim_dip or is_long_pause
             if should_break and (forced or self._boundary_valid(i, boundaries, sentences)):
                 boundaries.append(i)
@@ -716,6 +831,10 @@ class ConversationalSegmenter:
                 speakers_in_segment=[normalized_id],
                 session_file=metadata.get('source_file', ''),
             )
+            # Carry the forced-boundary marker so _merge_undersized does not
+            # re-merge two participant turns separated by a therapist prompt
+            # (same participant_id, short turn) back into one segment.
+            seg._forced_break_before = bool(chunk[0].get('_break_before', False))
             segments.append(seg)
 
         return self._merge_undersized(segments)
@@ -730,10 +849,13 @@ class ConversationalSegmenter:
         if len(segments) <= 1:
             return segments
 
-        # Pass 1: backward merge — same speaker identity required, not just role
+        # Pass 1: backward merge — same speaker identity required, not just role.
+        # A forced break before this segment (an intervening therapist prompt)
+        # blocks the merge so distinct participant turns stay separate.
         merged = [segments[0]]
         for seg in segments[1:]:
-            if seg.word_count < self.min_words and merged:
+            if (seg.word_count < self.min_words and merged
+                    and not getattr(seg, '_forced_break_before', False)):
                 prev = merged[-1]
                 if prev.participant_id == seg.participant_id:
                     prev.text = prev.text + " " + seg.text
@@ -751,7 +873,8 @@ class ConversationalSegmenter:
             seg = merged[i]
             if seg.word_count < self.min_words and i + 1 < len(merged):
                 next_seg = merged[i + 1]
-                if seg.participant_id == next_seg.participant_id:
+                if (seg.participant_id == next_seg.participant_id
+                        and not getattr(next_seg, '_forced_break_before', False)):
                     next_seg.text = seg.text + " " + next_seg.text
                     next_seg.word_count = len(next_seg.text.split())
                     next_seg.start_time_ms = seg.start_time_ms

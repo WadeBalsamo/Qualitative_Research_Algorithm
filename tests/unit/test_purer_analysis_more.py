@@ -56,8 +56,14 @@ def _make_cb(from_stage, to_stage, purer_labels, session='s1'):
     return CueBlock(session, 1, 'a', 'b', from_stage, to_stage, purer_labels)
 
 
-def _make_interleaved_df(stages_and_purers, session_id='s1'):
-    """Build participant/therapist rows from a list of (speaker, stage, purer) tuples."""
+def _make_interleaved_df(stages_and_purers, session_id='s1', participant_id='P01'):
+    """Build participant/therapist rows from a list of (speaker, stage, purer) tuples.
+
+    All participant rows share *participant_id* so consecutive participant turns
+    are the SAME person — compute_cue_block_purer_profiles now builds
+    WITHIN-participant cue blocks (use B), so a transition is only emitted when
+    FROM and TO are the same participant.
+    """
     rows = []
     for i, (speaker, stage, purer) in enumerate(stages_and_purers):
         is_p = speaker == 'participant'
@@ -65,6 +71,7 @@ def _make_interleaved_df(stages_and_purers, session_id='s1'):
             'segment_id': f'{session_id}_{i}',
             'session_id': session_id,
             'speaker': speaker,
+            'participant_id': participant_id if is_p else '',
             'start_time_ms': i * 1000,
             'end_time_ms': i * 1000 + 800,
             'final_label': float(stage) if is_p and stage is not None else np.nan,
@@ -524,6 +531,55 @@ class TestSingleParticipant(unittest.TestCase):
         result = run_purer_analysis(self.df_all, self.tmp, framework=_FRAMEWORK)
         lm = result['influence']['lift_matrix']
         self.assertIsInstance(lm, pd.DataFrame)
+
+
+class TestCueWithinParticipantToggle(unittest.TestCase):
+    """The cue_within_participant_only toggle (MechanismModelConfig) controls whether
+    compute_cue_block_purer_profiles pairs cross-participant turns (default dense) or
+    restricts to within-participant transitions (WS2)."""
+
+    def _two_participant_df(self):
+        # X (stage 0) -> therapist -> Y (stage 3): a cross-participant pair.
+        return pd.DataFrame([
+            {'segment_id': 'p1', 'session_id': 's1', 'speaker': 'participant',
+             'participant_id': 'X', 'start_time_ms': 0, 'end_time_ms': 800,
+             'final_label': 0.0, 'purer_primary': np.nan, 'cohort_id': 1},
+            {'segment_id': 't1', 'session_id': 's1', 'speaker': 'therapist',
+             'participant_id': '', 'start_time_ms': 1000, 'end_time_ms': 1800,
+             'final_label': np.nan, 'purer_primary': 2.0, 'cohort_id': 1},
+            {'segment_id': 'p2', 'session_id': 's1', 'speaker': 'participant',
+             'participant_id': 'Y', 'start_time_ms': 2000, 'end_time_ms': 2800,
+             'final_label': 3.0, 'purer_primary': np.nan, 'cohort_id': 1},
+        ])
+
+    def test_default_dense_includes_cross_participant(self):
+        df = self._two_participant_df()
+        blocks = compute_cue_block_purer_profiles(df)  # default within_participant_only=False
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0].from_stage, 0)
+        self.assertEqual(blocks[0].to_stage, 3)
+
+    def test_within_participant_excludes_cross_participant(self):
+        df = self._two_participant_df()
+        blocks = compute_cue_block_purer_profiles(df, within_participant_only=True)
+        self.assertEqual(blocks, [])
+
+    def test_within_participant_keeps_same_participant_pair(self):
+        # X -> therapist -> X is kept under the within-participant unit.
+        df = pd.DataFrame([
+            {'segment_id': 'p1', 'session_id': 's1', 'speaker': 'participant',
+             'participant_id': 'X', 'start_time_ms': 0, 'end_time_ms': 800,
+             'final_label': 0.0, 'purer_primary': np.nan, 'cohort_id': 1},
+            {'segment_id': 't1', 'session_id': 's1', 'speaker': 'therapist',
+             'participant_id': '', 'start_time_ms': 1000, 'end_time_ms': 1800,
+             'final_label': np.nan, 'purer_primary': 2.0, 'cohort_id': 1},
+            {'segment_id': 'p2', 'session_id': 's1', 'speaker': 'participant',
+             'participant_id': 'X', 'start_time_ms': 2000, 'end_time_ms': 2800,
+             'final_label': 3.0, 'purer_primary': np.nan, 'cohort_id': 1},
+        ])
+        blocks = compute_cue_block_purer_profiles(df, within_participant_only=True)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0].purer_profile, {2: 1})
 
 
 if __name__ == '__main__':

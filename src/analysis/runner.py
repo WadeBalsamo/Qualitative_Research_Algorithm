@@ -216,6 +216,11 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
     # report can surface the blend instead of a hard argmax. Additive + graceful
     # (GNN positions → LLM ballots → secondary_stage); never mutates final_label.
     _superpos_cfg = getattr(_pipeline_config, 'superposition', None) if _pipeline_config is not None else None
+    # cue→response unit toggle (MechanismModelConfig.cue_within_participant_only; default False =
+    # dense/cross-participant). Threaded to PURER lift, mechanism, and the GNN transition/confound.
+    _mech_cfg_for_unit = getattr(_pipeline_config, 'mechanism', None) if _pipeline_config is not None else None
+    _within_participant = bool(getattr(_mech_cfg_for_unit, 'cue_within_participant_only', False)) \
+        if _mech_cfg_for_unit is not None else False
     if _superpos_cfg is None or getattr(_superpos_cfg, 'enabled', True):
         try:
             from .superposition import attach_superposition
@@ -500,7 +505,8 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             from .purer_analysis import run_purer_analysis
             from .purer_figures import generate_purer_figures
             log("[10/8] Running PURER × VAMMR cue-block influence analysis...")
-            purer_result = run_purer_analysis(df_all, output_dir, framework=framework)
+            purer_result = run_purer_analysis(df_all, output_dir, framework=framework,
+                                              within_participant_only=_within_participant)
             files_generated.extend(purer_result.get('files_written', []))
             n_blocks  = purer_result.get('n_cue_blocks', 0)
             n_empty   = purer_result.get('n_empty', 0)
@@ -569,6 +575,7 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             log("[11/8] Running GNN representation-and-discovery layer...")
             gnn_result = run_gnn_analysis(
                 df_all, output_dir, framework=framework, config=_gnn_cfg, llm_client=llm_client,
+                cue_within_participant_only=_within_participant,
             )
             files_generated.extend(gnn_result.get('files_written', []))
             log(f"    GNN layer status: {gnn_result.get('status', 'ok')}")
@@ -665,7 +672,8 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             # Therapeutic language atlas (readable patterns behind the statistics).
             try:
                 from .reports.language_atlas import generate_language_atlas
-                atlas_path = generate_language_atlas(df, df_all, framework, output_dir)
+                atlas_path = generate_language_atlas(df, df_all, framework, output_dir,
+                                                     llm_client=llm_client)
                 if atlas_path:
                     files_generated.append(atlas_path)
                     log("    Language atlas: 06_reports/03_mechanism/language_atlas.txt")
@@ -771,6 +779,16 @@ def run_analysis(output_dir: str, verbose: bool = True, llm_log_path: str = None
             log("    Methods: 06_reports/08_methods.txt")
     except Exception as e:
         print(f"  Warning: methods report failed: {e}")
+        if verbose:
+            traceback.print_exc()
+    try:
+        from .reports.case_studies import generate_case_studies
+        cs_paths = generate_case_studies(df, df_all, framework, output_dir)
+        if cs_paths:
+            files_generated.extend(cs_paths)
+            log("    Case studies: 06_reports/02_outcomes/case_studies.txt (+fig)")
+    except Exception as e:
+        print(f"  Warning: case studies failed: {e}")
         if verbose:
             traceback.print_exc()
 

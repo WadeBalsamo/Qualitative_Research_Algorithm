@@ -111,7 +111,8 @@ def _cosine_sim(a: 'np.ndarray', b: 'np.ndarray') -> 'np.ndarray':
 
 
 def run_arm(arm: str, items, framework, model_name: str,
-            results_csv: pathlib.Path, results_md: pathlib.Path | None) -> dict:
+            results_csv: pathlib.Path, results_md: pathlib.Path | None,
+            output_dir: str | None = None) -> dict:
     """Run one arm end-to-end: embed anchors + items, argmax, score."""
     # Heavy imports inside the function — not at module top level.
     from sentence_transformers import SentenceTransformer
@@ -144,6 +145,7 @@ def run_arm(arm: str, items, framework, model_name: str,
     return cv_scoring.score_arm(
         arm,
         predictions,
+        output_dir=output_dir,
         results_csv=results_csv,
         results_md=results_md,
         secondary=secondary,
@@ -215,7 +217,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"[WARN] Unknown arm {arm!r}; skipping. Known arms: {ARM_NAMES}")
             continue
         print(f"[{arm}] running ...")
-        metrics = run_arm(arm, items, framework, args.model, results_csv, results_md)
+        metrics = run_arm(arm, items, framework, args.model, results_csv, results_md,
+                          output_dir=args.output_dir)
         print(f"[{arm}] acc_overall={metrics.get('acc_overall')}  "
               f"acc_secondary={metrics.get('acc_secondary')}  "
               f"n_items={metrics.get('n_items')}")

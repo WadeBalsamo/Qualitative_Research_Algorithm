@@ -35,7 +35,7 @@ meaningful.
 |---|---|---|---|---|
 | Lit-trained NSP classifier | Jan 2024 – Jun 2025 | `32040ca` (created), `c33741a` (deleted) | Abandoned — wrong objective (NSP ≠ stage assignment); required training data that did not exist | `99_dead_ends/README.md §1` |
 | MentalBERT graph classifier (`mentalbert_sentence_aqua`) | Jun 2025 – Mar 2026 | `c33741a` (created), `7dfa61c` (deleted) | Abandoned — graph homophily assumption refuted; infeasible dep stack under env pin | `99_dead_ends/README.md §2` |
-| GNN GraphSAGE consensus-distillation (H5) | Jun 2026 | `628e71a` (built), `8619066` (demoted default-OFF) | Demoted — H5 refuted at n ≈ 32; data ceiling; fully studied in sibling campaign | `99_dead_ends/README.md §3`; full battery in `experiments/gnn_reliability/` |
+| GNN GraphSAGE consensus-distillation (H5) | Jun 2026 | `628e71a` (built), `8619066` (demoted default-OFF) | Demoted — H5 refuted at n ≈ 20; data ceiling; fully studied in sibling campaign | `99_dead_ends/README.md §3`; full battery in `experiments/gnn_reliability/` |
 
 ---
 

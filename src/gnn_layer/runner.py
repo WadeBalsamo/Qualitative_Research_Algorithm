@@ -44,7 +44,8 @@ def _independence_mode(config, df_all):
 
 
 def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
-                     llm_client=None, verbose=True) -> dict:
+                     llm_client=None, verbose=True,
+                     cue_within_participant_only=False) -> dict:
     """Run the GNN layer over the assembled corpus DataFrame.
 
     Returns {'files_written': [...], 'status': str, ...}.
@@ -104,7 +105,8 @@ def run_gnn_analysis(df_all, output_dir, framework=None, config=None,
                       "Running discovery + mechanism work-streams on raw embeddings.")
 
     # ---- Discovery + mechanism work-streams (DEFAULT ON; raw embeddings, no trained model) ----
-    _run_discovery_layer(df_all, seg_emb, output_dir, framework, config, files, verbose)
+    _run_discovery_layer(df_all, seg_emb, output_dir, framework, config, files, verbose,
+                         cue_within_participant_only=cue_within_participant_only)
 
     # ---- Figures (render whatever GNN data exists; each plotter is guarded) ----
     try:
@@ -445,7 +447,8 @@ def _run_classifier_layer(df_all, seg_emb, output_dir, framework, config, files,
             _log(verbose, f"VCE-on-VAAMR test failed: {e}")
 
 
-def _run_discovery_layer(df_all, seg_emb, output_dir, framework, config, files, verbose):
+def _run_discovery_layer(df_all, seg_emb, output_dir, framework, config, files, verbose,
+                         cue_within_participant_only=False):
     """Discovery + mechanism work-streams on RAW embeddings, independent of the classifier:
     cue motifs, coupling factors, the dyadic transition model (mechanism), confound localization,
     subtext communities + dyadic routines, and H6 discriminant validity. Mutates ``files``."""
@@ -527,8 +530,9 @@ def _run_discovery_layer(df_all, seg_emb, output_dir, framework, config, files, 
     if getattr(config, 'transition_model', False):
         try:
             from . import transition as _trans
-            _trans_result = _trans.run_transition_model(df_all, output_dir, config,
-                                                        seg_emb=seg_emb, verbose=verbose)
+            _trans_result = _trans.run_transition_model(
+                df_all, output_dir, config, seg_emb=seg_emb, verbose=verbose,
+                require_same_participant=cue_within_participant_only)
             files.extend(_trans_result.get('files_written', []))
             d = (_trans_result.get('cv') or {}).get('delta_cue_minus_from', {})
             _log(verbose, f"transition model: {_trans_result.get('status')}"
@@ -545,9 +549,10 @@ def _run_discovery_layer(df_all, seg_emb, output_dir, framework, config, files, 
     if getattr(config, 'confound_localization', False):
         try:
             from . import confound as _conf
-            cres = _conf.run_confound_localization(df_all, output_dir, config,
-                                                   transition_result=_trans_result,
-                                                   seg_emb=seg_emb, verbose=verbose)
+            cres = _conf.run_confound_localization(
+                df_all, output_dir, config, transition_result=_trans_result,
+                seg_emb=seg_emb, verbose=verbose,
+                require_same_participant=cue_within_participant_only)
             files.extend(cres.get('files_written', []))
             _log(verbose, f"confound localization: {cres.get('status')}")
         except Exception as e:

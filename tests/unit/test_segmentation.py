@@ -657,5 +657,124 @@ class TestSpeakerBoundaryEnforcement(unittest.TestCase):
                              'Therapist segments must have speaker="therapist"')
 
 
+# ── Segmentation source fix: therapist-prompt-between-shares structure ────────
+
+class TestSegmentationSourceFix(unittest.TestCase):
+    """Regression tests for the segmentation source fix.
+
+    Ensures the therapist-prompt-between-participant-shares structure survives
+    segmentation: (a) therapist blocks split on an intervening participant turn,
+    (b) two same-participant turns separated by a short therapist turn are NOT
+    merged, and (c) interleaved segment_index is chronological.
+    """
+
+    def _segmenter(self, min_words=60, max_gap=15.0, min_words_per_sentence=10):
+        seg = _make_segmenter(
+            excluded=['THERAPIST'], filter_mode='exclude',
+            min_words=min_words, max_gap=max_gap,
+            min_words_per_sentence=min_words_per_sentence,
+        )
+        # Constant unit embeddings → no semantic dips; only forced/gap boundaries.
+        seg.embedding_model.encode = (
+            lambda texts, **kw: np.ones((len(texts), 4), dtype=float) / 2.0
+        )
+        return seg
+
+    # (a) -------------------------------------------------------------------
+    def test_therapist_block_split_by_intervening_participant_turn(self):
+        seg = self._segmenter()
+        # Tiny inter-therapist gap (2s) — far below max_gap (120s) — so ONLY the
+        # intervening participant turn can trigger the split.
+        sentences = [
+            _sent(speaker='THERAPIST', text='How was your week?', start=0.0, end=2.0),
+            _sent(speaker='SPEAKER_00', text='Pretty good overall.', start=2.0, end=4.0),
+            _sent(speaker='THERAPIST', text='What did you notice?', start=4.0, end=6.0),
+        ]
+        result = seg.extract_therapist_segments(
+            sentences, METADATA, max_gap_seconds=120.0,
+        )
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].text, 'How was your week?')
+        self.assertEqual(result[1].text, 'What did you notice?')
+
+    def test_uninterrupted_therapist_run_stays_one_block(self):
+        # No participant between → a long therapist run remains ONE block even
+        # across a small gap (proves we did not over-split).
+        seg = self._segmenter()
+        sentences = [
+            _sent(speaker='THERAPIST', text='one', start=0.0, end=2.0),
+            _sent(speaker='THERAPIST', text='two', start=2.0, end=4.0),
+            _sent(speaker='THERAPIST', text='three', start=4.0, end=6.0),
+        ]
+        result = seg.extract_therapist_segments(
+            sentences, METADATA, max_gap_seconds=120.0,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].text, 'one two three')
+
+    # (b) -------------------------------------------------------------------
+    def test_participant_turns_separated_by_short_therapist_not_merged(self):
+        seg = self._segmenter(min_words=60, max_gap=15.0)
+        p1 = ' '.join(['feel'] * 40)     # 40 words < min_words (60)
+        p2 = ' '.join(['notice'] * 40)   # 40 words < min_words (60)
+        sentences = [
+            _sent(speaker='SPEAKER_00', text=p1, start=0.0, end=5.0),
+            _sent(speaker='THERAPIST', text='short therapist prompt right here',
+                  start=5.0, end=7.0),                       # 2s gap < max_gap (15s)
+            _sent(speaker='SPEAKER_00', text=p2, start=7.0, end=12.0),
+        ]
+        segs = seg.segment_session(sentences, METADATA)
+        # Without the fix these two short same-participant turns merge into one
+        # 80-word segment; with the forced intervening-therapist boundary they stay
+        # as two distinct participant turns.
+        self.assertEqual(len(segs), 2)
+        self.assertTrue(all(s.speaker == 'participant' for s in segs))
+
+    def test_same_participant_consecutive_sentences_still_merge(self):
+        # No therapist between → two short same-participant sentences SHOULD still
+        # merge (the fix must not over-segment uninterrupted speech).
+        seg = self._segmenter(min_words=60, max_gap=15.0)
+        a = ' '.join(['feel'] * 40)
+        b = ' '.join(['more'] * 40)
+        sentences = [
+            _sent(speaker='SPEAKER_00', text=a, start=0.0, end=5.0),
+            _sent(speaker='SPEAKER_00', text=b, start=5.0, end=10.0),
+        ]
+        segs = seg.segment_session(sentences, METADATA)
+        self.assertEqual(len(segs), 1)
+
+    # (c) -------------------------------------------------------------------
+    def test_segment_index_chronological_after_interleave(self):
+        seg = self._segmenter(min_words=60, max_gap=15.0)
+        p1 = ' '.join(['x'] * 30)
+        p2 = ' '.join(['y'] * 30)
+        sentences = [
+            _sent(speaker='THERAPIST', text='prompt one here for you', start=0.0, end=2.0),
+            _sent(speaker='SPEAKER_00', text=p1, start=2.0, end=6.0),
+            _sent(speaker='THERAPIST', text='prompt two here for you', start=6.0, end=8.0),
+            _sent(speaker='SPEAKER_00', text=p2, start=8.0, end=12.0),
+        ]
+        part = seg.segment_session(sentences, METADATA)
+        th = seg.extract_therapist_segments(sentences, METADATA, max_gap_seconds=120.0)
+        # Mirror the orchestrator's chronological interleave + reindex.
+        combined = sorted(part + th, key=lambda s: s.start_time_ms)
+        for i, s in enumerate(combined):
+            s.segment_index = i
+
+        self.assertEqual([s.segment_index for s in combined],
+                         list(range(len(combined))))
+        self.assertTrue(
+            all(combined[i].start_time_ms <= combined[i + 1].start_time_ms
+                for i in range(len(combined) - 1)),
+            'segment_index order must follow start_time_ms',
+        )
+        # T->P adjacency recovered: every participant turn is preceded by a
+        # therapist turn.
+        tp = sum(1 for i in range(len(combined) - 1)
+                 if combined[i].speaker == 'therapist'
+                 and combined[i + 1].speaker == 'participant')
+        self.assertEqual(tp, 2)
+
+
 if __name__ == '__main__':
     unittest.main()

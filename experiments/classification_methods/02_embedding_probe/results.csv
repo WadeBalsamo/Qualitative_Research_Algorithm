@@ -1,0 +1,3 @@
+arm,testset,timestamp,n_items,n_abstain,acc_overall,acc_secondary,acc_clear,acc_subtle,acc_adversarial,acc_stage_0,acc_stage_1,acc_stage_2,acc_stage_3,acc_stage_4,n_clear,n_subtle,n_adversarial,n_stage_0,n_stage_1,n_stage_2,n_stage_3,n_stage_4
+probe_5class,cv_vaamr_v1,2026-06-11T02:52:41Z,109,0,0.3211,0.3211,0.3103,0.3793,0.2727,0.0,0.0,0.7273,0.0,0.8261,58,29,22,22,22,22,20,23
+probe_classweighted,cv_vaamr_v1,2026-06-11T02:52:42Z,109,0,0.3394,0.3394,0.3276,0.3448,0.3636,0.1818,0.5455,0.4545,0.15,0.3478,58,29,22,22,22,22,20,23
